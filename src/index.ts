@@ -1,9 +1,9 @@
 export interface Env {
+	AI: Ai;
 	BUCKET: R2Bucket;
 	QUEUE: Queue<Job>;
 	// secrets
 	SECRET: string;
-	OPENAI_KEY: string;
 	BOT_TOKEN: string;
 	CHAT_ID: string;
 	// vars
@@ -13,7 +13,7 @@ export interface Env {
 type Job = { key: string };
 
 // Проміжний стан обробки, зберігається в R2 поруч з аудіо (`<key>.state.json`).
-// Дає ідемпотентність: повторна спроба не платить ще раз за Whisper/gpt-6-luna
+// Дає ідемпотентність: повторна спроба не платить ще раз за Whisper/LLM
 // і не шле в Telegram те, що вже відправлено.
 type State = {
 	transcript?: string;
@@ -25,7 +25,9 @@ type State = {
 
 const DLQ_NAME = "voice-notes-dlq";
 const MAX_RETRIES = 4; // той самий, що max_retries у wrangler.toml
-const WHISPER_MAX_BYTES = 25_000_000; // ліміт OpenAI: 25 MB
+// Whisper у Workers AI працює ~9x швидше за реальний час, а consumer має 15 хв wall time.
+// 25 MB це ~50 хв аудіо iPhone (~64 kbps) або ~100 хв при 32 kbps, тобто з запасом.
+const TRANSCRIBE_MAX_BYTES = 25_000_000;
 const TELEGRAM_MAX_BYTES = 50_000_000; // ліміт Bot API на upload: 50 MB
 const CAPTION_MAX = 1024;
 const MESSAGE_MAX = 4096;
@@ -88,14 +90,14 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
 	const recordedAt = formatRecordedAt(key, env.TIMEZONE);
 
-	// Завеликий для Whisper: не ретраїмо, шлемо оригінал без транскрипту.
-	if (obj.size > WHISPER_MAX_BYTES) {
+	// Задовгий для транскрипції в межах 15 хв: не ретраїмо, шлемо оригінал без транскрипту.
+	if (obj.size > TRANSCRIBE_MAX_BYTES) {
 		if (!state.audioSent) {
 			const mb = (obj.size / 1_000_000).toFixed(1);
 			if (obj.size > TELEGRAM_MAX_BYTES) {
 				await tgSendMessage(
 					env,
-					`🎙 Запис ${recordedAt} (${mb} МБ) завеликий і для Whisper (25 МБ), і для Telegram-бота (50 МБ).\n` +
+					`🎙 Запис ${recordedAt} (${mb} МБ) завеликий і для транскрипції (ліміт 25 МБ), і для Telegram-бота (50 МБ).\n` +
 						`Ключ: ${key}. Файл лишається в R2 до 7 днів.`,
 				);
 			} else {
@@ -104,7 +106,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 					env,
 					audio,
 					`Запис ${recordedAt}`,
-					`Запис ${recordedAt}\n\nФайл ${mb} МБ більший за ліміт Whisper (25 МБ), тому без транскрипту й summary.`,
+					`Запис ${recordedAt}\n\nФайл ${mb} МБ більший за ліміт транскрипції (25 МБ), тому без транскрипту й summary.`,
 				);
 			}
 			state.audioSent = true;
@@ -154,22 +156,17 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	await env.BUCKET.delete([key, stateKey]);
 }
 
-// ---------- OpenAI Whisper ----------
+// ---------- Workers AI: whisper-large-v3-turbo ----------
 async function transcribe(env: Env, audio: Blob): Promise<string> {
-	const form = new FormData();
-	form.append("file", audio, "audio.m4a");
-	form.append("model", "whisper-1");
-	const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-		method: "POST",
-		headers: { Authorization: `Bearer ${env.OPENAI_KEY}` },
-		body: form,
+	// Аудіо передаємо потоком (без base64), мову модель визначає сама.
+	const res = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+		audio: { body: audio.stream(), contentType: "audio/mp4" },
 	});
-	if (!res.ok) throw new Error(`Whisper ${res.status}: ${await res.text()}`);
-	const data = (await res.json()) as { text: string };
-	return data.text.trim();
+	return (res.text ?? "").trim();
 }
 
-// ---------- OpenAI gpt-6-luna: title + summary ----------
+// ---------- Workers AI: title + summary ----------
+const SUMMARY_MODEL = "@cf/google/gemma-4-26b-a4b-it";
 const SYSTEM_PROMPT = `You write a title and a summary for a voice note transcript.
 Rules:
 - Write in the same language as the transcript.
@@ -198,35 +195,21 @@ async function summarize(
 
 	let text: string;
 	try {
-		const res = await fetch("https://api.openai.com/v1/responses", {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${env.OPENAI_KEY}`,
-				"content-type": "application/json",
+		const res = (await env.AI.run(SUMMARY_MODEL, {
+			messages: [
+				{ role: "system", content: SYSTEM_PROMPT },
+				{ role: "user", content: `<transcript>\n${transcript}\n</transcript>` },
+			],
+			response_format: {
+				type: "json_schema",
+				json_schema: { name: "voice_note", schema: SUMMARY_SCHEMA, strict: true },
 			},
-			body: JSON.stringify({
-				model: "gpt-6-luna",
-				reasoning: { effort: "none" },
-				max_output_tokens: 1024,
-				input: [
-					{ role: "system", content: SYSTEM_PROMPT },
-					{ role: "user", content: `<transcript>\n${transcript}\n</transcript>` },
-				],
-				text: {
-					format: { type: "json_schema", name: "voice_note", schema: SUMMARY_SCHEMA, strict: true },
-				},
-			}),
-		});
-		if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
-		const data = (await res.json()) as {
-			output: { type: string; content?: { type: string; text?: string }[] }[];
-		};
-		text = data.output
-			.filter((o) => o.type === "message")
-			.flatMap((o) => o.content ?? [])
-			.filter((c) => c.type === "output_text")
-			.map((c) => c.text ?? "")
-			.join("");
+			chat_template_kwargs: { enable_thinking: false }, // reasoning для назви не потрібен
+			max_completion_tokens: 1024,
+		} as never)) as { choices?: { message?: { content?: unknown } }[]; response?: unknown };
+		// Структуровану відповідь модель може віддати як рядок або вже як об'єкт.
+		const content = res.choices?.[0]?.message?.content ?? res.response ?? "";
+		text = typeof content === "string" ? content : JSON.stringify(content);
 	} catch (err) {
 		// Помилка API: ретраїмо, але на останній спробі краще fallback, ніж DLQ.
 		if (lastAttempt) {

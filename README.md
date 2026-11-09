@@ -1,10 +1,10 @@
 # voice-notes-worker
 
-iPhone Shortcut записує голос і шле файл на цей Cloudflare Worker. Воркер транскрибує запис (OpenAI Whisper), генерує назву й summary (OpenAI gpt-6-luna) і надсилає в Telegram аудіофайл з осмисленою назвою.
+iPhone Shortcut записує голос і шле файл на цей Cloudflare Worker. Воркер транскрибує запис і генерує назву й summary через Workers AI (`whisper-large-v3-turbo` + `gemma-4-26b-a4b-it`, без зовнішніх AI-ключів) і надсилає в Telegram аудіофайл з осмисленою назвою.
 
 ```
 Shortcut ──POST m4a──▶ fetch (producer) ──▶ R2 + Queue ──▶ queue (consumer)
-                                                         │  R2 → Whisper → gpt-6-luna → Telegram sendAudio (+ sendMessage з транскриптом)
+                                                         │  R2 → Whisper → Gemma 4 → Telegram sendAudio (+ sendMessage з транскриптом)
                                                          └─ після 4 невдалих повторів → DLQ → повідомлення про помилку в Telegram
 ```
 
@@ -32,7 +32,6 @@ npx wrangler queues create voice-notes-dlq
 
 # 3. Секрети (кожна команда інтерактивно попросить значення)
 npx wrangler secret put SECRET          # будь-який довгий випадковий рядок, напр. `openssl rand -hex 32`
-npx wrangler secret put OPENAI_KEY      # для Whisper і gpt-6-luna
 npx wrangler secret put BOT_TOKEN       # від @BotFather
 npx wrangler secret put CHAT_ID         # ваш chat id (напишіть боту, потім https://api.telegram.org/bot<TOKEN>/getUpdates)
 
@@ -69,17 +68,21 @@ curl -X POST http://localhost:8787 \
 # → ok
 ```
 
-`wrangler dev` локально емулює R2 і Queue, тож consumer спрацює одразу в тому ж процесі. Без справжніх ключів він впаде на Whisper (401) і піде на retry, і це очікувано.
+`wrangler dev` локально емулює R2 і Queue, тож consumer спрацює одразу в тому ж процесі. Binding `AI` навіть локально звертається до справжнього Workers AI (з безкоштовної квоти), тож для повного ланцюжка потрібні лише `wrangler login` і `BOT_TOKEN`/`CHAT_ID`.
 
 ## Як це працює
 
-- **Ідемпотентність.** Поруч з аудіо в R2 лежить `<key>.state.json`: транскрипт, title/summary, `audioSent`, `textPartsSent`. Повторна спроба продовжує з місця, де зупинилась: не платить вдруге за Whisper/gpt-6-luna і не дублює вже надіслане в Telegram. Після повного успіху обидва об'єкти видаляються, тож повторна доставка того самого повідомлення бачить, що файлу немає, і просто робить ack.
+- **Ідемпотентність.** Поруч з аудіо в R2 лежить `<key>.state.json`: транскрипт, title/summary, `audioSent`, `textPartsSent`. Повторна спроба продовжує з місця, де зупинилась: не платить вдруге за Whisper/LLM і не дублює вже надіслане в Telegram. Після повного успіху обидва об'єкти видаляються, тож повторна доставка того самого повідомлення бачить, що файлу немає, і просто робить ack.
   Залишкове вікно: якщо воркер впаде рівно між успішною відповіддю Telegram і записом стану, одне повідомлення може задублюватись. Telegram не має idempotency key, тож повністю закрити це неможливо.
 - **Видалення з R2:** обидва варіанти разом. Після успіху файл видаляється одразу (не лежить зайвий час, не займає місце), а lifecycle rule на 7 днів прибирає те, що не дійшло до успіху: DLQ, завеликі файли. Так файл з DLQ ще тиждень доступний для ручного розбору.
-- **Файл > 25 MB** (ліміт Whisper): без ретраїв, оригінал іде в Telegram з поясненням. Якщо файл > 50 MB (ліміт upload для Bot API), надсилається лише текстове повідомлення з ключем.
-- **Summary** генерує `gpt-6-luna` через Responses API з `reasoning.effort: "none"` і structured output (JSON Schema), тож відповідь завжди має форму `{title, summary}`. Fallback лишається на випадок відмови моделі чи порожніх полів.
+- **Файл > 25 MB**: Whisper працює ~9x швидше за реальний час (25 хв аудіо ≈ 170 с, перевірено), а consumer має 15 хв wall time, тож 25 MB (~50–100 хв аудіо) це поріг із запасом. Більші файли не ретраяться, оригінал іде в Telegram з поясненням. Якщо файл > 50 MB (ліміт upload для Bot API), надсилається лише текстове повідомлення з ключем.
+- **Summary** генерує `@cf/google/gemma-4-26b-a4b-it` з вимкненим reasoning і structured output (JSON Schema), тож відповідь завжди має форму `{title, summary}`. Fallback лишається на випадок відмови моделі чи порожніх полів.
 - **Помилка API для summary** ретраїться, але на останній спробі використовується fallback (title = дата/час, summary = перші 300 символів), щоб нотатка не загубилась у DLQ лише через summary.
 - **Короткий транскрипт** (коли `title + summary + транскрипт` вміщаються в 1024 символи) іде прямо в caption. Довший надсилається окремими повідомленнями до 4096 символів.
+
+## Workers AI
+
+Обидві моделі працюють через binding `AI`. Безкоштовна квота: 10 000 neurons на день (і на Free-плані). Whisper коштує ~47 neurons за хвилину аудіо (~200 хв на день безкоштовно), а summary однієї нотатки ~20–50 neurons. Ціни: https://developers.cloudflare.com/workers-ai/platform/pricing/
 
 ## Ліміти Cloudflare (звірено з документацією 2026-11-09)
 
