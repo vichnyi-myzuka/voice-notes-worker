@@ -39,6 +39,9 @@ npx wrangler secret put SECRET          # будь-який довгий вип�
 npx wrangler secret put OPENAI_KEY      # для gpt-6-luna; без нього summary робить Gemma 4
 npx wrangler secret put BOT_TOKEN       # від @BotFather
 npx wrangler secret put CHAT_ID         # ваш chat id (напишіть боту, потім https://api.telegram.org/bot<TOKEN>/getUpdates)
+# необов'язково, для голосових прямо з Telegram (див. «Голосові з Telegram»):
+npx wrangler secret put TG_WEBHOOK_SECRET  # `openssl rand -hex 32`
+npx wrangler secret put TG_OWNER_ID        # ваш Telegram user id (для особистого чату з ботом)
 
 # 4. Деплой
 npx wrangler deploy
@@ -107,6 +110,28 @@ source .env && curl -X POST https://voice-notes-worker.<subdomain>.workers.dev -
 ```
 
 `wrangler dev` локально емулює R2 і Queue, тож consumer спрацює одразу в тому ж процесі. Binding `AI` навіть локально звертається до справжнього Workers AI (з безкоштовної квоти), тож для повного ланцюжка потрібні лише `wrangler login` і `BOT_TOKEN`/`CHAT_ID`.
+
+## Голосові з Telegram
+
+Окрім шорткату, запис можна надіслати прямо в Telegram:
+
+- **У канал `CHAT_ID`** — голосове або аудіо **без підпису**. Після публікації нотатки бот видаляє оригінал (потрібне право адміна «видаляти повідомлення»). Дописи з підписом ігноруються: так бот не чіпає власних нотаток.
+- **В особистий чат з ботом** — лише від `TG_OWNER_ID`; бот ставить 👍, нотатка з'являється в каналі.
+
+Знімка Things тут немає, тож тріаж бере останній знімок, надісланий шорткатом (`things/latest-snapshot.json` у R2). Аудіо пересилається в канал за `file_id`. Ліміт Bot API на завантаження — 20 МБ. Whisper приймає Telegram OGG/Opus напряму.
+
+Увімкнути вебхук (після цього `getUpdates` перестає працювати):
+
+```sh
+source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
+  -d url=https://voice-notes-worker.<subdomain>.workers.dev/telegram \
+  -d secret_token=$TG_WEBHOOK_SECRET \
+  --data-urlencode 'allowed_updates=["message","channel_post"]' -d drop_pending_updates=true
+```
+
+## Хештеги
+
+Останній рядок підпису: `#листопад_2026 #тиждень_46 #Work #Shopping` — місяць, ISO-тиждень (у `TIMEZONE`) і області нових задач з тріажу. Тап на хештег у Telegram показує всі такі записи.
 
 ## Як це працює
 
