@@ -10,6 +10,7 @@ export type TriageItem = {
 	title: string;
 	duplicateOf: string; // назва існуючої відкритої задачі або ""
 	list: string; // проєкт чи область або "" (Inbox)
+	suggestedList: string; // область, яку пропонувала модель, якщо задача пішла в Inbox
 	tags: string[];
 	when: string; // today | tomorrow | evening | someday | YYYY-MM-DD | ""
 	deadline: string; // YYYY-MM-DD | ""
@@ -131,15 +132,18 @@ export async function triage(
 				const when = String(r.when ?? "").trim();
 				const deadline = String(r.deadline ?? "").trim();
 				const list = listSet.has(String(r.list ?? "").trim()) ? String(r.list).trim() : "";
+				// Лише дозволені теги, без повторів і без тегу, що збігається з назвою області
+				// (наприклад, тег Home в області Home). Смислові збіги — у things-rules.txt.
+				const tags = Array.isArray(r.tags)
+					? [...new Set(r.tags.map(String))].filter((t) => tagSet.has(t) && normalize(t) !== normalize(list))
+					: [];
+				// Без жодного тегу задача йде в Inbox для ручного розбору; пропозицію області лишаємо в підписі.
 				return {
 					title: String(r.title ?? "").trim(),
 					duplicateOf: todoByKey.get(normalize(String(r.duplicate_of ?? ""))) ?? "",
-					list,
-					// Лише дозволені теги, без повторів і без тегу, що збігається з назвою області
-					// (наприклад, тег Home в області Home). Смислові збіги — у things-rules.txt.
-					tags: Array.isArray(r.tags)
-						? [...new Set(r.tags.map(String))].filter((t) => tagSet.has(t) && normalize(t) !== normalize(list))
-						: [],
+					list: tags.length ? list : "",
+					suggestedList: tags.length ? "" : list,
+					tags,
 					when: whenSet.has(when) || dateRe.test(when) ? when : "",
 					deadline: dateRe.test(deadline) ? deadline : "",
 				};
@@ -174,7 +178,7 @@ export function formatTriage(items: TriageItem[]): string {
 		.map((i) => {
 			if (i.duplicateOf) return `• ↩️ вже є: ${i.duplicateOf}`;
 			const extra = [
-				i.list && `→ ${i.list}`,
+				i.list ? `→ ${i.list}` : i.suggestedList && `→ Inbox (${i.suggestedList}?)`,
 				...i.tags.map((t) => `#${t.replace(/\s+/g, "_")}`),
 				i.when && `📅 ${i.when}`,
 				i.deadline && `⏰ ${i.deadline}`,
