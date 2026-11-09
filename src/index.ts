@@ -4,7 +4,6 @@ export interface Env {
 	// secrets
 	SECRET: string;
 	OPENAI_KEY: string;
-	ANTHROPIC_KEY: string;
 	BOT_TOKEN: string;
 	CHAT_ID: string;
 	// vars
@@ -14,7 +13,7 @@ export interface Env {
 type Job = { key: string };
 
 // Проміжний стан обробки, зберігається в R2 поруч з аудіо (`<key>.state.json`).
-// Дає ідемпотентність: повторна спроба не платить ще раз за Whisper/Claude
+// Дає ідемпотентність: повторна спроба не платить ще раз за Whisper/gpt-6-luna
 // і не шле в Telegram те, що вже відправлено.
 type State = {
 	transcript?: string;
@@ -170,13 +169,20 @@ async function transcribe(env: Env, audio: Blob): Promise<string> {
 	return data.text.trim();
 }
 
-// ---------- Anthropic: title + summary ----------
+// ---------- OpenAI gpt-6-luna: title + summary ----------
 const SYSTEM_PROMPT = `You write a title and a summary for a voice note transcript.
 Rules:
 - Write in the same language as the transcript.
 - Title: at most 6 words, no quotes, no trailing period.
-- Summary: 2-4 sentences.
-- Respond with only a JSON object, no markdown and no other text: {"title": "...", "summary": "..."}`;
+- Summary: 2-4 sentences.`;
+
+// Structured output: модель гарантовано повертає JSON саме такої форми.
+const SUMMARY_SCHEMA = {
+	type: "object",
+	properties: { title: { type: "string" }, summary: { type: "string" } },
+	required: ["title", "summary"],
+	additionalProperties: false,
+};
 
 async function summarize(
 	env: Env,
@@ -192,27 +198,39 @@ async function summarize(
 
 	let text: string;
 	try {
-		const res = await fetch("https://api.anthropic.com/v1/messages", {
+		const res = await fetch("https://api.openai.com/v1/responses", {
 			method: "POST",
 			headers: {
-				"x-api-key": env.ANTHROPIC_KEY,
-				"anthropic-version": "2023-06-01",
+				Authorization: `Bearer ${env.OPENAI_KEY}`,
 				"content-type": "application/json",
 			},
 			body: JSON.stringify({
-				model: "claude-haiku-5-5",
-				max_tokens: 1024,
-				system: SYSTEM_PROMPT,
-				messages: [{ role: "user", content: `<transcript>\n${transcript}\n</transcript>` }],
+				model: "gpt-6-luna",
+				reasoning: { effort: "none" },
+				max_output_tokens: 1024,
+				input: [
+					{ role: "system", content: SYSTEM_PROMPT },
+					{ role: "user", content: `<transcript>\n${transcript}\n</transcript>` },
+				],
+				text: {
+					format: { type: "json_schema", name: "voice_note", schema: SUMMARY_SCHEMA, strict: true },
+				},
 			}),
 		});
-		if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`);
-		const data = (await res.json()) as { content: { type: string; text?: string }[] };
-		text = data.content.map((c) => c.text ?? "").join("");
+		if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
+		const data = (await res.json()) as {
+			output: { type: string; content?: { type: string; text?: string }[] }[];
+		};
+		text = data.output
+			.filter((o) => o.type === "message")
+			.flatMap((o) => o.content ?? [])
+			.filter((c) => c.type === "output_text")
+			.map((c) => c.text ?? "")
+			.join("");
 	} catch (err) {
 		// Помилка API: ретраїмо, але на останній спробі краще fallback, ніж DLQ.
 		if (lastAttempt) {
-			console.error("Anthropic failed on last attempt, using fallback:", err);
+			console.error("Summary API failed on last attempt, using fallback:", err);
 			return fallback;
 		}
 		throw err;
