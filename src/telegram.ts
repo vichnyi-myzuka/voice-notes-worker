@@ -75,14 +75,23 @@ type TgMessage = {
 
 export type ReceivedVoice = {
 	contentType: string;
-	fileId: string;
-	kind: string;
+	fileId?: string; // для тексту немає
+	kind: string; // voice | audio | text
 	// Голосове з каналу видаляється після публікації нотатки: нотатка містить те саме аудіо.
 	deleteChatId?: string;
 	deleteMessageId?: string;
 	// Відповідь голосовим на нотатку в каналі: інструкція редагування цієї нотатки.
 	replyTo?: string;
 };
+
+// ✍ (саме без U+FE0F, інакше REACTION_INVALID): запис прийнято. Не критично, якщо реакції вимкнені.
+async function react(env: Env, msg: TgMessage): Promise<void> {
+	await tg(env, "setMessageReaction", {
+		chat_id: msg.chat.id,
+		message_id: msg.message_id,
+		reaction: [{ type: "emoji", emoji: "✍" }],
+	}).catch((err) => console.error("reaction failed:", err));
+}
 
 // Приймає голосове чи аудіо й кладе в R2 і чергу (через store).
 // Канал: лише дописи в CHAT_ID без підпису (у нотаток бота підпис є завжди), публікувати там можуть лише адміни.
@@ -98,6 +107,21 @@ export async function receiveTelegramVoice(
 	if (!inChannel && !inPrivate) return;
 
 	const file = msg.voice ?? msg.audio;
+
+	// Текстова відповідь на нотатку в каналі — інструкція редагування (без транскрипції).
+	if (!file && inChannel && msg.text && msg.reply_to_message) {
+		const key = `${msg.date * 1000}-${crypto.randomUUID().slice(0, 8)}.txt`;
+		await store(key, new TextEncoder().encode(msg.text).buffer as ArrayBuffer, {
+			contentType: "text/plain; charset=utf-8",
+			kind: "text",
+			deleteChatId: String(msg.chat.id),
+			deleteMessageId: String(msg.message_id),
+			replyTo: String(msg.reply_to_message.message_id),
+		});
+		await react(env, msg);
+		return;
+	}
+
 	if (!file) {
 		if (inPrivate && msg.text?.startsWith("/start")) {
 			await tgSendMessage(env, msg.chat.id, "Надішли голосове або аудіофайл: я розшифрую його, а нотатка з'явиться в каналі.");
@@ -125,12 +149,7 @@ export async function receiveTelegramVoice(
 			...(inChannel && { deleteChatId: String(msg.chat.id), deleteMessageId: String(msg.message_id) }),
 			...(inChannel && msg.reply_to_message && { replyTo: String(msg.reply_to_message.message_id) }),
 		});
-		// ✍ (саме без U+FE0F, інакше REACTION_INVALID): запис прийнято, нотатка з'явиться в каналі. Не критично, якщо реакції вимкнені.
-		await tg(env, "setMessageReaction", {
-			chat_id: msg.chat.id,
-			message_id: msg.message_id,
-			reaction: [{ type: "emoji", emoji: "✍" }],
-		}).catch((err) => console.error("reaction failed:", err));
+		await react(env, msg);
 	} catch (err) {
 		console.error("telegram voice failed:", err);
 		await tgSendMessage(env, msg.chat.id, "⚠️ Не вдалося прийняти запис, спробуй ще раз.");
