@@ -210,6 +210,14 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 	const meta = state.meta;
 
+	// Тиша, шум або голосове «скасуй»: нічого не публікуємо, прибираємо все, включно з оригіналом у каналі.
+	if (meta.discard) {
+		console.log(`${key} discarded: ${meta.discard}`);
+		await deleteOriginal(env, obj.customMetadata);
+		await env.BUCKET.delete([key, stateKey, thingsKey]);
+		return;
+	}
+
 	// Тріаж задач для Things: лише якщо шорткат надіслав знімок і в нотатці є задачі.
 	// Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
 	if (state.triage === undefined) {
@@ -252,18 +260,22 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	// Голосове, надіслане в канал, видаляємо: нотатка вище містить те саме аудіо.
-	const { deleteChatId, deleteMessageId } = obj.customMetadata ?? {};
-	if (deleteChatId && deleteMessageId && !state.originalDeleted) {
-		try {
-			await tg(env, "deleteMessage", { chat_id: deleteChatId, message_id: Number(deleteMessageId) });
-		} catch (err) {
-			console.error("delete original voice failed:", err); // не критично: нотатка вже є
-		}
+	if (!state.originalDeleted) {
+		await deleteOriginal(env, obj.customMetadata);
 		state.originalDeleted = true;
 		await save();
 	}
 
 	await env.BUCKET.delete([key, stateKey, thingsKey]);
+}
+
+// Видаляє оригінальне голосове з каналу (якщо запис прийшов звідти). Збій не критичний.
+async function deleteOriginal(env: Env, meta: Record<string, string> | undefined): Promise<void> {
+	const { deleteChatId, deleteMessageId } = meta ?? {};
+	if (!deleteChatId || !deleteMessageId) return;
+	await tg(env, "deleteMessage", { chat_id: deleteChatId, message_id: Number(deleteMessageId) }).catch((err) =>
+		console.error("delete original voice failed:", err),
+	);
 }
 
 // ---------- Workers AI: whisper-large-v3-turbo ----------
@@ -288,7 +300,8 @@ Rules:
 - ideas: the main thoughts, decisions or insights voiced in the note, up to 5 items, each under 12 words. Do not repeat the summary word for word.
 - tasks: concrete action items, todos, reminders and wishes for later ("колись хочу прочитати…") mentioned in the note, up to 10 items, each under 12 words and starting with a verb; include deadlines or people if mentioned. Keep separate actions as separate items.
 - Do not create vague "start" tasks ("почати роботу над…", "зайнятися…", "працювати над проєктом…") when the note also names a concrete action for the same thing. Merge them into one concrete task and keep the timing from the vague one. Example: "19 листопада треба почати новий проєкт, там треба розгорнути інстанс на Cloudflare" → one task: "Розгорнути інстанс на Cloudflare для нового проєкту" (the 19 November timing belongs to it).
-- If there are no ideas or no tasks, return an empty array for that field. Do not invent anything that is not in the transcript.`;
+- If there are no ideas or no tasks, return an empty array for that field. Do not invent anything that is not in the transcript.
+- discard: normally "none". Use "empty" when the transcript has no meaningful content: silence, noise, filler, or typical speech-recognition hallucinations on silence ("Дякую за перегляд", "Субтитри зроблені…", "Продовження наступне", a single repeated word). Use "cancelled" when the author explicitly asks to cancel, discard or not save this whole recording ("скасуй", "відміна, не зберігай", "видали цей запис", "забудь, не надсилай"), usually at the end. A cancel phrase that is about a real-world thing ("скасувати зустріч", "відмінити підписку") is a task, not "cancelled". When discard is not "none", the other fields may be empty.`;
 
 // Structured output: модель повертає JSON саме такої форми.
 const SUMMARY_SCHEMA = {
@@ -298,15 +311,16 @@ const SUMMARY_SCHEMA = {
 		summary: { type: "string" },
 		ideas: { type: "array", items: { type: "string" } },
 		tasks: { type: "array", items: { type: "string" } },
+		discard: { type: "string", enum: ["none", "empty", "cancelled"] },
 	},
-	required: ["title", "summary", "ideas", "tasks"],
+	required: ["title", "summary", "ideas", "tasks", "discard"],
 	additionalProperties: false,
 };
 
-type Meta = { title: string; summary: string; ideas: string[]; tasks: string[] };
+type Meta = { title: string; summary: string; ideas: string[]; tasks: string[]; discard?: "empty" | "cancelled" };
 
 async function summarize(env: Env, transcript: string, recordedAt: string, lastAttempt: boolean): Promise<Meta> {
-	if (!transcript) return { title: recordedAt, summary: "(порожній транскрипт)", ideas: [], tasks: [] };
+	if (!transcript) return { title: "", summary: "", ideas: [], tasks: [], discard: "empty" };
 
 	const meta = await askJson(
 		env,
@@ -327,6 +341,9 @@ async function summarize(env: Env, transcript: string, recordedAt: string, lastA
 
 function parseMeta(text: string): Meta {
 	const json = parseJsonObject(text);
+	if (json.discard === "empty" || json.discard === "cancelled") {
+		return { title: "", summary: "", ideas: [], tasks: [], discard: json.discard };
+	}
 	const title = String(json.title ?? "").trim();
 	const summary = String(json.summary ?? "").trim();
 	if (!title || !summary) throw new Error("empty title/summary");
