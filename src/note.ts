@@ -1,5 +1,5 @@
 import { parseJsonObject } from "./llm";
-import { formatTriage, taskValidator, type ThingsSnapshot, type TriageItem } from "./things";
+import { formatTriage, type TriageItem } from "./todoist";
 
 // Чиста логіка нотатки (без I/O): розбір відповідей моделі, підпис, хештеги. Покрита тестами.
 
@@ -19,22 +19,24 @@ export function parseMeta(text: string): Meta {
 	return { title, summary, ideas: list(json.ideas), tasks: list(json.tasks) };
 }
 
-// Задачі нотатки без тріажу (немає знімка Things) у форматі TriageItem з ключами t1, t2…
+const emptyFields = { title: "", duplicateOf: "", project: "", labels: [], priority: 4, due: "", deadline: "" };
+
+// Задачі нотатки без тріажу (немає Todoist) у форматі TriageItem з ключами t1, t2…
 export function plainTasks(tasks: string[]): TriageItem[] {
-	return tasks.map((t, i) => ({ title: t, duplicateOf: "", list: "", tags: [], when: "", deadline: "", key: `t${i + 1}` }));
+	return tasks.map((t, i) => ({ ...emptyFields, title: t, key: `t${i + 1}` }));
 }
 
 // Відповідь моделі редагування: нотатка + задачі з ключами.
-// Відомий ключ зберігається (за ним знаходимо задачу в Things), невідомий або повторний — новий ключ.
+// Відомий ключ зберігається (за ним знаходимо задачу в Todoist), невідомий або повторний — новий ключ.
+// validate: перевірка полів Todoist (null — тріажу немає, лише назви задач).
 export function parseEditedNote(
 	text: string,
 	oldTasks: TriageItem[],
-	snap: ThingsSnapshot | null,
+	validate: ((r: Record<string, unknown>) => TriageItem) | null,
 ): { meta: Meta; triage: TriageItem[] | null } {
 	const json = parseJsonObject(text);
 	const meta = parseMeta(JSON.stringify({ ...json, tasks: [] }));
 	if (meta.discard) return { meta, triage: null };
-	const validate = snap ? taskValidator(snap) : null;
 	const oldByKey = new Map(oldTasks.map((t) => [t.key, t]));
 	let nextKey = Math.max(0, ...oldTasks.map((t) => Number(t.key?.slice(1)) || 0)) + 1;
 	const used = new Set<string>();
@@ -42,23 +44,21 @@ export function parseEditedNote(
 		let key = String(r.key ?? "");
 		if (!oldByKey.has(key) || used.has(key)) key = `t${nextKey++}`;
 		used.add(key);
-		const base = validate
-			? validate(r)
-			: { title: String(r.title ?? "").trim(), duplicateOf: "", list: "", tags: [], when: "", deadline: "" };
+		const base = validate ? validate(r) : { ...emptyFields, title: String(r.title ?? "").trim() };
 		// Дублікат лишається дублікатом, якщо це та сама задача (за ключем).
 		return { ...base, duplicateOf: oldByKey.get(key)?.duplicateOf ?? "", key };
 	});
 	const valid = items.filter((i) => i.title);
 	meta.tasks = valid.map((i) => i.title);
-	return { meta, triage: snap ? valid : null };
+	return { meta, triage: validate ? valid : null };
 }
 
 // Підпис до аудіо: назва, summary і (якщо є) списки думок і задач.
 // Якщо був тріаж, задачі показуються з проєктом, тегами, датами й позначкою дублікатів.
-export function formatCaption({ title, summary, ideas, tasks }: Meta, triaged: TriageItem[] | null, inThings?: Set<string>): string {
+export function formatCaption({ title, summary, ideas, tasks }: Meta, triaged: TriageItem[] | null, inTodoist?: Set<string>): string {
 	const parts = [title, summary];
 	if (ideas.length) parts.push(`💡 Ключові думки:\n${ideas.map((i) => `• ${i}`).join("\n")}`);
-	if (triaged?.length) parts.push(`✅ Задачі:\n${formatTriage(triaged, inThings)}`);
+	if (triaged?.length) parts.push(`✅ Задачі:\n${formatTriage(triaged, inTodoist)}`);
 	else if (tasks.length) parts.push(`✅ Задачі:\n${tasks.map((t) => `• ${t}`).join("\n")}`);
 	return parts.join("\n\n");
 }
@@ -70,19 +70,19 @@ export function buildCaption(
 	ts: number,
 	timeZone: string,
 	notice = "",
-	inThings?: Set<string>, // ключі задач, які вже в Things (☑️)
+	inTodoist?: Set<string>, // ключі задач, які вже в Todoist (☑️)
 ): string {
 	const tail = [notice, hashtags(new Date(ts), timeZone, triaged)].filter(Boolean).join("\n\n");
-	return `${truncate(formatCaption(meta, triaged, inThings), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
+	return `${truncate(formatCaption(meta, triaged, inTodoist), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
 }
 
-// Хештеги для навігації в каналі: місяць, ISO-тиждень (у timeZone) і області нових задач.
+// Хештеги для навігації в каналі: місяць, ISO-тиждень (у timeZone) і проєкти нових задач.
 const MONTHS = ["січень", "лютий", "березень", "квітень", "травень", "червень", "липень", "серпень", "вересень", "жовтень", "листопад", "грудень"];
 
 export function hashtags(date: Date, timeZone: string, triaged: TriageItem[] | null): string {
 	const [y, m, d] = new Intl.DateTimeFormat("sv-SE", { timeZone }).format(date).split("-").map(Number);
 	const week = isoWeek(y, m, d);
-	const lists = [...new Set((triaged ?? []).filter((i) => !i.duplicateOf && i.list).map((i) => i.list))];
+	const lists = [...new Set((triaged ?? []).filter((i) => !i.duplicateOf && i.project).map((i) => i.project))];
 	return [`#${MONTHS[m - 1]}_${y}`, `#тиждень_${week}`, ...lists.map((l) => `#${l.replace(/[^\p{L}\p{N}_]+/gu, "_")}`)].join(" ");
 }
 

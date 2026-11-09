@@ -1,24 +1,24 @@
 import { askJson } from "./llm";
 import { buildCaption, parseEditedNote, parseMeta, plainTasks, type Meta } from "./note";
+import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote } from "./telegram";
 import {
-	createThingsLink,
-	getInThings,
-	handleThingsDone,
-	handleThingsLink,
-	page,
-	planThingsOps,
+	applyAction,
+	createAction,
+	deleteAction,
+	EDIT_TASKS_HELP,
+	fetchSnapshot,
+	getInTodoist,
+	planOps,
 	promptDate,
-	setThingsLinkMessage,
-	snapshotFromForm,
+	setActionMessage,
 	taskFieldsSchema,
 	taskRulesBlock,
-	thingsLinkUsed,
+	taskValidator,
 	triage,
-	type ThingsOp,
-	type ThingsSnapshot,
+	type TodoistOp,
+	type TodoistSnapshot,
 	type TriageItem,
-} from "./things";
-import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote } from "./telegram";
+} from "./todoist";
 
 export interface Env {
 	AI: Ai;
@@ -29,13 +29,13 @@ export interface Env {
 	OPENAI_KEY?: string; // для gpt-6-luna; без нього одразу Gemma
 	BOT_TOKEN: string;
 	CHAT_ID: string; // куди надсилати нотатки (канал)
-	TG_WEBHOOK_SECRET?: string; // секрет вебхука для голосових з особистого чату
-	TG_OWNER_ID?: string; // Telegram user id, від якого бот приймає голосові
+	TG_WEBHOOK_SECRET?: string; // секрет вебхука Telegram
+	TG_OWNER_ID?: string; // Telegram user id власника: голосові в приваті й натискання кнопок
+	TODOIST_TOKEN?: string; // без нього нотатки йдуть без тріажу задач
 	// vars
 	TIMEZONE: string;
-	PUBLIC_URL: string; // адреса воркера для кнопок «Додати в Things» і «Редагувати»
+	PUBLIC_URL: string; // адреса воркера для кнопки «Редагувати»
 	SHORTCUT_NAME: string; // назва шорткату, який відкриває кнопка «Редагувати»
-	THINGS_AUTH_TOKEN?: string; // токен Things URL scheme: потрібен, щоб оновлювати вже додані задачі
 	LOCAL_DEV?: string; // ставиться лише в `npm run dev`
 }
 
@@ -49,13 +49,13 @@ type State = {
 	transcript?: string;
 	meta?: Meta;
 	triage?: TriageItem[] | null; // null: тріаж не вдався або не потрібен
-	thingsLinkId?: string;
-	thingsLabel?: string; // текст кнопки Things: «➕ Додати…» або «🔄 Оновити…»
+	actionId?: string; // дія для кнопки Todoist ("" — робити нічого)
+	actionLabel?: string; // «➕ Додати в Todoist (N)» або «🔄 Оновити в Todoist (N)»
 	audioSent?: boolean;
 	messageId?: number; // id повідомлення з аудіо в Telegram
-	messageLinked?: boolean; // посилання на повідомлення дописане в дані кнопки
+	messageLinked?: boolean; // посилання на повідомлення дописане в дію
 	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
-	noteId?: string; // id для кнопки «Редагувати», створюється до відправки
+	noteId?: string; // id нотатки (кнопка «Редагувати»), створюється до відправки
 	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено
 };
 
@@ -66,7 +66,7 @@ type Note = {
 	edits: string[]; // інструкції попередніх редагувань
 	meta: Meta;
 	triage: TriageItem[] | null;
-	thingsLinkId?: string;
+	actionId?: string;
 	messageId: number;
 	recordedTs: number;
 };
@@ -79,41 +79,28 @@ const MAX_RETRIES = 4; // той самий, що max_retries у wrangler.toml
 // 25 MB це ~50 хв аудіо iPhone (~64 kbps) або ~100 хв при 32 kbps, тобто з запасом.
 const TRANSCRIBE_MAX_BYTES = 25_000_000;
 const TELEGRAM_MAX_BYTES = 50_000_000; // ліміт Bot API на upload: 50 MB
-const LATEST_SNAPSHOT_KEY = "things/latest-snapshot.json"; // для голосових з Telegram
 
-// Кладе аудіо в R2 (разом зі знімком Things, якщо є) і ставить у чергу.
+// Кладе аудіо в R2 і ставить у чергу.
 async function enqueueNote(
 	env: Env,
 	key: string,
 	body: ArrayBuffer,
 	contentType: string,
-	snapshot: ThingsSnapshot | null,
 	customMetadata?: Record<string, string | undefined>,
 	edit?: string,
 ): Promise<void> {
 	const meta = Object.fromEntries(Object.entries(customMetadata ?? {}).filter(([, v]) => v !== undefined)) as Record<string, string>;
 	await env.BUCKET.put(key, body, { httpMetadata: { contentType }, customMetadata: meta });
-	if (snapshot) await env.BUCKET.put(`${key}.things.json`, JSON.stringify(snapshot));
 	await env.QUEUE.send(edit ? { key, edit } : { key });
 }
+
+type TgCallback = { id: string; from: { id: number }; data?: string };
 
 export default {
 	async fetch(req, env): Promise<Response> {
 		const url = new URL(req.url);
 
-		// Сторінка кнопки «Додати в Things» (без секрету: id випадковий і одноразовий).
-		const link = url.pathname.match(/^\/things\/([0-9a-f-]{36})$/);
-		if (link && req.method === "GET") return handleThingsLink(env, link[1], url.searchParams.has("force"));
-		// x-success від Things після додавання/оновлення: ID створених задач.
-		const done = url.pathname.match(/^\/things\/([0-9a-f-]{36})\/done$/);
-		if (done && req.method === "GET") {
-			const { response, noteId } = await handleThingsDone(env, done[1], url);
-			// Задачі вже в Things: позначаємо їх ☑️ і прибираємо кнопку Things. Збій не критичний.
-			if (noteId) await markAddedToThings(env, noteId).catch((err) => console.error("mark added failed:", err));
-			return response;
-		}
-
-		// Кнопка «Редагувати»: відкриває шорткат з edit:<id> на вході (Telegram-кнопки підтримують лише http(s)).
+		// Кнопка «Редагувати»: відкриває шорткат з edit:<id> на вході (url-кнопки Telegram підтримують лише http(s)).
 		const editLink = url.pathname.match(/^\/edit\/([0-9a-f-]{36})$/);
 		if (editLink && req.method === "GET") {
 			if (!(await env.BUCKET.head(noteKey(editLink[1])))) {
@@ -128,22 +115,24 @@ export default {
 			);
 		}
 
-		// Вебхук Telegram: голосові й аудіо, надіслані боту в особистий чат.
+		// Вебхук Telegram: голосові (канал і приват) і натискання кнопки Todoist.
 		if (url.pathname === "/telegram" && req.method === "POST") {
 			const token = req.headers.get("x-telegram-bot-api-secret-token") ?? "";
 			if (!env.TG_WEBHOOK_SECRET || !(await safeEqual(token, env.TG_WEBHOOK_SECRET))) {
 				return new Response("unauthorized", { status: 401 });
 			}
 			type Msg = Parameters<typeof receiveTelegramVoice>[1];
-			const update = (await req.json()) as { message?: Msg; channel_post?: Msg };
+			const update = (await req.json()) as { message?: Msg; channel_post?: Msg; callback_query?: TgCallback };
+			if (update.callback_query) {
+				await handleCallback(env, update.callback_query);
+				return new Response("ok");
+			}
 			const msg = update.message ?? update.channel_post;
 			if (msg) {
 				await receiveTelegramVoice(env, msg, async (key, body, { contentType, replyTo, ...meta }) => {
-					// Знімка від шорткату тут немає, тож беремо останній збережений.
-					const snapshot = await (await env.BUCKET.get(LATEST_SNAPSHOT_KEY))?.json<ThingsSnapshot>();
 					// Відповідь на повідомлення в каналі = редагування; "missing", якщо це не наша нотатка або вона застаріла.
 					const edit = replyTo && ((await (await env.BUCKET.get(noteByMessageKey(replyTo)))?.text()) || "missing");
-					await enqueueNote(env, key, body, contentType, snapshot ?? null, meta, edit || undefined);
+					await enqueueNote(env, key, body, contentType, meta, edit || undefined);
 				});
 			}
 			return new Response("ok");
@@ -156,17 +145,15 @@ export default {
 			return new Response("unauthorized", { status: 401 });
 		}
 
-		// Два формати: сирий файл у тілі або форма (audio + знімок Things).
+		// Два формати: сирий файл у тілі або форма (audio + edit). Інші поля форми ігноруються.
 		// Тіло читаємо повністю (не стрімом): R2 put потребує відомої довжини.
 		let body: ArrayBuffer;
-		let snapshot: ThingsSnapshot | null = null;
 		let edit: string | undefined; // поле edit = Shortcut Input; при запуску з кнопки «Редагувати» це edit:<id>
 		if ((req.headers.get("content-type") ?? "").startsWith("multipart/form-data")) {
 			const form = await req.formData();
 			const audio = form.get("audio");
 			if (!audio || typeof audio === "string") return new Response("missing audio field", { status: 400 });
 			body = await audio.arrayBuffer();
-			snapshot = snapshotFromForm(form);
 			edit = String(form.get("edit") ?? "").match(/edit:([0-9a-f-]{36})/)?.[1];
 		} else {
 			body = await req.arrayBuffer();
@@ -174,8 +161,7 @@ export default {
 		if (body.byteLength === 0) return new Response("empty body", { status: 400 });
 
 		const key = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.m4a`;
-		await enqueueNote(env, key, body, "audio/mp4", snapshot, undefined, edit);
-		if (snapshot) await env.BUCKET.put(LATEST_SNAPSHOT_KEY, JSON.stringify(snapshot));
+		await enqueueNote(env, key, body, "audio/mp4", undefined, edit);
 		return new Response("ok");
 	},
 
@@ -208,6 +194,17 @@ export default {
 	},
 } satisfies ExportedHandler<Env, Job>;
 
+// Знімок Todoist для тріажу; без токена або при збої — null (нотатка прийде без тріажу).
+async function todoistSnapshot(env: Env): Promise<TodoistSnapshot | null> {
+	if (!env.TODOIST_TOKEN) return null;
+	try {
+		return await fetchSnapshot(env);
+	} catch (err) {
+		console.error("todoist snapshot failed:", err);
+		return null;
+	}
+}
+
 async function processNote(env: Env, key: string, lastAttempt: boolean): Promise<void> {
 	const obj = await env.BUCKET.get(key);
 	if (!obj) {
@@ -217,7 +214,6 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	const stateKey = `${key}.state.json`;
-	const thingsKey = `${key}.things.json`;
 	const state: State = (await (await env.BUCKET.get(stateKey))?.json<State>()) ?? {};
 	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
 	const recordedAt = formatRecordedAt(key, env.TIMEZONE);
@@ -254,7 +250,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 			state.audioSent = true;
 			await save();
 		}
-		await env.BUCKET.delete([key, stateKey, thingsKey]);
+		await env.BUCKET.delete([key, stateKey]);
 		return;
 	}
 
@@ -272,14 +268,13 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	if (meta.discard) {
 		console.log(`${key} discarded: ${meta.discard}`);
 		await deleteOriginal(env, obj.customMetadata);
-		await env.BUCKET.delete([key, stateKey, thingsKey]);
+		await env.BUCKET.delete([key, stateKey]);
 		return;
 	}
 
-	// Тріаж задач для Things: лише якщо шорткат надіслав знімок і в нотатці є задачі.
-	// Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
+	// Тріаж задач для Todoist. Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
 	if (state.triage === undefined) {
-		const snap = meta.tasks.length ? await (await env.BUCKET.get(thingsKey))?.json<ThingsSnapshot>() : null;
+		const snap = meta.tasks.length ? await todoistSnapshot(env) : null;
 		state.triage = snap
 			? await triage(env, state.transcript, meta.tasks, snap, new Date(recordedTs(key)), env.TIMEZONE)
 			: null;
@@ -287,41 +282,39 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 	const newTasks = state.triage?.filter((i) => !i.duplicateOf) ?? [];
 	state.noteId ??= crypto.randomUUID();
-	if (newTasks.length && !state.thingsLinkId) {
-		const ops: ThingsOp[] = newTasks.map((item) => ({ key: item.key ?? "", item }));
-		state.thingsLinkId = await createThingsLink(env, ops, `🎙 ${meta.title} (${recordedAt})`, state.noteId);
-		state.thingsLabel = `➕ Додати в Things (${ops.length})`;
-		console.log(`things link ${state.thingsLinkId}: ${newTasks.length} new, ${state.triage!.length - newTasks.length} duplicates`);
-		// Telegram не приймає localhost у кнопках, тож при локальному запуску посилання беремо з логу.
-		if (env.LOCAL_DEV) console.log(`open locally: http://localhost:8787/things/${state.thingsLinkId}`);
+	if (newTasks.length && !state.actionId) {
+		const ops: TodoistOp[] = newTasks.map((item) => ({ key: item.key ?? "", item }));
+		state.actionId = await createAction(env, ops, `🎙 ${meta.title} (${recordedAt})`, state.noteId);
+		state.actionLabel = `➕ Додати в Todoist (${ops.length})`;
+		console.log(`todoist action ${state.actionId}: ${newTasks.length} new, ${state.triage!.length - newTasks.length} duplicates`);
 		await save();
 	}
 
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
 		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE);
-		const buttons = noteButtons(env, state.noteId, state.thingsLinkId, state.thingsLabel);
+		const buttons = noteButtons(env, state.noteId, state.actionId, state.actionLabel);
 		state.messageId = await tgSendNote(env, source, meta.title, caption, buttons);
 		state.audioSent = true;
 		await save();
 	}
 
-	// Посилання на повідомлення в нотатки задач Things (лише для каналів і супергруп).
+	// Посилання на повідомлення в описі задач Todoist (лише для каналів і супергруп).
 	const messageUrl = state.messageId && telegramMessageUrl(env.CHAT_ID, state.messageId);
-	if (state.thingsLinkId && messageUrl && !state.messageLinked) {
-		await setThingsLinkMessage(env, state.thingsLinkId, messageUrl);
+	if (state.actionId && messageUrl && !state.messageLinked) {
+		await setActionMessage(env, state.actionId, messageUrl);
 		state.messageLinked = true;
 		await save();
 	}
 
 	// Зберігаємо нотатку для редагування (повторний запис при ретраї нічого не ламає).
-	if (state.noteId && state.messageId) {
+	if (state.messageId) {
 		const note: Note = {
 			transcript: state.transcript,
 			edits: [],
 			meta,
 			triage: state.triage ?? null,
-			thingsLinkId: state.thingsLinkId,
+			actionId: state.actionId || undefined,
 			messageId: state.messageId,
 			recordedTs: recordedTs(key),
 		};
@@ -337,7 +330,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		await save();
 	}
 
-	await env.BUCKET.delete([key, stateKey, thingsKey]);
+	await env.BUCKET.delete([key, stateKey]);
 }
 
 // ---------- Редагування нотатки голосовою інструкцією ----------
@@ -345,7 +338,6 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	const obj = await env.BUCKET.get(key);
 	if (!obj) return; // уже оброблено
 	const stateKey = `${key}.state.json`;
-	const thingsKey = `${key}.things.json`;
 	// Поки редагуємо, на нотатці стоїть 👨‍💻 (✏ серед реакцій для ботів немає).
 	const markEditing = (on: boolean, messageId: number) =>
 		tg(env, "setMessageReaction", {
@@ -356,7 +348,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	const cleanup = async (messageId?: number) => {
 		if (messageId) await markEditing(false, messageId);
 		await deleteOriginal(env, obj.customMetadata); // інструкцію з каналу прибираємо
-		await env.BUCKET.delete([key, stateKey, thingsKey]);
+		await env.BUCKET.delete([key, stateKey]);
 	};
 	const state: State = (await (await env.BUCKET.get(stateKey))?.json<State>()) ?? {};
 	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
@@ -375,11 +367,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	}
 	const instruction = state.transcript;
 	if (state.meta === undefined) {
-		// Знімок від шорткату (кнопка «Редагувати») або останній збережений (відповідь у Telegram).
-		const snap =
-			(await (await env.BUCKET.get(thingsKey))?.json<ThingsSnapshot>()) ??
-			(await (await env.BUCKET.get(LATEST_SNAPSHOT_KEY))?.json<ThingsSnapshot>()) ??
-			null;
+		const snap = await todoistSnapshot(env);
 		const edited = instruction ? await editNote(env, note, instruction, snap) : null;
 		if (instruction && !edited && !lastAttempt) throw new Error("All edit models failed");
 		// Порожня інструкція або (на останній спробі) збій моделей: нотатку лишаємо як є.
@@ -394,43 +382,29 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		return;
 	}
 
-	// Порівнюємо з тим, що вже є в Things: змінені задачі оновлюємо, нові створюємо, прибрані скасовуємо.
-	const inThings = await getInThings(env, noteId);
-	let notice = "";
-	if (state.thingsLinkId === undefined) {
-		const ops = state.triage ? planThingsOps(state.triage, inThings) : [];
+	// Порівнюємо з тим, що вже є в Todoist: змінені задачі оновлюємо, нові створюємо, прибрані видаляємо.
+	const inTodoist = await getInTodoist(env, noteId);
+	if (state.actionId === undefined) {
+		const ops = state.triage ? planOps(state.triage, inTodoist) : [];
 		if (ops.length) {
 			const recorded = formatRecordedAt(String(note.recordedTs), env.TIMEZONE);
-			state.thingsLinkId = await createThingsLink(env, ops, `🎙 ${meta.title} (${recorded})`, noteId);
+			state.actionId = await createAction(env, ops, `🎙 ${meta.title} (${recorded})`, noteId);
 			const messageUrl = telegramMessageUrl(env.CHAT_ID, note.messageId);
-			if (messageUrl) await setThingsLinkMessage(env, state.thingsLinkId, messageUrl);
-			state.thingsLabel = ops.some((op) => op.thingsId)
-				? `🔄 Оновити в Things (${ops.length})`
-				: `➕ Додати в Things (${ops.length})`;
-			const n = (f: (op: ThingsOp) => boolean) => ops.filter(f).length;
+			if (messageUrl) await setActionMessage(env, state.actionId, messageUrl);
+			state.actionLabel = ops.some((op) => op.id) ? `🔄 Оновити в Todoist (${ops.length})` : `➕ Додати в Todoist (${ops.length})`;
+			const n = (f: (op: TodoistOp) => boolean) => ops.filter(f).length;
 			console.log(
-				`things link ${state.thingsLinkId}: ${n((o) => !o.thingsId)} create, ${n((o) => !!o.thingsId && !!o.item)} update, ${n((o) => !o.item)} cancel`,
+				`todoist action ${state.actionId}: ${n((o) => !o.id)} create, ${n((o) => !!o.id && !!o.item)} update, ${n((o) => !o.item)} delete`,
 			);
 		} else {
-			state.thingsLinkId = "";
+			state.actionId = "";
 		}
 		await save();
 	}
 
 	if (!state.captionEdited) {
-		// Задачі, додані до появи x-success, ми не можемо знайти в Things: попереджаємо про можливі дублікати.
-		const legacyAdded =
-			!Object.keys(inThings).length && state.thingsLinkId && note.thingsLinkId && (await thingsLinkUsed(env, note.thingsLinkId));
-		if (legacyAdded) notice = "ℹ️ Попередні задачі вже додавались у Things: кнопка додасть змінені як нові.";
-		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice, new Set(Object.keys(inThings)));
-		await tg(env, "editMessageCaption", {
-			chat_id: env.CHAT_ID,
-			message_id: note.messageId,
-			caption,
-			reply_markup: noteButtons(env, noteId, state.thingsLinkId, state.thingsLabel),
-		}).catch((err) => {
-			if (!String(err).includes("message is not modified")) throw err;
-		});
+		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, "", new Set(Object.keys(inTodoist)));
+		await editNoteMessage(env, note.messageId, caption, noteButtons(env, noteId, state.actionId, state.actionLabel));
 		state.captionEdited = true;
 		await save();
 	}
@@ -440,33 +414,58 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		edits: [...note.edits, instruction],
 		meta,
 		triage: state.triage ?? null,
-		thingsLinkId: state.thingsLinkId || undefined,
+		actionId: state.actionId || undefined,
 	};
 	await env.BUCKET.put(noteKey(noteId), JSON.stringify(updated));
-	if (note.thingsLinkId && note.thingsLinkId !== state.thingsLinkId) await env.BUCKET.delete(`things/${note.thingsLinkId}.json`);
+	// Стара дія (якщо її не натиснули) більше не актуальна.
+	if (note.actionId && note.actionId !== state.actionId) await deleteAction(env, note.actionId);
 	console.log(`note ${noteId} edited`);
 	await cleanup(note.messageId);
 }
 
-// Після x-success: підпис з ☑️ біля задач, що вже в Things, і без кнопки Things (усе застосовано).
-async function markAddedToThings(env: Env, noteId: string): Promise<void> {
-	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
-	if (!note) return;
-	const inThings = new Set(Object.keys(await getInThings(env, noteId)));
-	await tg(env, "editMessageCaption", {
-		chat_id: env.CHAT_ID,
-		message_id: note.messageId,
-		caption: buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, "", inThings),
-		reply_markup: noteButtons(env, noteId, undefined, undefined),
-	}).catch((err) => {
-		if (!String(err).includes("message is not modified")) throw err;
-	});
+// ---------- Кнопка Todoist (callback_query) ----------
+async function handleCallback(env: Env, cb: TgCallback): Promise<void> {
+	const answer = (text: string, alert = false) =>
+		tg(env, "answerCallbackQuery", { callback_query_id: cb.id, text, show_alert: alert }).catch((err) =>
+			console.error("answerCallbackQuery failed:", err),
+		);
+	if (env.TG_OWNER_ID && String(cb.from.id) !== env.TG_OWNER_ID) return void (await answer("Немає доступу"));
+	const id = cb.data?.match(/^td:([0-9a-f-]{36})$/)?.[1];
+	if (!id) return void (await answer(""));
+	try {
+		const res = await applyAction(env, id);
+		if (res.status === "missing") return void (await answer("Дія застаріла (зберігається 7 днів)", true));
+		if (res.status === "already") return void (await answer("Вже виконано"));
+		console.log(`todoist action ${id} applied: ${res.count} ops`);
+		await answer(`✅ Todoist: ${res.count}`);
+		await markInTodoist(env, res.noteId).catch((err) => console.error("mark in todoist failed:", err));
+	} catch (err) {
+		console.error(`todoist action ${id} failed:`, err);
+		await answer("⚠️ Не вдалося оновити Todoist, спробуй ще раз", true);
+	}
 }
 
-// Кнопки під нотаткою: «Додати / Оновити в Things» (якщо є що робити) і «Редагувати».
-function noteButtons(env: Env, noteId: string, thingsLinkId: string | undefined, thingsLabel: string | undefined) {
-	const row = [{ text: "✏️ Редагувати", url: `${env.PUBLIC_URL}/edit/${noteId}` }];
-	if (thingsLinkId) row.unshift({ text: thingsLabel ?? "➕ Додати в Things", url: `${env.PUBLIC_URL}/things/${thingsLinkId}` });
+// Після виконання дії: ☑️ біля задач, що вже в Todoist, і без кнопки Todoist.
+async function markInTodoist(env: Env, noteId: string): Promise<void> {
+	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
+	if (!note) return;
+	const inTodoist = new Set(Object.keys(await getInTodoist(env, noteId)));
+	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, "", inTodoist);
+	await editNoteMessage(env, note.messageId, caption, noteButtons(env, noteId, undefined, undefined));
+}
+
+async function editNoteMessage(env: Env, messageId: number, caption: string, replyMarkup: object): Promise<void> {
+	await tg(env, "editMessageCaption", { chat_id: env.CHAT_ID, message_id: messageId, caption, reply_markup: replyMarkup }).catch(
+		(err) => {
+			if (!String(err).includes("message is not modified")) throw err;
+		},
+	);
+}
+
+// Кнопки під нотаткою: «Додати / Оновити в Todoist» (якщо є що робити) і «Редагувати».
+function noteButtons(env: Env, noteId: string, actionId: string | undefined, actionLabel: string | undefined) {
+	const row: object[] = [{ text: "✏️ Редагувати", url: `${env.PUBLIC_URL}/edit/${noteId}` }];
+	if (actionId) row.unshift({ text: actionLabel ?? "➕ Додати в Todoist", callback_data: `td:${actionId}` });
 	return { inline_keyboard: [row] };
 }
 
@@ -541,12 +540,9 @@ async function summarize(env: Env, transcript: string, recordedAt: string, lastA
 const EDIT_SYSTEM = `${SYSTEM_PROMPT}
 
 Editing mode: you get an existing note (<note> JSON), its original transcript, earlier edit instructions and a new spoken edit instruction from the author.
-Return the full updated note. Apply exactly what the instruction asks (rename, add, remove, reword, change dates, areas or tags of tasks, etc.) and keep everything else unchanged.
+Return the full updated note. Apply exactly what the instruction asks (rename, add, remove, reword, change dates, projects, labels or priority of tasks, etc.) and keep everything else unchanged.
 Tasks: return every task that should remain, in order. An existing task keeps its "key" even if you change its title or fields; a new task gets key "". A removed task is simply omitted.
-If tasks have Things fields (list, tags, when, deadline), copy them unchanged unless the instruction changes them. Field meanings:
-- list: a project or area from <lists>, or "" (Inbox). tags: only from <allowed_tags>.
-- when: "today", "tomorrow", "evening", "anytime", "someday", a date YYYY-MM-DD, or "". deadline: YYYY-MM-DD or "".
-- Task titles never contain dates or timing words: timing goes only to when/deadline. Follow the author's <rules>.
+${EDIT_TASKS_HELP}
 Relative dates in the instruction ("сьогодні", "завтра", "в п'ятницю") are counted from the edit date; in the original transcript, from the recording date.
 In editing mode, discard means: "cancelled" if the author cancels this edit itself ("скасуй", "нічого не міняй"); "empty" if the instruction has no meaningful content; otherwise "none".`;
 
@@ -554,28 +550,29 @@ async function editNote(
 	env: Env,
 	note: Note,
 	instruction: string,
-	snap: ThingsSnapshot | null,
+	snap: TodoistSnapshot | null,
 ): Promise<{ meta: Meta; triage: TriageItem[] | null } | null> {
 	const { title, summary, ideas } = note.meta;
 	const oldTasks = note.triage ?? plainTasks(note.meta.tasks);
-	const tasks = oldTasks.map(({ key, title, list, tags, when, deadline, duplicateOf }) =>
+	const tasks = oldTasks.map(({ key, title, project, labels, priority, due, deadline, duplicateOf }) =>
 		snap
-			? { key, title, list, tags, when, deadline, ...(duplicateOf && { already_in_things_as: duplicateOf }) }
+			? { key, title, project, labels, priority: `p${priority}`, due, deadline, ...(duplicateOf && { already_exists_as: duplicateOf }) }
 			: { key, title },
 	);
 	const taskSchema = {
 		type: "object",
 		properties: { key: { type: "string" }, title: { type: "string" }, ...(snap ? taskFieldsSchema(snap) : {}) },
-		required: snap ? ["key", "title", "list", "tags", "when", "deadline"] : ["key", "title"],
+		required: snap ? ["key", "title", "project", "labels", "priority", "due", "deadline"] : ["key", "title"],
 		additionalProperties: false,
 	};
 	const schema = {
 		...SUMMARY_SCHEMA,
 		properties: { ...SUMMARY_SCHEMA.properties, tasks: { type: "array", items: taskSchema } },
 	};
+	const now = new Date();
 	const user = [
 		`Recording date: ${promptDate(new Date(note.recordedTs), env.TIMEZONE)}`,
-		`Edit date: ${promptDate(new Date(), env.TIMEZONE)}`,
+		`Edit date: ${promptDate(now, env.TIMEZONE)}`,
 		snap ? taskRulesBlock(snap) : "",
 		`<note>\n${JSON.stringify({ title, summary, ideas, tasks })}\n</note>`,
 		`<transcript>\n${note.transcript}\n</transcript>`,
@@ -585,8 +582,10 @@ async function editNote(
 		.filter(Boolean)
 		.join("\n\n");
 
+	// "today"/"tomorrow" у правці рахуються від дати правки.
+	const validate = snap ? taskValidator(snap, now, env.TIMEZONE) : null;
 	return askJson(env, { name: "voice_note_edit", system: EDIT_SYSTEM, user, schema }, (text) =>
-		parseEditedNote(text, oldTasks, snap),
+		parseEditedNote(text, oldTasks, validate),
 	);
 }
 
@@ -609,4 +608,17 @@ function formatRecordedAt(key: string, timeZone: string): string {
 	return new Intl.DateTimeFormat("sv-SE", { timeZone, dateStyle: "short", timeStyle: "short" }).format(
 		new Date(recordedTs(key)),
 	);
+}
+
+function page(title: string, body: string, status = 200, head = ""): Response {
+	const html = `<!doctype html><html lang="uk"><head><meta charset="utf-8">${head}
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
+<style>body{font:17px -apple-system,system-ui,sans-serif;margin:3em 1.5em;text-align:center}
+.btn{display:inline-block;padding:.8em 1.4em;border-radius:12px;background:#1b6ef3;color:#fff;text-decoration:none}</style>
+</head><body><h2>${escapeHtml(title)}</h2>${body}</body></html>`;
+	return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
+function escapeHtml(s: string): string {
+	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
