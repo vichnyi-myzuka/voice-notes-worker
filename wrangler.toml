@@ -11,6 +11,9 @@ enabled = true
 [vars]
 TIMEZONE = "Europe/Kyiv" # для fallback-назви "дата й час запису"
 
+[ai]
+binding = "AI" # Workers AI: whisper-large-v3-turbo
+
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "voice-notes"
