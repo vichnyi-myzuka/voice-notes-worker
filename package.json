@@ -6,11 +6,17 @@
     "dev": "wrangler dev --port 8787 --var LOCAL_DEV:1",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "lint": "oxlint --deny-warnings src test",
+    "test": "vitest run",
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261109.1",
+    "oxlint": "^1.16.0",
     "typescript": "^7.0.2",
+    "vitest": "^4.1.12",
     "wrangler": "^4.158.0"
   }
 }

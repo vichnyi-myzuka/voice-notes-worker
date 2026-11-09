@@ -79,6 +79,21 @@ npx wrangler deploy
 
 Кроки 2–4 і поля `projects`/`areas`/`todos` необов'язкові. Без них (або зі старим варіантом Request Body: **File**) усе працює як раніше, просто без тріажу й кнопки Things.
 
+## Тести, lint і git-хуки
+
+- `npm run lint` — oxlint (`src`, `test`).
+- `npm run typecheck` — `tsc --noEmit`.
+- `npm test` — vitest: unit-тести чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів Things, операції create/update/cancel і цикл посилання з x-success, фільтр вхідних повідомлень Telegram). Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
+- `npm run check` — усе разом (lint + typecheck + test).
+
+Git-хуки лежать в `.githooks/` і вмикаються автоматично після `npm install` (скрипт `prepare` ставить `core.hooksPath`):
+- pre-commit = lint + typecheck;
+- pre-push = `npm run check`.
+
+Якість промптів (регресії LLM) перевіряється вручну на записах з `test-audio/` (див. розділ нижче), а не в хуках: це платні моделі й десятки секунд.
+
+У надзвичайній ситуації обійти хуки: `git commit --no-verify`.
+
 ## Локальний тест
 
 ```sh

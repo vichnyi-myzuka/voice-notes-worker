@@ -49,7 +49,8 @@ export function telegramMessageUrl(chatId: string, messageId: number): string | 
 
 function safeFileName(name: string): string {
 	const clean = name
-		.replace(/[\/\\:*?"<>|\x00-\x1f]/g, " ")
+		// oxlint-disable-next-line no-control-regex -- керівні символи в назві файлу прибираємо навмисно
+		.replace(/[/\\:*?"<>|\x00-\x1f]/g, " ")
 		.replace(/\s+/g, " ")
 		.trim()
 		.slice(0, 80);

@@ -191,7 +191,28 @@ export function changedAttributes(prev: TriageItem, next: TriageItem): Record<st
 	return a;
 }
 
-function buildThingsUrl(ops: ThingsOp[], notes: string, authToken: string, successUrl?: string): string {
+// Що зробити в Things після редагування: змінені задачі оновити, нові створити, прибрані скасувати.
+// Дублікати існуючих задач не створюємо; незмінені задачі пропускаємо.
+export function planThingsOps(items: TriageItem[], inThings: InThings): ThingsOp[] {
+	const ops: ThingsOp[] = [];
+	const kept = new Set<string>();
+	for (const item of items) {
+		const prev = item.key ? inThings[item.key] : undefined;
+		if (prev) {
+			kept.add(item.key!);
+			const attributes = changedAttributes(prev.item, item);
+			if (Object.keys(attributes).length) ops.push({ key: item.key!, item, thingsId: prev.thingsId, attributes });
+		} else if (!item.duplicateOf) {
+			ops.push({ key: item.key ?? "", item });
+		}
+	}
+	for (const [key, prev] of Object.entries(inThings)) {
+		if (!kept.has(key)) ops.push({ key, item: null, thingsId: prev.thingsId, attributes: { canceled: true } });
+	}
+	return ops;
+}
+
+export function buildThingsUrl(ops: ThingsOp[], notes: string, authToken: string, successUrl?: string): string {
 	const data = ops.map((op) =>
 		op.thingsId
 			? { type: "to-do", operation: "update", id: op.thingsId, attributes: op.attributes ?? {} }
