@@ -53,7 +53,7 @@ const allowedTags: string[] = (() => {
 const TRIAGE_SYSTEM = `You triage tasks from a Ukrainian voice note into the author's Things 3 task manager.
 For each task in <tasks>, return exactly one item, in the same order:
 - quote: the exact fragment of the transcript where this specific task is mentioned (one sentence or clause, copied verbatim).
-- title: a concise to-do title in Ukrainian that starts with a verb. Keep the given wording unless it can be made clearer.
+- title: a concise to-do title in Ukrainian that starts with a verb. Keep the given wording unless it can be made clearer. Remove dates and timing words ("завтра", "19 листопада", "орієнтовно") from the title: timing goes only to when/deadline.
 - duplicate_of: if an existing open to-do in <existing_todos> means the same thing, copy its title exactly as written there; otherwise "". Only mark real duplicates, not merely related tasks.
 - list: the project or area from <lists> that clearly fits the task, or "" (Inbox) if none clearly fits. Never guess.
 - tags: tags from the allowed list that clearly apply, or [] if none.
