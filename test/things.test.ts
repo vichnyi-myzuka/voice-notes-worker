@@ -3,6 +3,7 @@ import {
 	buildThingsUrl,
 	changedAttributes,
 	createThingsLink,
+	formatTriage,
 	getInThings,
 	handleThingsDone,
 	handleThingsLink,
@@ -39,7 +40,9 @@ const decode = (url: string) => {
 const href = async (res: Response) =>
 	(await res.text()).match(/things:\/\/\/json\?[^"]+/)![0].replaceAll("&amp;", "&");
 const done = (env: ReturnType<typeof fakeEnv>, id: string, ids: string[]) =>
-	handleThingsDone(env, id, new URL(`https://worker.test/things/${id}/done?x-things-ids=${encodeURIComponent(JSON.stringify(ids))}`));
+	handleThingsDone(env, id, new URL(`https://worker.test/things/${id}/done?x-things-ids=${encodeURIComponent(JSON.stringify(ids))}`)).then(
+		(r) => r.noteId,
+	);
 
 describe("snapshotFromForm", () => {
 	it("рядки без порожніх і повторів; без жодного поля — null", () => {
@@ -100,6 +103,13 @@ describe("changedAttributes / planThingsOps", () => {
 	});
 });
 
+describe("formatTriage", () => {
+	it("задачі, що вже в Things, позначені ☑️", () => {
+		const text = formatTriage([item("А", { key: "t1", list: "Work" }), item("Б", { key: "t2", list: "Work" })], new Set(["t1"]));
+		expect(text).toBe("☑️ А → Work\n• Б → Work");
+	});
+});
+
 describe("buildThingsUrl", () => {
 	it("create з полями, update за id; auth-token і x-success лише коли передані", () => {
 		const url = buildThingsUrl(
@@ -143,12 +153,12 @@ describe("посилання Things: відкриття, x-success, оновле
 		expect(first.data[0].attributes.notes).toBe("🎙 н\nhttps://t.me/c/1/5");
 		expect(await (await handleThingsLink(env, id, false)).text()).toContain("Вже відкривалось");
 
-		await done(env, id, ["ID1", "ID2"]);
+		expect(await done(env, id, ["ID1", "ID2"])).toBe("note1"); // noteId → воркер оновить повідомлення
 		const state = await getInThings(env, "note1");
 		expect(Object.fromEntries(Object.entries(state).map(([k, v]) => [k, v.thingsId]))).toEqual({ t1: "ID1", t2: "ID2" });
 
-		// повторний x-success нічого не змінює
-		await done(env, id, ["X"]);
+		// повторний x-success нічого не змінює і не оновлює повідомлення
+		expect(await done(env, id, ["X"])).toBeUndefined();
 		expect((await getInThings(env, "note1")).t1.thingsId).toBe("ID1");
 
 		const upd = await createThingsLink(env, planThingsOps([item("А", { key: "t1", list: "Work", when: "today" })], state), "🎙 н", "note1");

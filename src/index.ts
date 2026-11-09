@@ -106,7 +106,12 @@ export default {
 		if (link && req.method === "GET") return handleThingsLink(env, link[1], url.searchParams.has("force"));
 		// x-success від Things після додавання/оновлення: ID створених задач.
 		const done = url.pathname.match(/^\/things\/([0-9a-f-]{36})\/done$/);
-		if (done && req.method === "GET") return handleThingsDone(env, done[1], url);
+		if (done && req.method === "GET") {
+			const { response, noteId } = await handleThingsDone(env, done[1], url);
+			// Задачі вже в Things: позначаємо їх ☑️ і прибираємо кнопку Things. Збій не критичний.
+			if (noteId) await markAddedToThings(env, noteId).catch((err) => console.error("mark added failed:", err));
+			return response;
+		}
 
 		// Кнопка «Редагувати»: відкриває шорткат з edit:<id> на вході (Telegram-кнопки підтримують лише http(s)).
 		const editLink = url.pathname.match(/^\/edit\/([0-9a-f-]{36})$/);
@@ -417,7 +422,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		const legacyAdded =
 			!Object.keys(inThings).length && state.thingsLinkId && note.thingsLinkId && (await thingsLinkUsed(env, note.thingsLinkId));
 		if (legacyAdded) notice = "ℹ️ Попередні задачі вже додавались у Things: кнопка додасть змінені як нові.";
-		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice);
+		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice, new Set(Object.keys(inThings)));
 		await tg(env, "editMessageCaption", {
 			chat_id: env.CHAT_ID,
 			message_id: note.messageId,
@@ -441,6 +446,21 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	if (note.thingsLinkId && note.thingsLinkId !== state.thingsLinkId) await env.BUCKET.delete(`things/${note.thingsLinkId}.json`);
 	console.log(`note ${noteId} edited`);
 	await cleanup(note.messageId);
+}
+
+// Після x-success: підпис з ☑️ біля задач, що вже в Things, і без кнопки Things (усе застосовано).
+async function markAddedToThings(env: Env, noteId: string): Promise<void> {
+	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
+	if (!note) return;
+	const inThings = new Set(Object.keys(await getInThings(env, noteId)));
+	await tg(env, "editMessageCaption", {
+		chat_id: env.CHAT_ID,
+		message_id: note.messageId,
+		caption: buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, "", inThings),
+		reply_markup: noteButtons(env, noteId, undefined, undefined),
+	}).catch((err) => {
+		if (!String(err).includes("message is not modified")) throw err;
+	});
 }
 
 // Кнопки під нотаткою: «Додати / Оновити в Things» (якщо є що робити) і «Редагувати».

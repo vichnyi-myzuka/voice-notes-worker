@@ -55,18 +55,25 @@ export function parseEditedNote(
 
 // Підпис до аудіо: назва, summary і (якщо є) списки думок і задач.
 // Якщо був тріаж, задачі показуються з проєктом, тегами, датами й позначкою дублікатів.
-export function formatCaption({ title, summary, ideas, tasks }: Meta, triaged: TriageItem[] | null): string {
+export function formatCaption({ title, summary, ideas, tasks }: Meta, triaged: TriageItem[] | null, inThings?: Set<string>): string {
 	const parts = [title, summary];
 	if (ideas.length) parts.push(`💡 Ключові думки:\n${ideas.map((i) => `• ${i}`).join("\n")}`);
-	if (triaged?.length) parts.push(`✅ Задачі:\n${formatTriage(triaged)}`);
+	if (triaged?.length) parts.push(`✅ Задачі:\n${formatTriage(triaged, inThings)}`);
 	else if (tasks.length) parts.push(`✅ Задачі:\n${tasks.map((t) => `• ${t}`).join("\n")}`);
 	return parts.join("\n\n");
 }
 
 // Підпис з хештегами окремим рядком у кінці: вони не обрізаються разом з довгим текстом.
-export function buildCaption(meta: Meta, triaged: TriageItem[] | null, ts: number, timeZone: string, notice = ""): string {
+export function buildCaption(
+	meta: Meta,
+	triaged: TriageItem[] | null,
+	ts: number,
+	timeZone: string,
+	notice = "",
+	inThings?: Set<string>, // ключі задач, які вже в Things (☑️)
+): string {
 	const tail = [notice, hashtags(new Date(ts), timeZone, triaged)].filter(Boolean).join("\n\n");
-	return `${truncate(formatCaption(meta, triaged), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
+	return `${truncate(formatCaption(meta, triaged, inThings), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
 }
 
 // Хештеги для навігації в каналі: місяць, ISO-тиждень (у timeZone) і області нових задач.
