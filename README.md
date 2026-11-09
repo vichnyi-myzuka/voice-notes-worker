@@ -42,6 +42,8 @@ npx wrangler secret put CHAT_ID         # ваш chat id (напишіть бо�
 # необов'язково, для голосових прямо з Telegram (див. «Голосові з Telegram»):
 npx wrangler secret put TG_WEBHOOK_SECRET  # `openssl rand -hex 32`
 npx wrangler secret put TG_OWNER_ID        # ваш Telegram user id (для особистого чату з ботом)
+# необов'язково, щоб редагування оновлювало вже додані задачі в Things:
+npx wrangler secret put THINGS_AUTH_TOKEN  # Things → Settings → General → Things URLs → auth-token
 
 # 4. Деплой
 npx wrangler deploy
@@ -106,6 +108,7 @@ curl -X POST http://localhost:8787 -H "x-secret: local-test" \
 | `silence.m4a` | тиша → нічого не публікується (`discarded: empty`) |
 | `cancelled.m4a` | «…стоп, скасуй цей запис» → нічого не публікується (`discarded: cancelled`) |
 | `cancel-meeting-task.m4a` | «скасувати зустріч», «відмінити підписку» — це задачі, нотатка публікується |
+| `edit-today.m4a`, `edit-remove.m4a` | правки після додавання в Things: «обидві на сьогодні + перейменуй» → 2 update; «прибери зустріч» → 1 cancel |
 | `edit-instruction.m4a` | інструкція редагування: «прибери задачу про Netflix, додай купити квіти мамі, терміново» (поле `edit=edit:<id>`) |
 | `mixed-tasks.m4a` | задачі в різних областях, пріоритет (`Critical`), `Pending`, дедлайн, «колись» → Want |
 
@@ -146,7 +149,9 @@ source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
 
 - Кнопка веде на `PUBLIC_URL/edit/<id>`, яка відкриває `shortcuts://run-shortcut?name=<SHORTCUT_NAME>&input=text&text=edit:<id>`; шорткат надсилає запис з полем `edit`.
 - Нотатки для редагування зберігаються в R2 (`notes/<id>.json`, `notes/msg-<message_id>`) і живуть 7 днів, як усе в бакеті.
-- Things не дає змінювати вже додані задачі: якщо кнопку «Додати в Things» вже натискали, нова кнопка додасть змінені задачі як нові, про що попереджає рядок у підписі.
+- Модель редагування бачить задачі разом з полями Things (область, теги, `when`, дедлайн) і стабільним ключем (`t1`, `t2`…) і міняє лише те, що просить інструкція («зроби все на сьогодні» → `when: today` для всіх).
+- **Оновлення в Things.** Кнопка «➕ Додати в Things» відкриває `things:///json` з `x-success=PUBLIC_URL/things/<id>/done`: після додавання Things на мить відкриває цю сторінку, і воркер зберігає ID створених задач (`notes/<id>.things.json`). Після редагування кнопка стає «🔄 Оновити в Things (N)»: змінені задачі оновлюються за ID (`operation: update`, лише змінені поля), нові створюються, прибрані позначаються як скасовані. Для оновлення потрібен секрет `THINGS_AUTH_TOKEN`.
+- Задачі, додані до появи `x-success` (або якщо сторінка після Things не відкрилась), знайти не можна: тоді кнопка додасть змінені задачі як нові, про що попереджає рядок у підписі.
 - «Скасуй» в інструкції скасовує саме правку; нотатка лишається як була.
 
 ## Хештеги

@@ -1,13 +1,21 @@
 import { askJson, parseJsonObject } from "./llm";
 import {
+	changedAttributes,
 	createThingsLink,
 	formatTriage,
+	getInThings,
+	handleThingsDone,
 	handleThingsLink,
 	page,
+	promptDate,
 	setThingsLinkMessage,
 	snapshotFromForm,
+	taskFieldsSchema,
+	taskRulesBlock,
+	taskValidator,
 	thingsLinkUsed,
 	triage,
+	type ThingsOp,
 	type ThingsSnapshot,
 	type TriageItem,
 } from "./things";
@@ -28,6 +36,7 @@ export interface Env {
 	TIMEZONE: string;
 	PUBLIC_URL: string; // адреса воркера для кнопок «Додати в Things» і «Редагувати»
 	SHORTCUT_NAME: string; // назва шорткату, який відкриває кнопка «Редагувати»
+	THINGS_AUTH_TOKEN?: string; // токен Things URL scheme: потрібен, щоб оновлювати вже додані задачі
 	LOCAL_DEV?: string; // ставиться лише в `npm run dev`
 }
 
@@ -42,6 +51,7 @@ type State = {
 	meta?: Meta;
 	triage?: TriageItem[] | null; // null: тріаж не вдався або не потрібен
 	thingsLinkId?: string;
+	thingsLabel?: string; // текст кнопки Things: «➕ Додати…» або «🔄 Оновити…»
 	audioSent?: boolean;
 	messageId?: number; // id повідомлення з аудіо в Telegram
 	messageLinked?: boolean; // посилання на повідомлення дописане в дані кнопки
@@ -96,6 +106,9 @@ export default {
 		// Сторінка кнопки «Додати в Things» (без секрету: id випадковий і одноразовий).
 		const link = url.pathname.match(/^\/things\/([0-9a-f-]{36})$/);
 		if (link && req.method === "GET") return handleThingsLink(env, link[1], url.searchParams.has("force"));
+		// x-success від Things після додавання/оновлення: ID створених задач.
+		const done = url.pathname.match(/^\/things\/([0-9a-f-]{36})\/done$/);
+		if (done && req.method === "GET") return handleThingsDone(env, done[1], url);
 
 		// Кнопка «Редагувати»: відкриває шорткат з edit:<id> на вході (Telegram-кнопки підтримують лише http(s)).
 		const editLink = url.pathname.match(/^\/edit\/([0-9a-f-]{36})$/);
@@ -270,8 +283,11 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		await save();
 	}
 	const newTasks = state.triage?.filter((i) => !i.duplicateOf) ?? [];
+	state.noteId ??= crypto.randomUUID();
 	if (newTasks.length && !state.thingsLinkId) {
-		state.thingsLinkId = await createThingsLink(env, newTasks, `🎙 ${meta.title} (${recordedAt})`);
+		const ops: ThingsOp[] = newTasks.map((item) => ({ key: item.key ?? "", item }));
+		state.thingsLinkId = await createThingsLink(env, ops, `🎙 ${meta.title} (${recordedAt})`, state.noteId);
+		state.thingsLabel = `➕ Додати в Things (${ops.length})`;
 		console.log(`things link ${state.thingsLinkId}: ${newTasks.length} new, ${state.triage!.length - newTasks.length} duplicates`);
 		// Telegram не приймає localhost у кнопках, тож при локальному запуску посилання беремо з логу.
 		if (env.LOCAL_DEV) console.log(`open locally: http://localhost:8787/things/${state.thingsLinkId}`);
@@ -280,9 +296,8 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
-		state.noteId ??= crypto.randomUUID();
 		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE);
-		const buttons = noteButtons(env, state.noteId, state.thingsLinkId, newTasks.length);
+		const buttons = noteButtons(env, state.noteId, state.thingsLinkId, state.thingsLabel);
 		state.messageId = await tgSendNote(env, source, meta.title, caption, buttons);
 		state.audioSent = true;
 		await save();
@@ -357,10 +372,16 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	}
 	const instruction = state.transcript;
 	if (state.meta === undefined) {
-		const edited = instruction ? await editNote(env, note, instruction) : null;
+		// Знімок від шорткату (кнопка «Редагувати») або останній збережений (відповідь у Telegram).
+		const snap =
+			(await (await env.BUCKET.get(thingsKey))?.json<ThingsSnapshot>()) ??
+			(await (await env.BUCKET.get(LATEST_SNAPSHOT_KEY))?.json<ThingsSnapshot>()) ??
+			null;
+		const edited = instruction ? await editNote(env, note, instruction, snap) : null;
 		if (instruction && !edited && !lastAttempt) throw new Error("All edit models failed");
 		// Порожня інструкція або (на останній спробі) збій моделей: нотатку лишаємо як є.
-		state.meta = edited ?? { title: "", summary: "", ideas: [], tasks: [], discard: "empty" };
+		state.meta = edited?.meta ?? { title: "", summary: "", ideas: [], tasks: [], discard: "empty" };
+		state.triage = edited?.triage ?? null;
 		await save();
 	}
 	const meta = state.meta;
@@ -370,39 +391,56 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		return;
 	}
 
-	// Тріаж заново: транскрипт разом з усіма правками, щоб дати й пріоритети бралися з них.
-	const fullTranscript = [note.transcript, ...note.edits, instruction].join("\n\n[Правка автора]: ");
-	if (state.triage === undefined) {
-		const snap = meta.tasks.length
-			? ((await (await env.BUCKET.get(thingsKey))?.json<ThingsSnapshot>()) ??
-				(await (await env.BUCKET.get(LATEST_SNAPSHOT_KEY))?.json<ThingsSnapshot>()))
-			: null;
-		state.triage = snap ? await triage(env, fullTranscript, meta.tasks, snap, new Date(note.recordedTs), env.TIMEZONE) : null;
-		await save();
-	}
-	const newTasks = state.triage?.filter((i) => !i.duplicateOf) ?? [];
-	const messageUrl = telegramMessageUrl(env.CHAT_ID, note.messageId);
-	if (newTasks.length && !state.thingsLinkId) {
-		state.thingsLinkId = await createThingsLink(env, newTasks, `🎙 ${meta.title} (${formatRecordedAt(String(note.recordedTs), env.TIMEZONE)})`);
-		if (messageUrl) await setThingsLinkMessage(env, state.thingsLinkId, messageUrl);
+	// Порівнюємо з тим, що вже є в Things: змінені задачі оновлюємо, нові створюємо, прибрані скасовуємо.
+	const inThings = await getInThings(env, noteId);
+	let notice = "";
+	if (state.thingsLinkId === undefined) {
+		const ops: ThingsOp[] = [];
+		if (state.triage) {
+			const kept = new Set<string>();
+			for (const item of state.triage) {
+				const prev = item.key ? inThings[item.key] : undefined;
+				if (prev) {
+					kept.add(item.key!);
+					const attributes = changedAttributes(prev.item, item);
+					if (Object.keys(attributes).length) ops.push({ key: item.key!, item, thingsId: prev.thingsId, attributes });
+				} else if (!item.duplicateOf) {
+					ops.push({ key: item.key ?? "", item });
+				}
+			}
+			for (const [k, prev] of Object.entries(inThings)) {
+				if (!kept.has(k)) ops.push({ key: k, item: null, thingsId: prev.thingsId, attributes: { canceled: true } });
+			}
+		}
+		if (ops.length) {
+			const recorded = formatRecordedAt(String(note.recordedTs), env.TIMEZONE);
+			state.thingsLinkId = await createThingsLink(env, ops, `🎙 ${meta.title} (${recorded})`, noteId);
+			const messageUrl = telegramMessageUrl(env.CHAT_ID, note.messageId);
+			if (messageUrl) await setThingsLinkMessage(env, state.thingsLinkId, messageUrl);
+			state.thingsLabel = ops.some((op) => op.thingsId)
+				? `🔄 Оновити в Things (${ops.length})`
+				: `➕ Додати в Things (${ops.length})`;
+			const n = (f: (op: ThingsOp) => boolean) => ops.filter(f).length;
+			console.log(
+				`things link ${state.thingsLinkId}: ${n((o) => !o.thingsId)} create, ${n((o) => !!o.thingsId && !!o.item)} update, ${n((o) => !o.item)} cancel`,
+			);
+		} else {
+			state.thingsLinkId = "";
+		}
 		await save();
 	}
 
 	if (!state.captionEdited) {
-		// Things не дає змінити вже додані задачі, тож попереджаємо, що нова кнопка додасть їх як нові.
-		const alreadyAdded = note.thingsLinkId && newTasks.length && (await thingsLinkUsed(env, note.thingsLinkId));
-		const caption = buildCaption(
-			meta,
-			state.triage ?? null,
-			note.recordedTs,
-			env.TIMEZONE,
-			alreadyAdded ? "ℹ️ Попередні задачі вже додавались у Things: кнопка додасть змінені як нові." : "",
-		);
+		// Задачі, додані до появи x-success, ми не можемо знайти в Things: попереджаємо про можливі дублікати.
+		const legacyAdded =
+			!Object.keys(inThings).length && state.thingsLinkId && note.thingsLinkId && (await thingsLinkUsed(env, note.thingsLinkId));
+		if (legacyAdded) notice = "ℹ️ Попередні задачі вже додавались у Things: кнопка додасть змінені як нові.";
+		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice);
 		await tg(env, "editMessageCaption", {
 			chat_id: env.CHAT_ID,
 			message_id: note.messageId,
 			caption,
-			reply_markup: noteButtons(env, noteId, state.thingsLinkId, newTasks.length),
+			reply_markup: noteButtons(env, noteId, state.thingsLinkId, state.thingsLabel),
 		}).catch((err) => {
 			if (!String(err).includes("message is not modified")) throw err;
 		});
@@ -410,17 +448,23 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		await save();
 	}
 
-	const updated: Note = { ...note, edits: [...note.edits, instruction], meta, triage: state.triage ?? null, thingsLinkId: state.thingsLinkId };
+	const updated: Note = {
+		...note,
+		edits: [...note.edits, instruction],
+		meta,
+		triage: state.triage ?? null,
+		thingsLinkId: state.thingsLinkId || undefined,
+	};
 	await env.BUCKET.put(noteKey(noteId), JSON.stringify(updated));
 	if (note.thingsLinkId && note.thingsLinkId !== state.thingsLinkId) await env.BUCKET.delete(`things/${note.thingsLinkId}.json`);
 	console.log(`note ${noteId} edited`);
 	await cleanup(note.messageId);
 }
 
-// Кнопки під нотаткою: «Додати в Things» (якщо є нові задачі) і «Редагувати».
-function noteButtons(env: Env, noteId: string, thingsLinkId: string | undefined, count: number) {
+// Кнопки під нотаткою: «Додати / Оновити в Things» (якщо є що робити) і «Редагувати».
+function noteButtons(env: Env, noteId: string, thingsLinkId: string | undefined, thingsLabel: string | undefined) {
 	const row = [{ text: "✏️ Редагувати", url: `${env.PUBLIC_URL}/edit/${noteId}` }];
-	if (thingsLinkId) row.unshift({ text: `➕ Додати в Things (${count})`, url: `${env.PUBLIC_URL}/things/${thingsLinkId}` });
+	if (thingsLinkId) row.unshift({ text: thingsLabel ?? "➕ Додати в Things", url: `${env.PUBLIC_URL}/things/${thingsLinkId}` });
 	return { inline_keyboard: [row] };
 }
 
@@ -503,18 +547,72 @@ async function summarize(env: Env, transcript: string, recordedAt: string, lastA
 const EDIT_SYSTEM = `${SYSTEM_PROMPT}
 
 Editing mode: you get an existing note (<note> JSON), its original transcript, earlier edit instructions and a new spoken edit instruction from the author.
-Return the full updated note. Apply exactly what the instruction asks (rename, add, remove, reword, change dates or details of tasks, etc.) and keep everything else unchanged.
+Return the full updated note. Apply exactly what the instruction asks (rename, add, remove, reword, change dates, areas or tags of tasks, etc.) and keep everything else unchanged.
+Tasks: return every task that should remain, in order. An existing task keeps its "key" even if you change its title or fields; a new task gets key "". A removed task is simply omitted.
+If tasks have Things fields (list, tags, when, deadline), copy them unchanged unless the instruction changes them. Field meanings:
+- list: a project or area from <lists>, or "" (Inbox). tags: only from <allowed_tags>.
+- when: "today", "tomorrow", "evening", "anytime", "someday", a date YYYY-MM-DD, or "". deadline: YYYY-MM-DD or "".
+- Task titles never contain dates or timing words: timing goes only to when/deadline. Follow the author's <rules>.
+Relative dates in the instruction ("сьогодні", "завтра", "в п'ятницю") are counted from the edit date; in the original transcript, from the recording date.
 In editing mode, discard means: "cancelled" if the author cancels this edit itself ("скасуй", "нічого не міняй"); "empty" if the instruction has no meaningful content; otherwise "none".`;
 
-async function editNote(env: Env, note: Note, instruction: string): Promise<Meta | null> {
-	const { title, summary, ideas, tasks } = note.meta;
+async function editNote(
+	env: Env,
+	note: Note,
+	instruction: string,
+	snap: ThingsSnapshot | null,
+): Promise<{ meta: Meta; triage: TriageItem[] | null } | null> {
+	const { title, summary, ideas } = note.meta;
+	const oldTasks: TriageItem[] =
+		note.triage ?? note.meta.tasks.map((t, i) => ({ title: t, duplicateOf: "", list: "", tags: [], when: "", deadline: "", key: `t${i + 1}` }));
+	const tasks = oldTasks.map(({ key, title, list, tags, when, deadline, duplicateOf }) =>
+		snap
+			? { key, title, list, tags, when, deadline, ...(duplicateOf && { already_in_things_as: duplicateOf }) }
+			: { key, title },
+	);
+	const taskSchema = {
+		type: "object",
+		properties: { key: { type: "string" }, title: { type: "string" }, ...(snap ? taskFieldsSchema(snap) : {}) },
+		required: snap ? ["key", "title", "list", "tags", "when", "deadline"] : ["key", "title"],
+		additionalProperties: false,
+	};
+	const schema = {
+		...SUMMARY_SCHEMA,
+		properties: { ...SUMMARY_SCHEMA.properties, tasks: { type: "array", items: taskSchema } },
+	};
 	const user = [
+		`Recording date: ${promptDate(new Date(note.recordedTs), env.TIMEZONE)}`,
+		`Edit date: ${promptDate(new Date(), env.TIMEZONE)}`,
+		snap ? taskRulesBlock(snap) : "",
 		`<note>\n${JSON.stringify({ title, summary, ideas, tasks })}\n</note>`,
 		`<transcript>\n${note.transcript}\n</transcript>`,
 		note.edits.length ? `<earlier_edits>\n${note.edits.join("\n")}\n</earlier_edits>` : "",
 		`<instruction>\n${instruction}\n</instruction>`,
-	].filter(Boolean).join("\n\n");
-	return askJson(env, { name: "voice_note_edit", system: EDIT_SYSTEM, user, schema: SUMMARY_SCHEMA }, parseMeta);
+	]
+		.filter(Boolean)
+		.join("\n\n");
+
+	const validate = snap ? taskValidator(snap) : null;
+	const oldByKey = new Map(oldTasks.map((t) => [t.key, t]));
+	let nextKey = Math.max(0, ...oldTasks.map((t) => Number(t.key?.slice(1)) || 0)) + 1;
+
+	return askJson(env, { name: "voice_note_edit", system: EDIT_SYSTEM, user, schema }, (text) => {
+		const json = parseJsonObject(text);
+		const meta = parseMeta(JSON.stringify({ ...json, tasks: [] }));
+		if (meta.discard) return { meta, triage: null };
+		const used = new Set<string>();
+		const items = (Array.isArray(json.tasks) ? json.tasks : []).map((r: Record<string, unknown>): TriageItem => {
+			let key = String(r.key ?? "");
+			if (!oldByKey.has(key) || used.has(key)) key = `t${nextKey++}`;
+			used.add(key);
+			const base = validate ? validate(r) : { title: String(r.title ?? "").trim(), duplicateOf: "", list: "", tags: [], when: "", deadline: "" };
+			// Дублікат лишається дублікатом, якщо це та сама задача (за ключем).
+			return { ...base, duplicateOf: oldByKey.get(key)?.duplicateOf ?? "", key };
+		});
+		const valid = items.filter((i) => i.title);
+		meta.tasks = valid.map((i) => i.title);
+		return { meta, triage: snap ? valid : null };
+	});
 }
 
 function parseMeta(text: string): Meta {
