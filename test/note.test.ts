@@ -67,6 +67,9 @@ describe("parseMeta", () => {
 	it.each(["empty", "cancelled"])("discard=%s повертає порожню нотатку", (d) => {
 		expect(parseMeta(JSON.stringify({ title: "", summary: "", discard: d })).discard).toBe(d);
 	});
+	it("discard=delete повертає порожню нотатку (видалення цілої нотатки)", () => {
+		expect(parseMeta('{"discard":"delete"}')).toEqual({ title: "", summary: "", ideas: [], tasks: [], discard: "delete" });
+	});
 	it("без назви — помилка (тоді askJson спробує іншу модель)", () => {
 		expect(() => parseMeta('{"title":"","summary":"С","discard":"none"}')).toThrow();
 	});
@@ -204,6 +207,11 @@ describe("parseEditedNote", () => {
 		const r = parseEditedNote(answer([{ key: "t1", title: "Х" }]), plainTasks(["Х"]), null);
 		expect(r.triage).toBeNull();
 		expect(r.meta.tasks).toEqual(["Х"]);
+	});
+	it("видалення нотатки: discard=delete, без тріажу", () => {
+		const r = parseEditedNote(JSON.stringify({ discard: "delete" }), old, validate);
+		expect(r.meta.discard).toBe("delete");
+		expect(r.triage).toBeNull();
 	});
 	it("скасування правки", () => {
 		expect(parseEditedNote(JSON.stringify({ discard: "cancelled" }), old, validate).meta.discard).toBe("cancelled");

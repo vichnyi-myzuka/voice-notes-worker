@@ -5,6 +5,7 @@ import {
 	applyAction,
 	createAction,
 	deleteAction,
+	deleteOpenTasks,
 	EDIT_TASKS_HELP,
 	fetchSnapshot,
 	getInTodoist,
@@ -370,6 +371,19 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		await save();
 	}
 	const meta = state.meta;
+	if (meta.discard === "delete") {
+		// «Видали нотатку»: відкриті задачі в Todoist, саму нотатку в каналі й записи в R2.
+		const ids = Object.values(await getInTodoist(env, noteId)).map((t) => t.id);
+		const deleted = env.TODOIST_TOKEN ? await deleteOpenTasks(env, ids) : 0;
+		await tg(env, "deleteMessage", { chat_id: env.CHAT_ID, message_id: note.messageId }).catch((err) =>
+			console.error("delete note message failed:", err),
+		);
+		if (note.actionId) await deleteAction(env, note.actionId);
+		await env.BUCKET.delete([noteKey(noteId), noteByMessageKey(note.messageId), `notes/${noteId}.todoist.json`]);
+		console.log(`note ${noteId} deleted by request: ${deleted} open tasks deleted in Todoist`);
+		await cleanup();
+		return;
+	}
 	if (meta.discard) {
 		console.log(`edit ${noteId} discarded: ${meta.discard}`);
 		await cleanup(note.messageId);
@@ -569,7 +583,7 @@ Keep the summary and ideas consistent with the edited note: if the instruction c
 Change a task's title only when the instruction asks to rename or reword it. Moving a task in time ("перенеси на п'ятницю", "зроби на сьогодні") changes only due/deadline and never turns into a title like "Перенести …".
 ${EDIT_TASKS_HELP}
 Relative dates in the instruction ("сьогодні", "завтра", "в п'ятницю") are counted from the edit date; in the original transcript, from the recording date.
-In editing mode, discard means: "cancelled" if the author cancels this edit itself ("скасуй", "нічого не міняй"); "empty" if the instruction has no meaningful content; otherwise "none".`;
+In editing mode, discard means: "delete" if the author asks to delete the whole note ("видали нотатку", "видали цей запис повністю", "видали все") — not when they ask to remove one or some tasks, that is a normal edit; "cancelled" if the author cancels this edit itself ("скасуй", "нічого не міняй"); "empty" if the instruction has no meaningful content; otherwise "none".`;
 
 async function editNote(
 	env: Env,
@@ -592,7 +606,11 @@ async function editNote(
 	};
 	const schema = {
 		...SUMMARY_SCHEMA,
-		properties: { ...SUMMARY_SCHEMA.properties, tasks: { type: "array", items: taskSchema } },
+		properties: {
+			...SUMMARY_SCHEMA.properties,
+			tasks: { type: "array", items: taskSchema },
+			discard: { type: "string", enum: ["none", "empty", "cancelled", "delete"] },
+		},
 	};
 	const now = new Date();
 	const user = [
