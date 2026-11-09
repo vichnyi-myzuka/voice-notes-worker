@@ -3,8 +3,10 @@ import {
 	createThingsLink,
 	formatTriage,
 	handleThingsLink,
+	page,
 	setThingsLinkMessage,
 	snapshotFromForm,
+	thingsLinkUsed,
 	triage,
 	type ThingsSnapshot,
 	type TriageItem,
@@ -24,11 +26,13 @@ export interface Env {
 	TG_OWNER_ID?: string; // Telegram user id, від якого бот приймає голосові
 	// vars
 	TIMEZONE: string;
-	PUBLIC_URL: string; // адреса воркера для кнопки «Додати в Things»
+	PUBLIC_URL: string; // адреса воркера для кнопок «Додати в Things» і «Редагувати»
+	SHORTCUT_NAME: string; // назва шорткату, який відкриває кнопка «Редагувати»
 	LOCAL_DEV?: string; // ставиться лише в `npm run dev`
 }
 
-type Job = { key: string };
+// edit: id нотатки, яку редагує цей запис (замість створення нової).
+type Job = { key: string; edit?: string };
 
 // Проміжний стан обробки, зберігається в R2 поруч з аудіо (`<key>.state.json`).
 // Дає ідемпотентність: повторна спроба не платить ще раз за Whisper/LLM
@@ -42,7 +46,23 @@ type State = {
 	messageId?: number; // id повідомлення з аудіо в Telegram
 	messageLinked?: boolean; // посилання на повідомлення дописане в дані кнопки
 	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
+	noteId?: string; // id для кнопки «Редагувати», створюється до відправки
+	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено
 };
+
+// Опублікована нотатка, зберігається для редагування (`notes/<id>.json`, 7 днів за lifecycle бакета).
+// `notes/msg-<message_id>` вказує на id нотатки: так відповідь у каналі знаходить, що редагувати.
+type Note = {
+	transcript: string;
+	edits: string[]; // інструкції попередніх редагувань
+	meta: Meta;
+	triage: TriageItem[] | null;
+	thingsLinkId?: string;
+	messageId: number;
+	recordedTs: number;
+};
+const noteKey = (id: string) => `notes/${id}.json`;
+const noteByMessageKey = (messageId: number | string) => `notes/msg-${messageId}`;
 
 const DLQ_NAME = "voice-notes-dlq";
 const MAX_RETRIES = 4; // той самий, що max_retries у wrangler.toml
@@ -61,11 +81,12 @@ async function enqueueNote(
 	contentType: string,
 	snapshot: ThingsSnapshot | null,
 	customMetadata?: Record<string, string | undefined>,
+	edit?: string,
 ): Promise<void> {
 	const meta = Object.fromEntries(Object.entries(customMetadata ?? {}).filter(([, v]) => v !== undefined)) as Record<string, string>;
 	await env.BUCKET.put(key, body, { httpMetadata: { contentType }, customMetadata: meta });
 	if (snapshot) await env.BUCKET.put(`${key}.things.json`, JSON.stringify(snapshot));
-	await env.QUEUE.send({ key });
+	await env.QUEUE.send(edit ? { key, edit } : { key });
 }
 
 export default {
@@ -75,6 +96,21 @@ export default {
 		// Сторінка кнопки «Додати в Things» (без секрету: id випадковий і одноразовий).
 		const link = url.pathname.match(/^\/things\/([0-9a-f-]{36})$/);
 		if (link && req.method === "GET") return handleThingsLink(env, link[1], url.searchParams.has("force"));
+
+		// Кнопка «Редагувати»: відкриває шорткат з edit:<id> на вході (Telegram-кнопки підтримують лише http(s)).
+		const editLink = url.pathname.match(/^\/edit\/([0-9a-f-]{36})$/);
+		if (editLink && req.method === "GET") {
+			if (!(await env.BUCKET.head(noteKey(editLink[1])))) {
+				return page("Нотатка застаріла", "<p>Редагувати можна протягом 7 днів.</p>", 404);
+			}
+			const href = `shortcuts://run-shortcut?name=${encodeURIComponent(env.SHORTCUT_NAME)}&input=text&text=edit:${editLink[1]}`;
+			return page(
+				"Редагування нотатки",
+				`<p>Запиши, що змінити. Якщо шорткат не відкрився:</p><p><a class="btn" href="${href}">Відкрити шорткат</a></p>`,
+				200,
+				`<meta http-equiv="refresh" content="0;url=${href}">`,
+			);
+		}
 
 		// Вебхук Telegram: голосові й аудіо, надіслані боту в особистий чат.
 		if (url.pathname === "/telegram" && req.method === "POST") {
@@ -86,10 +122,12 @@ export default {
 			const update = (await req.json()) as { message?: Msg; channel_post?: Msg };
 			const msg = update.message ?? update.channel_post;
 			if (msg) {
-				await receiveTelegramVoice(env, msg, async (key, body, { contentType, ...meta }) => {
+				await receiveTelegramVoice(env, msg, async (key, body, { contentType, replyTo, ...meta }) => {
 					// Знімка від шорткату тут немає, тож беремо останній збережений.
 					const snapshot = await (await env.BUCKET.get(LATEST_SNAPSHOT_KEY))?.json<ThingsSnapshot>();
-					await enqueueNote(env, key, body, contentType, snapshot ?? null, meta);
+					// Відповідь на повідомлення в каналі = редагування; "missing", якщо це не наша нотатка або вона застаріла.
+					const edit = replyTo && ((await (await env.BUCKET.get(noteByMessageKey(replyTo)))?.text()) || "missing");
+					await enqueueNote(env, key, body, contentType, snapshot ?? null, meta, edit || undefined);
 				});
 			}
 			return new Response("ok");
@@ -106,19 +144,21 @@ export default {
 		// Тіло читаємо повністю (не стрімом): R2 put потребує відомої довжини.
 		let body: ArrayBuffer;
 		let snapshot: ThingsSnapshot | null = null;
+		let edit: string | undefined; // поле edit = Shortcut Input; при запуску з кнопки «Редагувати» це edit:<id>
 		if ((req.headers.get("content-type") ?? "").startsWith("multipart/form-data")) {
 			const form = await req.formData();
 			const audio = form.get("audio");
 			if (!audio || typeof audio === "string") return new Response("missing audio field", { status: 400 });
 			body = await audio.arrayBuffer();
 			snapshot = snapshotFromForm(form);
+			edit = String(form.get("edit") ?? "").match(/edit:([0-9a-f-]{36})/)?.[1];
 		} else {
 			body = await req.arrayBuffer();
 		}
 		if (body.byteLength === 0) return new Response("empty body", { status: 400 });
 
 		const key = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.m4a`;
-		await enqueueNote(env, key, body, "audio/mp4", snapshot);
+		await enqueueNote(env, key, body, "audio/mp4", snapshot, undefined, edit);
 		if (snapshot) await env.BUCKET.put(LATEST_SNAPSHOT_KEY, JSON.stringify(snapshot));
 		return new Response("ok");
 	},
@@ -140,7 +180,9 @@ export default {
 
 		for (const msg of batch.messages) {
 			try {
-				await processNote(env, msg.body.key, msg.attempts > MAX_RETRIES);
+				const last = msg.attempts > MAX_RETRIES;
+				if (msg.body.edit) await processEdit(env, msg.body.key, msg.body.edit, last);
+				else await processNote(env, msg.body.key, last);
 				msg.ack();
 			} catch (err) {
 				console.error(`attempt ${msg.attempts} failed for ${msg.body.key}:`, err);
@@ -238,15 +280,10 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
-		const button = state.thingsLinkId && {
-			inline_keyboard: [
-				[{ text: `➕ Додати в Things (${newTasks.length})`, url: `${env.PUBLIC_URL}/things/${state.thingsLinkId}` }],
-			],
-		};
-		// Хештеги йдуть окремим рядком у кінці й не обрізаються разом з довгим текстом.
-		const tags = hashtags(new Date(recordedTs(key)), env.TIMEZONE, state.triage ?? null);
-		const caption = `${truncate(formatCaption(meta, state.triage ?? null), CAPTION_MAX - tags.length - 2)}\n\n${tags}`;
-		state.messageId = await tgSendNote(env, source, meta.title, caption, button || undefined);
+		state.noteId ??= crypto.randomUUID();
+		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE);
+		const buttons = noteButtons(env, state.noteId, state.thingsLinkId, newTasks.length);
+		state.messageId = await tgSendNote(env, source, meta.title, caption, buttons);
 		state.audioSent = true;
 		await save();
 	}
@@ -259,6 +296,22 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		await save();
 	}
 
+	// Зберігаємо нотатку для редагування (повторний запис при ретраї нічого не ламає).
+	if (state.noteId && state.messageId) {
+		const note: Note = {
+			transcript: state.transcript,
+			edits: [],
+			meta,
+			triage: state.triage ?? null,
+			thingsLinkId: state.thingsLinkId,
+			messageId: state.messageId,
+			recordedTs: recordedTs(key),
+		};
+		await env.BUCKET.put(noteKey(state.noteId), JSON.stringify(note));
+		await env.BUCKET.put(noteByMessageKey(state.messageId), state.noteId);
+		console.log(`note ${state.noteId} published as message ${state.messageId}`);
+	}
+
 	// Голосове, надіслане в канал, видаляємо: нотатка вище містить те саме аудіо.
 	if (!state.originalDeleted) {
 		await deleteOriginal(env, obj.customMetadata);
@@ -267,6 +320,114 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	await env.BUCKET.delete([key, stateKey, thingsKey]);
+}
+
+// ---------- Редагування нотатки голосовою інструкцією ----------
+async function processEdit(env: Env, key: string, noteId: string, lastAttempt: boolean): Promise<void> {
+	const obj = await env.BUCKET.get(key);
+	if (!obj) return; // уже оброблено
+	const stateKey = `${key}.state.json`;
+	const thingsKey = `${key}.things.json`;
+	// Поки редагуємо, на нотатці стоїть 👨‍💻 (✏ серед реакцій для ботів немає).
+	const markEditing = (on: boolean, messageId: number) =>
+		tg(env, "setMessageReaction", {
+			chat_id: env.CHAT_ID,
+			message_id: messageId,
+			reaction: on ? [{ type: "emoji", emoji: "👨‍💻" }] : [],
+		}).catch((err) => console.error("reaction failed:", err));
+	const cleanup = async (messageId?: number) => {
+		if (messageId) await markEditing(false, messageId);
+		await deleteOriginal(env, obj.customMetadata); // інструкцію з каналу прибираємо
+		await env.BUCKET.delete([key, stateKey, thingsKey]);
+	};
+	const state: State = (await (await env.BUCKET.get(stateKey))?.json<State>()) ?? {};
+	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
+
+	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
+	if (!note) {
+		await tgSendMessage(env, env.CHAT_ID, "⚠️ Не вдалося відредагувати: нотатку не знайдено (редагувати можна протягом 7 днів).");
+		await cleanup();
+		return;
+	}
+
+	if (state.transcript === undefined) {
+		await markEditing(true, note.messageId);
+		state.transcript = await transcribe(env, await obj.arrayBuffer(), obj.httpMetadata?.contentType ?? "audio/mp4");
+		await save();
+	}
+	const instruction = state.transcript;
+	if (state.meta === undefined) {
+		const edited = instruction ? await editNote(env, note, instruction) : null;
+		if (instruction && !edited && !lastAttempt) throw new Error("All edit models failed");
+		// Порожня інструкція або (на останній спробі) збій моделей: нотатку лишаємо як є.
+		state.meta = edited ?? { title: "", summary: "", ideas: [], tasks: [], discard: "empty" };
+		await save();
+	}
+	const meta = state.meta;
+	if (meta.discard) {
+		console.log(`edit ${noteId} discarded: ${meta.discard}`);
+		await cleanup(note.messageId);
+		return;
+	}
+
+	// Тріаж заново: транскрипт разом з усіма правками, щоб дати й пріоритети бралися з них.
+	const fullTranscript = [note.transcript, ...note.edits, instruction].join("\n\n[Правка автора]: ");
+	if (state.triage === undefined) {
+		const snap = meta.tasks.length
+			? ((await (await env.BUCKET.get(thingsKey))?.json<ThingsSnapshot>()) ??
+				(await (await env.BUCKET.get(LATEST_SNAPSHOT_KEY))?.json<ThingsSnapshot>()))
+			: null;
+		state.triage = snap ? await triage(env, fullTranscript, meta.tasks, snap, new Date(note.recordedTs), env.TIMEZONE) : null;
+		await save();
+	}
+	const newTasks = state.triage?.filter((i) => !i.duplicateOf) ?? [];
+	const messageUrl = telegramMessageUrl(env.CHAT_ID, note.messageId);
+	if (newTasks.length && !state.thingsLinkId) {
+		state.thingsLinkId = await createThingsLink(env, newTasks, `🎙 ${meta.title} (${formatRecordedAt(String(note.recordedTs), env.TIMEZONE)})`);
+		if (messageUrl) await setThingsLinkMessage(env, state.thingsLinkId, messageUrl);
+		await save();
+	}
+
+	if (!state.captionEdited) {
+		// Things не дає змінити вже додані задачі, тож попереджаємо, що нова кнопка додасть їх як нові.
+		const alreadyAdded = note.thingsLinkId && newTasks.length && (await thingsLinkUsed(env, note.thingsLinkId));
+		const caption = buildCaption(
+			meta,
+			state.triage ?? null,
+			note.recordedTs,
+			env.TIMEZONE,
+			alreadyAdded ? "ℹ️ Попередні задачі вже додавались у Things: кнопка додасть змінені як нові." : "",
+		);
+		await tg(env, "editMessageCaption", {
+			chat_id: env.CHAT_ID,
+			message_id: note.messageId,
+			caption,
+			reply_markup: noteButtons(env, noteId, state.thingsLinkId, newTasks.length),
+		}).catch((err) => {
+			if (!String(err).includes("message is not modified")) throw err;
+		});
+		state.captionEdited = true;
+		await save();
+	}
+
+	const updated: Note = { ...note, edits: [...note.edits, instruction], meta, triage: state.triage ?? null, thingsLinkId: state.thingsLinkId };
+	await env.BUCKET.put(noteKey(noteId), JSON.stringify(updated));
+	if (note.thingsLinkId && note.thingsLinkId !== state.thingsLinkId) await env.BUCKET.delete(`things/${note.thingsLinkId}.json`);
+	console.log(`note ${noteId} edited`);
+	await cleanup(note.messageId);
+}
+
+// Кнопки під нотаткою: «Додати в Things» (якщо є нові задачі) і «Редагувати».
+function noteButtons(env: Env, noteId: string, thingsLinkId: string | undefined, count: number) {
+	const row = [{ text: "✏️ Редагувати", url: `${env.PUBLIC_URL}/edit/${noteId}` }];
+	if (thingsLinkId) row.unshift({ text: `➕ Додати в Things (${count})`, url: `${env.PUBLIC_URL}/things/${thingsLinkId}` });
+	return { inline_keyboard: [row] };
+}
+
+// Підпис з хештегами окремим рядком у кінці: вони не обрізаються разом з довгим текстом.
+function buildCaption(meta: Meta, triaged: TriageItem[] | null, ts: number, timeZone: string, notice = ""): string {
+	const tail = [notice, hashtags(new Date(ts), timeZone, triaged)].filter(Boolean).join("\n\n");
+	return `${truncate(formatCaption(meta, triaged), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
 }
 
 // Видаляє оригінальне голосове з каналу (якщо запис прийшов звідти). Збій не критичний.
@@ -337,6 +498,23 @@ async function summarize(env: Env, transcript: string, recordedAt: string, lastA
 		ideas: [],
 		tasks: [],
 	};
+}
+
+const EDIT_SYSTEM = `${SYSTEM_PROMPT}
+
+Editing mode: you get an existing note (<note> JSON), its original transcript, earlier edit instructions and a new spoken edit instruction from the author.
+Return the full updated note. Apply exactly what the instruction asks (rename, add, remove, reword, change dates or details of tasks, etc.) and keep everything else unchanged.
+In editing mode, discard means: "cancelled" if the author cancels this edit itself ("скасуй", "нічого не міняй"); "empty" if the instruction has no meaningful content; otherwise "none".`;
+
+async function editNote(env: Env, note: Note, instruction: string): Promise<Meta | null> {
+	const { title, summary, ideas, tasks } = note.meta;
+	const user = [
+		`<note>\n${JSON.stringify({ title, summary, ideas, tasks })}\n</note>`,
+		`<transcript>\n${note.transcript}\n</transcript>`,
+		note.edits.length ? `<earlier_edits>\n${note.edits.join("\n")}\n</earlier_edits>` : "",
+		`<instruction>\n${instruction}\n</instruction>`,
+	].filter(Boolean).join("\n\n");
+	return askJson(env, { name: "voice_note_edit", system: EDIT_SYSTEM, user, schema: SUMMARY_SCHEMA }, parseMeta);
 }
 
 function parseMeta(text: string): Meta {
