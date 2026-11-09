@@ -234,10 +234,11 @@ export function buildThingsUrl(ops: ThingsOp[], notes: string, authToken: string
 	return `things:///json?${params.join("&")}`;
 }
 
-// Рядки задач для підпису в Telegram.
-export function formatTriage(items: TriageItem[]): string {
+// Рядки задач для підпису в Telegram. ☑️ — задача вже в Things (за ключем).
+export function formatTriage(items: TriageItem[], inThings: Set<string> = new Set()): string {
 	return items
 		.map((i) => {
+			const bullet = i.key && inThings.has(i.key) ? "☑️" : "•";
 			if (i.duplicateOf) return `• ↩️ вже є: ${i.duplicateOf}`;
 			const extra = [
 				i.list ? `→ ${i.list}` : !i.tags.length && !i.when ? "→ Inbox" : "",
@@ -245,7 +246,7 @@ export function formatTriage(items: TriageItem[]): string {
 				i.when && (i.when === "anytime" ? "📋 Anytime" : `📅 ${i.when}`),
 				i.deadline && `⏰ ${i.deadline}`,
 			].filter(Boolean);
-			return `• ${i.title}${extra.length ? ` ${extra.join(" ")}` : ""}`;
+			return `${bullet} ${i.title}${extra.length ? ` ${extra.join(" ")}` : ""}`;
 		})
 		.join("\n");
 }
@@ -327,7 +328,8 @@ export async function handleThingsLink(env: Env, id: string, force: boolean): Pr
 }
 
 // x-success від Things: зберігаємо ID створених задач і застосовуємо оновлення до стану InThings.
-export async function handleThingsDone(env: Env, id: string, url: URL): Promise<Response> {
+// Повертає noteId, якщо стан змінився: тоді воркер оновлює повідомлення в Telegram.
+export async function handleThingsDone(env: Env, id: string, url: URL): Promise<{ response: Response; noteId?: string }> {
 	const link = await (await env.BUCKET.get(linkKey(id)))?.json<ThingsLink>();
 	const back = link?.messageUrl
 		? `<p><a class="btn" href="${escapeHtml(link.messageUrl)}">Повернутися до нотатки</a></p>`
@@ -358,8 +360,9 @@ export async function handleThingsDone(env: Env, id: string, url: URL): Promise<
 		link.applied = true;
 		await env.BUCKET.put(linkKey(id), JSON.stringify(link));
 		console.log(`things link ${id} applied: ${ids.length} created ids`);
+		return { response: page("✅ Готово", back), noteId: link.noteId };
 	}
-	return page("✅ Готово", back);
+	return { response: page("✅ Готово", back) };
 }
 
 export function page(title: string, body: string, status = 200, head = ""): Response {
