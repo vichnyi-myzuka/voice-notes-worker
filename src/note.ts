@@ -1,5 +1,5 @@
 import { parseJsonObject } from "./llm";
-import { formatTriage, type TriageItem } from "./todoist";
+import { formatTriage, taskUrl, type TriageItem } from "./todoist";
 
 // Чиста логіка нотатки (без I/O): розбір відповідей моделі, підпис, хештеги. Покрита тестами.
 
@@ -55,10 +55,10 @@ export function parseEditedNote(
 
 // Підпис до аудіо: назва, summary і (якщо є) списки думок і задач.
 // Якщо був тріаж, задачі показуються з проєктом, тегами, датами й позначкою дублікатів.
-export function formatCaption({ title, summary, ideas, tasks }: Meta, triaged: TriageItem[] | null, inTodoist?: Set<string>): string {
+export function formatCaption({ title, summary, ideas, tasks }: Meta, triaged: TriageItem[] | null): string {
 	const parts = [title, summary];
 	if (ideas.length) parts.push(`💡 Ключові думки:\n${ideas.map((i) => `• ${i}`).join("\n")}`);
-	if (triaged?.length) parts.push(`✅ Задачі:\n${formatTriage(triaged, inTodoist)}`);
+	if (triaged?.length) parts.push(`✅ Задачі:\n${formatTriage(triaged)}`);
 	else if (tasks.length) parts.push(`✅ Задачі:\n${tasks.map((t) => `• ${t}`).join("\n")}`);
 	return parts.join("\n\n");
 }
@@ -70,10 +70,28 @@ export function buildCaption(
 	ts: number,
 	timeZone: string,
 	notice = "",
-	inTodoist?: Set<string>, // ключі задач, які вже в Todoist (☑️)
 ): string {
 	const tail = [notice, hashtags(new Date(ts), timeZone, triaged)].filter(Boolean).join("\n\n");
-	return `${truncate(formatCaption(meta, triaged, inTodoist), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
+	return `${truncate(formatCaption(meta, triaged), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
+}
+
+// Telegram caption_entities: назви задач, що вже в Todoist, стають посиланнями на них.
+// Шукаємо рядки «• <назва> →» по черзі після заголовка задач; обрізане підписом — без посилання.
+// offset/length у UTF-16, як і довжина рядків у JS.
+export function taskLinks(caption: string, triaged: TriageItem[] | null, inTodoist: Record<string, string>) {
+	const links: { type: "text_link"; offset: number; length: number; url: string }[] = [];
+	let from = caption.indexOf("✅ Задачі:");
+	if (from < 0) return links;
+	for (const i of triaged ?? []) {
+		const id = i.key && !i.duplicateOf ? inTodoist[i.key] : undefined;
+		if (!id) continue;
+		const at = caption.indexOf(`\n• ${i.title} →`, from); // після назви завжди «→ проєкт»
+		if (at < 0) continue;
+		const offset = at + "\n• ".length;
+		links.push({ type: "text_link", offset, length: i.title.length, url: taskUrl(id) });
+		from = offset + i.title.length;
+	}
+	return links;
 }
 
 // Хештеги для навігації в каналі: місяць, ISO-тиждень (у timeZone) і проєкти нових задач.

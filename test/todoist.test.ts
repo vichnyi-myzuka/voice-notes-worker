@@ -221,9 +221,10 @@ describe("formatTriage", () => {
 		]);
 		expect(text).toBe("• А → Work p1 @Errand 📅 2026-11-10 ⏰ 2026-11-20\n• Б → Inbox");
 	});
-	it("☑️ для задач, що вже в Todoist (за ключем)", () => {
-		const text = formatTriage([item("А", { key: "t1" }), item("Б", { key: "t2" })], new Set(["t1"]));
-		expect(text).toBe("☑️ А → Inbox\n• Б → Inbox");
+	it("лише маркери «•», без ☑️", () => {
+		const text = formatTriage([item("А", { key: "t1" }), item("Б", { key: "t2" })]);
+		expect(text).toBe("• А → Inbox\n• Б → Inbox");
+		expect(text).not.toContain("☑️");
 	});
 	it("дублікат показується як «вже є»", () => {
 		expect(formatTriage([item("Молоко", { key: "t1", duplicateOf: "Купити молоко" })])).toBe("• ↩️ вже є: Купити молоко");

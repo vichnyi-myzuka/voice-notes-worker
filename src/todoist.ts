@@ -330,12 +330,14 @@ export async function applyAction(
 }
 
 // ---------- Підпис ----------
-// Рядки задач для підпису в Telegram. ☑️ — задача вже в Todoist (за ключем).
-export function formatTriage(items: TriageItem[], inTodoist: Set<string> = new Set()): string {
+// Посилання на задачу в Todoist (веб і застосунки).
+export const taskUrl = (id: string) => `https://app.todoist.com/app/task/${id}`;
+
+// Рядки задач для підпису в Telegram. Задачі, що вже в Todoist, стають посиланнями (note.ts → taskLinks).
+export function formatTriage(items: TriageItem[]): string {
 	return items
 		.map((i) => {
 			if (i.duplicateOf) return `• ↩️ вже є: ${i.duplicateOf}`;
-			const bullet = i.key && inTodoist.has(i.key) ? "☑️" : "•";
 			const extra = [
 				`→ ${i.project || "Inbox"}`,
 				i.priority < 4 && `p${i.priority}`,
@@ -343,7 +345,7 @@ export function formatTriage(items: TriageItem[], inTodoist: Set<string> = new S
 				i.due && `📅 ${i.due}`,
 				i.deadline && `⏰ ${i.deadline}`,
 			].filter(Boolean);
-			return `${bullet} ${i.title} ${extra.join(" ")}`;
+			return `• ${i.title} ${extra.join(" ")}`;
 		})
 		.join("\n");
 }
