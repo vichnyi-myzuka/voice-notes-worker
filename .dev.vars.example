@@ -1,3 +1,4 @@
 SECRET=local-test
 BOT_TOKEN=
 CHAT_ID=
+OPENAI_KEY=
