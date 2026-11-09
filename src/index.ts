@@ -22,6 +22,7 @@ export interface Env {
 	// vars
 	TIMEZONE: string;
 	PUBLIC_URL: string; // адреса воркера для кнопки «Додати в Things»
+	LOCAL_DEV?: string; // ставиться лише в `npm run dev`
 }
 
 type Job = { key: string };
@@ -176,7 +177,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		state.thingsLinkId = await createThingsLink(env, newTasks, `🎙 ${meta.title} (${recordedAt})`);
 		console.log(`things link ${state.thingsLinkId}: ${newTasks.length} new, ${state.triage!.length - newTasks.length} duplicates`);
 		// Telegram не приймає localhost у кнопках, тож при локальному запуску посилання беремо з логу.
-		console.log(`open locally: http://localhost:8787/things/${state.thingsLinkId}`);
+		if (env.LOCAL_DEV) console.log(`open locally: http://localhost:8787/things/${state.thingsLinkId}`);
 		await save();
 	}
 
