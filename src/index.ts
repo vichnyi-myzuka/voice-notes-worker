@@ -34,8 +34,6 @@ export interface Env {
 	TODOIST_TOKEN?: string; // без нього нотатки йдуть без тріажу задач
 	// vars
 	TIMEZONE: string;
-	PUBLIC_URL: string; // адреса воркера для кнопки «Редагувати»
-	SHORTCUT_NAME: string; // назва шорткату, який відкриває кнопка «Редагувати»
 	LOCAL_DEV?: string; // ставиться лише в `npm run dev`
 }
 
@@ -55,7 +53,7 @@ type State = {
 	messageId?: number; // id повідомлення з аудіо в Telegram
 	messageLinked?: boolean; // посилання на повідомлення дописане в дію
 	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
-	noteId?: string; // id нотатки (кнопка «Редагувати»), створюється до відправки
+	noteId?: string; // id нотатки для редагування й дії Todoist, створюється до відправки
 	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено
 };
 
@@ -100,21 +98,6 @@ export default {
 	async fetch(req, env): Promise<Response> {
 		const url = new URL(req.url);
 
-		// Кнопка «Редагувати»: відкриває шорткат з edit:<id> на вході (url-кнопки Telegram підтримують лише http(s)).
-		const editLink = url.pathname.match(/^\/edit\/([0-9a-f-]{36})$/);
-		if (editLink && req.method === "GET") {
-			if (!(await env.BUCKET.head(noteKey(editLink[1])))) {
-				return page("Нотатка застаріла", "<p>Редагувати можна протягом 7 днів.</p>", 404);
-			}
-			const href = `shortcuts://run-shortcut?name=${encodeURIComponent(env.SHORTCUT_NAME)}&input=text&text=edit:${editLink[1]}`;
-			return page(
-				"Редагування нотатки",
-				`<p>Запиши, що змінити. Якщо шорткат не відкрився:</p><p><a class="btn" href="${href}">Відкрити шорткат</a></p>`,
-				200,
-				`<meta http-equiv="refresh" content="0;url=${href}">`,
-			);
-		}
-
 		// Вебхук Telegram: голосові (канал і приват) і натискання кнопки Todoist.
 		if (url.pathname === "/telegram" && req.method === "POST") {
 			const token = req.headers.get("x-telegram-bot-api-secret-token") ?? "";
@@ -145,23 +128,20 @@ export default {
 			return new Response("unauthorized", { status: 401 });
 		}
 
-		// Два формати: сирий файл у тілі або форма (audio + edit). Інші поля форми ігноруються.
+		// Два формати: сирий файл у тілі або форма з полем audio (інші поля ігноруються).
 		// Тіло читаємо повністю (не стрімом): R2 put потребує відомої довжини.
 		let body: ArrayBuffer;
-		let edit: string | undefined; // поле edit = Shortcut Input; при запуску з кнопки «Редагувати» це edit:<id>
 		if ((req.headers.get("content-type") ?? "").startsWith("multipart/form-data")) {
-			const form = await req.formData();
-			const audio = form.get("audio");
+			const audio = (await req.formData()).get("audio");
 			if (!audio || typeof audio === "string") return new Response("missing audio field", { status: 400 });
 			body = await audio.arrayBuffer();
-			edit = String(form.get("edit") ?? "").match(/edit:([0-9a-f-]{36})/)?.[1];
 		} else {
 			body = await req.arrayBuffer();
 		}
 		if (body.byteLength === 0) return new Response("empty body", { status: 400 });
 
 		const key = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.m4a`;
-		await enqueueNote(env, key, body, "audio/mp4", undefined, edit);
+		await enqueueNote(env, key, body, "audio/mp4");
 		return new Response("ok");
 	},
 
@@ -293,8 +273,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
 		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE);
-		const buttons = noteButtons(env, state.noteId, state.actionId, state.actionLabel);
-		state.messageId = await tgSendNote(env, source, meta.title, caption, buttons);
+		state.messageId = await tgSendNote(env, source, meta.title, caption, noteButtons(state.actionId, state.actionLabel));
 		state.audioSent = true;
 		await save();
 	}
@@ -362,7 +341,11 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 
 	if (state.transcript === undefined) {
 		await markEditing(true, note.messageId);
-		state.transcript = await transcribe(env, await obj.arrayBuffer(), obj.httpMetadata?.contentType ?? "audio/mp4");
+		// Текстова відповідь на нотатку — без Whisper.
+		const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
+		state.transcript = contentType.startsWith("text/")
+			? (await obj.text()).trim()
+			: await transcribe(env, await obj.arrayBuffer(), contentType);
 		await save();
 	}
 	const instruction = state.transcript;
@@ -404,7 +387,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 
 	if (!state.captionEdited) {
 		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, "", new Set(Object.keys(inTodoist)));
-		await editNoteMessage(env, note.messageId, caption, noteButtons(env, noteId, state.actionId, state.actionLabel));
+		await editNoteMessage(env, note.messageId, caption, noteButtons(state.actionId, state.actionLabel));
 		state.captionEdited = true;
 		await save();
 	}
@@ -451,7 +434,7 @@ async function markInTodoist(env: Env, noteId: string): Promise<void> {
 	if (!note) return;
 	const inTodoist = new Set(Object.keys(await getInTodoist(env, noteId)));
 	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, "", inTodoist);
-	await editNoteMessage(env, note.messageId, caption, noteButtons(env, noteId, undefined, undefined));
+	await editNoteMessage(env, note.messageId, caption, noteButtons(undefined, undefined));
 }
 
 async function editNoteMessage(env: Env, messageId: number, caption: string, replyMarkup: object): Promise<void> {
@@ -462,11 +445,10 @@ async function editNoteMessage(env: Env, messageId: number, caption: string, rep
 	);
 }
 
-// Кнопки під нотаткою: «Додати / Оновити в Todoist» (якщо є що робити) і «Редагувати».
-function noteButtons(env: Env, noteId: string, actionId: string | undefined, actionLabel: string | undefined) {
-	const row: object[] = [{ text: "✏️ Редагувати", url: `${env.PUBLIC_URL}/edit/${noteId}` }];
-	if (actionId) row.unshift({ text: actionLabel ?? "➕ Додати в Todoist", callback_data: `td:${actionId}` });
-	return { inline_keyboard: [row] };
+// Кнопка під нотаткою: «Додати / Оновити в Todoist», якщо є що робити (порожня клавіатура прибирає кнопку).
+// Редагування — відповіддю на нотатку (свайп вліво), голосом або текстом.
+function noteButtons(actionId: string | undefined, actionLabel: string | undefined) {
+	return { inline_keyboard: actionId ? [[{ text: actionLabel ?? "➕ Додати в Todoist", callback_data: `td:${actionId}` }]] : [] };
 }
 
 // Видаляє оригінальне голосове з каналу (якщо запис прийшов звідти). Збій не критичний.
@@ -474,7 +456,7 @@ async function deleteOriginal(env: Env, meta: Record<string, string> | undefined
 	const { deleteChatId, deleteMessageId } = meta ?? {};
 	if (!deleteChatId || !deleteMessageId) return;
 	await tg(env, "deleteMessage", { chat_id: deleteChatId, message_id: Number(deleteMessageId) }).catch((err) =>
-		console.error("delete original voice failed:", err),
+		console.error("delete original message failed:", err),
 	);
 }
 
@@ -542,6 +524,7 @@ const EDIT_SYSTEM = `${SYSTEM_PROMPT}
 Editing mode: you get an existing note (<note> JSON), its original transcript, earlier edit instructions and a new spoken edit instruction from the author.
 Return the full updated note. Apply exactly what the instruction asks (rename, add, remove, reword, change dates, projects, labels or priority of tasks, etc.) and keep everything else unchanged.
 Tasks: return every task that should remain, in order. An existing task keeps its "key" even if you change its title or fields; a new task gets key "". A removed task is simply omitted.
+Change a task's title only when the instruction asks to rename or reword it. Moving a task in time ("перенеси на п'ятницю", "зроби на сьогодні") changes only due/deadline and never turns into a title like "Перенести …".
 ${EDIT_TASKS_HELP}
 Relative dates in the instruction ("сьогодні", "завтра", "в п'ятницю") are counted from the edit date; in the original transcript, from the recording date.
 In editing mode, discard means: "cancelled" if the author cancels this edit itself ("скасуй", "нічого не міняй"); "empty" if the instruction has no meaningful content; otherwise "none".`;
@@ -608,17 +591,4 @@ function formatRecordedAt(key: string, timeZone: string): string {
 	return new Intl.DateTimeFormat("sv-SE", { timeZone, dateStyle: "short", timeStyle: "short" }).format(
 		new Date(recordedTs(key)),
 	);
-}
-
-function page(title: string, body: string, status = 200, head = ""): Response {
-	const html = `<!doctype html><html lang="uk"><head><meta charset="utf-8">${head}
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
-<style>body{font:17px -apple-system,system-ui,sans-serif;margin:3em 1.5em;text-align:center}
-.btn{display:inline-block;padding:.8em 1.4em;border-radius:12px;background:#1b6ef3;color:#fff;text-decoration:none}</style>
-</head><body><h2>${escapeHtml(title)}</h2>${body}</body></html>`;
-	return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8" } });
-}
-
-function escapeHtml(s: string): string {
-	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

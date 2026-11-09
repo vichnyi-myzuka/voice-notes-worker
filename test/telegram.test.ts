@@ -30,6 +30,34 @@ describe("receiveTelegramVoice", () => {
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
+	it("текст без відповіді на нотатку в каналі ігнорується", async () => {
+		const fetchSpy = vi.fn();
+		vi.stubGlobal("fetch", fetchSpy);
+		const store = vi.fn();
+		await receiveTelegramVoice(env, { ...base, chat: { id: -1004390223227, type: "channel" }, text: "просто текст" }, store);
+		expect(store).not.toHaveBeenCalled();
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it("текстова відповідь на нотатку в каналі — інструкція редагування без завантаження файлу", async () => {
+		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
+		vi.stubGlobal("fetch", fetchSpy);
+		const store = vi.fn();
+		await receiveTelegramVoice(
+			env,
+			{ ...base, message_id: 8, chat: { id: -1004390223227, type: "channel" }, text: "Зроби все на сьогодні", reply_to_message: { message_id: 5 } },
+			store,
+		);
+		expect(store).toHaveBeenCalledOnce();
+		const [key, body, meta] = store.mock.calls[0];
+		expect(key).toMatch(/^1000-[0-9a-f]{8}\.txt$/);
+		expect(new TextDecoder().decode(body)).toBe("Зроби все на сьогодні");
+		expect(meta).toMatchObject({ kind: "text", contentType: "text/plain; charset=utf-8", deleteMessageId: "8", replyTo: "5" });
+		// лише реакція ✍, без getFile
+		expect(fetchSpy).toHaveBeenCalledOnce();
+		expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain("setMessageReaction");
+	});
+
 	it("приймає голосове без підпису в каналі, з даними для видалення й редагування", async () => {
 		vi.stubGlobal(
 			"fetch",

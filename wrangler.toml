@@ -10,8 +10,6 @@ enabled = true
 
 [vars]
 TIMEZONE = "Europe/Kyiv" # для fallback-назви "дата й час запису"
-PUBLIC_URL = "https://voice-notes-worker.valentyi-yaroslav.workers.dev" # для кнопки «Редагувати»
-SHORTCUT_NAME = "Voice Note" # шорткат, який відкриває кнопка «Редагувати»
 
 [ai]
 binding = "AI" # Workers AI: whisper-large-v3-turbo

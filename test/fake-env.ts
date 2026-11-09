@@ -13,9 +13,7 @@ export function fakeEnv(vars: Partial<Env> = {}): Env & { store: Map<string, str
 	return {
 		BUCKET,
 		store,
-		PUBLIC_URL: "https://worker.test",
 		TIMEZONE: "Europe/Kyiv",
-		SHORTCUT_NAME: "Voice Note",
 		CHAT_ID: "-1004390223227",
 		...vars,
 	} as unknown as Env & { store: Map<string, string> };
