@@ -69,6 +69,7 @@ type TgMessage = {
 	caption?: string;
 	voice?: TgFile;
 	audio?: TgFile;
+	reply_to_message?: { message_id: number };
 };
 
 export type ReceivedVoice = {
@@ -78,6 +79,8 @@ export type ReceivedVoice = {
 	// Голосове з каналу видаляється після публікації нотатки: нотатка містить те саме аудіо.
 	deleteChatId?: string;
 	deleteMessageId?: string;
+	// Відповідь голосовим на нотатку в каналі: інструкція редагування цієї нотатки.
+	replyTo?: string;
 };
 
 // Приймає голосове чи аудіо й кладе в R2 і чергу (через store).
@@ -119,6 +122,7 @@ export async function receiveTelegramVoice(
 			fileId: file.file_id,
 			kind,
 			...(inChannel && { deleteChatId: String(msg.chat.id), deleteMessageId: String(msg.message_id) }),
+			...(inChannel && msg.reply_to_message && { replyTo: String(msg.reply_to_message.message_id) }),
 		});
 		// ✍ (саме без U+FE0F, інакше REACTION_INVALID): запис прийнято, нотатка з'явиться в каналі. Не критично, якщо реакції вимкнені.
 		await tg(env, "setMessageReaction", {

@@ -196,6 +196,11 @@ export function formatTriage(items: TriageItem[]): string {
 type ThingsLink = { items: TriageItem[]; notes: string; messageUrl?: string; usedAt?: string };
 type LegacyThingsLink = { url: string; count: number; usedAt?: string }; // формат до 2026-11-09, живе до 7 днів
 
+// Чи відкривали вже посилання (тобто чи задачі, найімовірніше, вже в Things).
+export async function thingsLinkUsed(env: Env, id: string): Promise<boolean> {
+	return !!(await (await env.BUCKET.get(`things/${id}.json`))?.json<ThingsLink>())?.usedAt;
+}
+
 export async function createThingsLink(env: Env, items: TriageItem[], notes: string): Promise<string> {
 	const id = crypto.randomUUID();
 	await env.BUCKET.put(`things/${id}.json`, JSON.stringify({ items, notes } satisfies ThingsLink));
@@ -242,7 +247,7 @@ export async function handleThingsLink(env: Env, id: string, force: boolean): Pr
 	);
 }
 
-function page(title: string, body: string, status = 200, head = ""): Response {
+export function page(title: string, body: string, status = 200, head = ""): Response {
 	const html = `<!doctype html><html lang="uk"><head><meta charset="utf-8">${head}
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
 <style>body{font:17px -apple-system,system-ui,sans-serif;margin:3em 1.5em;text-align:center}
