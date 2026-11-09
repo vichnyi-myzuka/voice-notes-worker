@@ -1,22 +1,23 @@
 # voice-notes-worker
 
-iPhone Shortcut записує голос і шле файл на цей Cloudflare Worker. Воркер транскрибує запис через Workers AI (`whisper-large-v3-turbo`), генерує назву й summary через OpenAI `gpt-6-luna` (fallback: Workers AI `gemma-4-26b-a4b-it`) і надсилає в Telegram аудіофайл з осмисленою назвою. Якщо шорткат надіслав знімок Things, задачі з нотатки проходять тріаж (дублікати, область, теги, дати), а під аудіо з'являється кнопка «➕ Додати в Things».
+iPhone Shortcut записує голос і шле файл на цей Cloudflare Worker. Воркер транскрибує запис через Workers AI (`whisper-large-v3-turbo`), генерує назву й summary через OpenAI `gpt-6-luna` (fallback: Workers AI `gemma-4-26b-a4b-it`) і надсилає в Telegram аудіофайл з осмисленою назвою. Якщо задано `TODOIST_TOKEN`, воркер читає проєкти, мітки й відкриті задачі з Todoist, задачі з нотатки проходять тріаж (дублікати, проєкт, мітки, пріоритет, дати), а під аудіо з'являється кнопка «➕ Додати в Todoist». Задачі колись були одноразово мігровані з Things окремим скриптом (поза репозиторієм).
 
 ```
-Shortcut ──POST m4a (+ знімок Things)──▶ fetch (producer) ──▶ R2 + Queue ──▶ queue (consumer)
-                                                         │  R2 → Whisper → gpt-6-luna (або Gemma 4): summary → тріаж задач
-                                                         │  → Telegram sendAudio (підпис + кнопка «Додати в Things»)
-                                                         └─ після 4 невдалих повторів → DLQ → повідомлення про помилку в Telegram
+Shortcut ──POST m4a──▶ fetch (producer) ──▶ R2 + Queue ──▶ queue (consumer)
+                                        │  R2 → Whisper → gpt-6-luna (або Gemma 4): summary → Todoist (/sync) → тріаж задач
+                                        │  → Telegram sendAudio (підпис + кнопка «Додати в Todoist»)
+                                        └─ після 4 невдалих повторів → DLQ → повідомлення про помилку в Telegram
+Telegram ──callback «td:<id>»──▶ вебхук ──▶ /sync batch у Todoist ──▶ підпис оновлюється (☑️)
 ```
 
 ## Структура
 
 ```
 wrangler.toml          bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE, PUBLIC_URL
-src/index.ts           producer, consumer, DLQ consumer, summary, Telegram, тип Env
+src/index.ts           producer, consumer, DLQ consumer, summary, Telegram, кнопка Todoist (callback), тип Env
 src/llm.ts             виклик зі structured output: gpt-6-luna, при збої Gemma 4
-src/things.ts          знімок Things, тріаж, посилання й сторінка «Додати в Things»
-src/things-rules.txt   теги й правила тріажу (редагуєш ти, потім деплой)
+src/todoist.ts         Todoist API (/sync), тріаж, операції create/update/delete, дії за кнопкою
+src/todoist-rules.txt  описи міток і правила тріажу (редагуєш ти, потім деплой)
 .dev.vars.example      шаблон секретів для локального запуску
 ```
 
@@ -42,8 +43,8 @@ npx wrangler secret put CHAT_ID         # ваш chat id (напишіть бо�
 # необов'язково, для голосових прямо з Telegram (див. «Голосові з Telegram»):
 npx wrangler secret put TG_WEBHOOK_SECRET  # `openssl rand -hex 32`
 npx wrangler secret put TG_OWNER_ID        # ваш Telegram user id (для особистого чату з ботом)
-# необов'язково, щоб редагування оновлювало вже додані задачі в Things:
-npx wrangler secret put THINGS_AUTH_TOKEN  # Things → Settings → General → Things URLs → auth-token
+# необов'язково, але без нього нотатки йдуть без тріажу й кнопки Todoist:
+npx wrangler secret put TODOIST_TOKEN   # Todoist → Settings → Integrations → Developer → API token
 
 # 4. Деплой
 npx wrangler deploy
@@ -58,32 +59,24 @@ npx wrangler deploy
 Дії по порядку:
 
 1. **Record Audio**: Audio Quality: Normal, Start Recording: Immediately, Finish Recording: On Tap.
-2. **Find Items** (Things): Type **is** Project, Status **is** Open. Перейменуй результат на `Projects`.
-3. **Find Items** (Things): Type **is** Area. Перейменуй на `Areas`.
-4. **Find Items** (Things): Type **is** To-Do, Status **is** Open, Limit 500. Перейменуй на `Todos`.
-5. **Get Contents of URL**:
+2. **Get Contents of URL**:
    - URL: `https://voice-notes-worker.<subdomain>.workers.dev`
    - Method: **POST**
    - Headers: `x-secret` = значення `SECRET`
    - Request Body: **Form**, поля:
-     - `audio`: тип **File** → **Recorded Audio**
-     - `projects`: тип **Text** → змінна `Projects`, у ній властивість **Title**
-     - `areas`: тип **Text** → `Areas` → **Title**
-     - `todos`: тип **Text** → `Todos` → **Title**
-     - `edit`: тип **Text** → **Shortcut Input** (для кнопки «✏️ Редагувати»; при звичайному запуску порожнє)
-
-     Список назв у текстовому полі Shortcuts сам з'єднує через новий рядок, а воркер так його й читає.
-6. (опційно) **Show Notification** з **Contents of URL**: воркер відповідає `ok`, обробка йде у фоні.
+      - `audio`: тип **File** → **Recorded Audio**
+      - `edit`: тип **Text** → **Shortcut Input** (для кнопки «✏️ Редагувати»; при звичайному запуску порожнє)
+3. (опційно) **Show Notification** з **Contents of URL**: воркер відповідає `ok`, обробка йде у фоні.
 
 Щоб кнопка «✏️ Редагувати» могла передати шорткату `edit:<id>`: у деталях шорткату ввімкни отримання вводу (**Receive Text**, «If there's no input: Continue»). Назва шорткату задається в `SHORTCUT_NAME` у `wrangler.toml` (зараз `Voice Note`).
 
-Кроки 2–4 і поля `projects`/`areas`/`todos` необов'язкові. Без них (або зі старим варіантом Request Body: **File**) усе працює як раніше, просто без тріажу й кнопки Things.
+Проєкти, мітки й задачі шорткат більше не надсилає: воркер бере їх із Todoist сам. Старі поля `projects`/`areas`/`todos` (і кроки Find Items), якщо вони лишились у шорткаті, просто ігноруються.
 
 ## Тести, lint і git-хуки
 
 - `npm run lint` — oxlint (`src`, `test`).
 - `npm run typecheck` — `tsc --noEmit`.
-- `npm test` — vitest: unit-тести чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів Things, операції create/update/cancel і цикл посилання з x-success, фільтр вхідних повідомлень Telegram). Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
+- `npm test` — vitest: unit-тести чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyAction` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `test/todoist.test.ts`. Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
 - `npm run check` — усе разом (lint + typecheck + test).
 
 Git-хуки лежать в `.githooks/` і вмикаються автоматично після `npm install` (скрипт `prepare` ставить `core.hooksPath`):
@@ -98,7 +91,7 @@ Git-хуки лежать в `.githooks/` і вмикаються автомат
 
 ```sh
 cp .dev.vars.example .dev.vars   # заповніть ключі, якщо хочете пройти весь ланцюжок
-npm run dev   # кнопка Things у Telegram веде на PUBLIC_URL (Telegram не приймає localhost); локальне посилання — у лозі «open locally: …»
+npm run dev   # кнопка «Редагувати» в Telegram веде на PUBLIC_URL (Telegram не приймає localhost); для тріажу потрібен TODOIST_TOKEN у .dev.vars
 
 # тестовий m4a (macOS):
 say -o test.m4a --file-format=m4af --data-format=aac "Привіт, це тестовий голосовий запис."
@@ -108,30 +101,26 @@ curl -X POST http://localhost:8787 \
   --data-binary @test.m4a
 # → ok
 
-# з тестовим знімком Things (тріаж + кнопка):
+# як з шорткату (форма; тріаж і кнопка Todoist з'являться, якщо задано TODOIST_TOKEN):
 curl -X POST http://localhost:8787 -H "x-secret: local-test" \
-  -F "audio=@test.m4a;type=audio/mp4" \
-  -F $'areas=Work\nHome\nShopping' \
-  -F $'todos=Купити молоко'
+  -F "audio=@test.m4a;type=audio/mp4"
 ```
 
 Тестові записи (синтез голосом Lesya через `say`) лежать у `test-audio/` і комітяться:
 
 | Файл | Що перевіряє |
 |---|---|
-| `shopping-list.m4a` | список з 10 продуктів → окремі задачі в Shopping; з `todos=Купити молоко` у знімку — дублікат |
+| `shopping-list.m4a` | список з 10 продуктів → окремі задачі в Shopping; якщо «Купити молоко» вже відкрита в Todoist — дублікат |
 | `silence.m4a` | тиша → нічого не публікується (`discarded: empty`) |
 | `cancelled.m4a` | «…стоп, скасуй цей запис» → нічого не публікується (`discarded: cancelled`) |
 | `cancel-meeting-task.m4a` | «скасувати зустріч», «відмінити підписку» — це задачі, нотатка публікується |
-| `edit-today.m4a`, `edit-remove.m4a` | правки після додавання в Things: «обидві на сьогодні + перейменуй» → 2 update; «прибери зустріч» → 1 cancel |
+| `edit-today.m4a`, `edit-remove.m4a` | правки після додавання в Todoist: «обидві на сьогодні + перейменуй» → 2 update; «прибери зустріч» → 1 delete |
 | `edit-instruction.m4a` | інструкція редагування: «прибери задачу про Netflix, додай купити квіти мамі, терміново» (поле `edit=edit:<id>`) |
-| `mixed-tasks.m4a` | задачі в різних областях, пріоритет (`Critical`), `Pending`, дедлайн, «колись» → Want |
+| `mixed-tasks.m4a` | задачі в різних проєктах, пріоритет (p1), мітка `Pending`, дедлайн, «колись» → Want |
 
 ```sh
 source .env && curl -X POST https://voice-notes-worker.<subdomain>.workers.dev -H "x-secret: $SECRET" \
-  -F "audio=@test-audio/shopping-list.m4a;type=audio/mp4" \
-  -F $'areas=Gifts\nPersonal affairs\nHome\nShopping\nWork\nWant' \
-  -F $'todos=Купити молоко'
+  -F "audio=@test-audio/shopping-list.m4a;type=audio/mp4"
 ```
 
 `wrangler dev` локально емулює R2 і Queue, тож consumer спрацює одразу в тому ж процесі. Binding `AI` навіть локально звертається до справжнього Workers AI (з безкоштовної квоти), тож для повного ланцюжка потрібні лише `wrangler login` і `BOT_TOKEN`/`CHAT_ID`.
@@ -143,7 +132,7 @@ source .env && curl -X POST https://voice-notes-worker.<subdomain>.workers.dev -
 - **У канал `CHAT_ID`** — голосове або аудіо **без підпису**. Бот ставить ✍, а після публікації нотатки видаляє оригінал (потрібне право адміна «видаляти повідомлення»). Дописи з підписом ігноруються: так бот не чіпає власних нотаток.
 - **В особистий чат з ботом** — лише від `TG_OWNER_ID`; бот ставить ✍, нотатка з'являється в каналі.
 
-Знімка Things тут немає, тож тріаж бере останній знімок, надісланий шорткатом (`things/latest-snapshot.json` у R2). Аудіо пересилається в канал за `file_id`. Ліміт Bot API на завантаження — 20 МБ. Whisper приймає Telegram OGG/Opus напряму.
+Тріаж працює так само, як і для шорткату: проєкти, мітки й задачі воркер бере з Todoist. Аудіо пересилається в канал за `file_id`. Ліміт Bot API на завантаження — 20 МБ. Whisper приймає Telegram OGG/Opus напряму.
 
 Увімкнути вебхук (після цього `getUpdates` перестає працювати):
 
@@ -151,7 +140,7 @@ source .env && curl -X POST https://voice-notes-worker.<subdomain>.workers.dev -
 source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
   -d url=https://voice-notes-worker.<subdomain>.workers.dev/telegram \
   -d secret_token=$TG_WEBHOOK_SECRET \
-  --data-urlencode 'allowed_updates=["message","channel_post"]' -d drop_pending_updates=true
+  --data-urlencode 'allowed_updates=["message","channel_post","callback_query"]' -d drop_pending_updates=true
 ```
 
 ## Порожні й скасовані записи
@@ -164,15 +153,14 @@ source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
 
 - Кнопка веде на `PUBLIC_URL/edit/<id>`, яка відкриває `shortcuts://run-shortcut?name=<SHORTCUT_NAME>&input=text&text=edit:<id>`; шорткат надсилає запис з полем `edit`.
 - Нотатки для редагування зберігаються в R2 (`notes/<id>.json`, `notes/msg-<message_id>`) і живуть 7 днів, як усе в бакеті.
-- Модель редагування бачить задачі разом з полями Things (область, теги, `when`, дедлайн) і стабільним ключем (`t1`, `t2`…) і міняє лише те, що просить інструкція («зроби все на сьогодні» → `when: today` для всіх).
-- **Оновлення в Things.** Кнопка «➕ Додати в Things» відкриває `things:///json` з `x-success=PUBLIC_URL/things/<id>/done`: після додавання Things на мить відкриває цю сторінку, і воркер зберігає ID створених задач (`notes/<id>.things.json`). Після редагування кнопка стає «🔄 Оновити в Things (N)»: змінені задачі оновлюються за ID (`operation: update`, лише змінені поля), нові створюються, прибрані позначаються як скасовані. Для оновлення потрібен секрет `THINGS_AUTH_TOKEN`.
-- Коли Things повертає ID (x-success), воркер оновлює повідомлення: задачі, що вже в Things, позначаються ☑️, а кнопка Things зникає до наступного редагування.
-- Задачі, додані до появи `x-success` (або якщо сторінка після Things не відкрилась), знайти не можна: тоді кнопка додасть змінені задачі як нові, про що попереджає рядок у підписі.
+- Модель редагування бачить задачі разом з полями Todoist (проєкт, мітки, пріоритет, `due`, дедлайн) і стабільним ключем (`t1`, `t2`…) і міняє лише те, що просить інструкція («зроби все на сьогодні» → `due` = дата правки для всіх). «Сьогодні»/«завтра» в правці рахуються від дати правки, а в оригінальному записі — від дати запису.
+- **Оновлення в Todoist.** Після редагування кнопка стає «🔄 Оновити в Todoist (N)»: змінені задачі оновлюються за ID (`item_update`, плюс `item_move`, якщо змінився проєкт), нові створюються, прибрані видаляються (`item_delete`). Стан нотатки (ключ задачі → ID у Todoist) лежить у R2: `notes/<id>.todoist.json`. Невиконана стара дія після нового редагування замінюється.
+- Після виконання дії задачі, що вже в Todoist, позначаються ☑️, а кнопка Todoist зникає до наступного редагування.
 - «Скасуй» в інструкції скасовує саме правку; нотатка лишається як була.
 
 ## Хештеги
 
-Останній рядок підпису: `#листопад_2026 #тиждень_46 #Work #Shopping` — місяць, ISO-тиждень (у `TIMEZONE`) і області нових задач з тріажу. Тап на хештег у Telegram показує всі такі записи.
+Останній рядок підпису: `#листопад_2026 #тиждень_46 #Work #Shopping` — місяць, ISO-тиждень (у `TIMEZONE`) і проєкти нових задач з тріажу. Тап на хештег у Telegram показує всі такі записи.
 
 ## Як це працює
 
@@ -184,18 +172,18 @@ source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
 - **Якщо не впоралась жодна з двох моделей**, повідомлення ретраїться, а на останній спробі використовується fallback (title = дата/час, summary = перші 300 символів), щоб нотатка не загубилась у DLQ лише через summary.
 - **Транскрипт у Telegram не надсилається**: він потрібен лише для генерації title і summary. Підпис: назва, summary (2–4 речення), потім буллетами «💡 Ключові думки» (до 5) і «✅ Задачі» (до 10). Порожні списки не показуються, підпис обрізається до 1024 символів.
 
-## Тріаж задач для Things
+## Тріаж задач для Todoist
 
-Працює, лише якщо шорткат надіслав знімок Things і в нотатці є задачі.
+Працює, лише якщо задано `TODOIST_TOKEN` і в нотатці є задачі.
 
-- **Знімок**: назви відкритих проєктів, областей і задач (до 500, ліміт `Find Items`). Зберігається в R2 поруч з аудіо й видаляється разом з ним.
+- **Знімок**: перед тріажем (і при редагуванні) воркер читає з Todoist проєкти, мітки й відкриті задачі (`/api/v1/sync`). Нічого не зберігається, шорткат нічого не надсилає.
 - **Тріаж**: один виклик `gpt-6-luna` (`reasoning.effort: "low"`, fallback Gemma 4) зі structured output. Для кожної задачі модель повертає:
-  - дослівну цитату із запису (`quote`); пріоритет, «коли» й дедлайн вона виводить лише з цієї цитати, щоб терміновість однієї задачі не перекидалась на сусідні;
-  - назву задачі, дублікат (`duplicate_of`), область чи проєкт, теги, `when`, `deadline`.
-- **Перевірки у воркері** (модель не може «вигадати»): область і теги лише з реальних (`enum` у схемі + повторна перевірка), дублікат зараховується, лише якщо така назва справді є у знімку, тег з назвою обраної області відкидається, дати лише у форматі Things. **В Inbox задача йде, лише якщо немає ні області (проєкту), ні тегів.** Є область → в неї. Немає області, але є теги → у Anytime з тегами (воркер ставить `when: anytime`, бо інакше Things поклав би її в Inbox; якщо дату названо, лишається вона). У підписі: `→ Work`, `📋 Anytime` або `→ Inbox`.
-- **Дублікати** визначаються за змістом серед відкритих задач (лише назви, без нотаток і Logbook). Часткові збіги («купити молоко і хліб» при наявній «Купити молоко») розпізнаються не завжди.
-- **Кнопка «➕ Додати в Things (N)»** веде на `PUBLIC_URL/things/<id>`. Сторінка відкриває `things:///json` з новими задачами (Telegram-кнопки підтримують лише http(s), тож напряму `things://` не можна). Посилання одноразове: повторне відкриття показує «Вже додано» з можливістю додати ще раз. Зберігається в R2 до 7 днів (lifecycle). У нотатках кожної задачі: `🎙 <назва нотатки> (дата)` і, якщо `CHAT_ID` — канал або супергрупа (`-100…`), посилання на повідомлення в Telegram (`https://t.me/c/…/<id>`). В особистому чаті з ботом посилань на повідомлення Telegram не має.
-- **Правила** — у `src/things-rules.txt`: секція `[теги]` (лише ці теги дозволені) і `[правила]` (довільний текст для моделі). Після змін — `npx wrangler deploy`.
+  - дослівну цитату із запису (`quote`); пріоритет і дати вона виводить лише з цієї цитати, щоб терміновість однієї задачі не перекидалась на сусідні;
+  - назву задачі, дублікат (`duplicate_of`), проєкт (`""` = Inbox), мітки, пріоритет p1–p4 (p4 = без пріоритету), `due` і `deadline`.
+- **Перевірки у воркері** (модель не може «вигадати»): проєкт і мітки лише з реальних (`enum` у схемі + повторна перевірка), дублікат зараховується, лише якщо така назва справді є серед відкритих задач, мітка з назвою обраного проєкту відкидається. `due` «today»/«tomorrow» перетворюється на дату від дати запису (для правок — від дати правки), інші дати лише у форматі `YYYY-MM-DD`. У підписі: `→ Work p1 @Pending 📅 2026-11-10 ⏰ 2026-11-15` або `→ Inbox`.
+- **Дублікати** визначаються за змістом серед відкритих задач (лише назви). Часткові збіги («купити молоко і хліб» при наявній «Купити молоко») розпізнаються не завжди.
+- **Кнопка «➕ Додати в Todoist (N)»** — callback-кнопка (`callback_data` `td:<actionId>`). Натискання виконує дію одним batch-запитом `/sync` зі сталими uuid, тож повтори й подвійні тапи безпечні. Бот відповідає на callback і редагує повідомлення: ☑️ біля задач, що вже в Todoist, кнопка зникає. Натискати може лише `TG_OWNER_ID`. Дія лежить в R2 (`todoist/<id>.json`) до 7 днів (lifecycle). В описі кожної задачі: `🎙 <назва нотатки> (дата)` і, якщо `CHAT_ID` — канал або супергрупа (`-100…`), посилання на повідомлення в Telegram (`https://t.me/c/…/<id>`). В особистому чаті з ботом посилань на повідомлення Telegram не має.
+- **Правила** — у `src/todoist-rules.txt`: секція `[мітки]` (описи міток: коли яку ставити) і `[правила]` (довільний текст для моделі: проєкти, пріоритети). Самі проєкти й мітки (зараз проєкти Work, Personal affairs, Home, Shopping, Gifts, Want; мітки Important, Pending, Errand, Home, Office) беруться з Todoist. Після змін файлу — `npx wrangler deploy`.
 - Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
 
 ## Workers AI

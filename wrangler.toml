@@ -10,7 +10,7 @@ enabled = true
 
 [vars]
 TIMEZONE = "Europe/Kyiv" # для fallback-назви "дата й час запису"
-PUBLIC_URL = "https://voice-notes-worker.example.workers.dev" # для кнопок «Додати в Things» і «Редагувати»
+PUBLIC_URL = "https://voice-notes-worker.example.workers.dev" # для кнопки «Редагувати»
 SHORTCUT_NAME = "Voice Note" # шорткат, який відкриває кнопка «Редагувати»
 
 [ai]
