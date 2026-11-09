@@ -4,6 +4,7 @@ export interface Env {
 	QUEUE: Queue<Job>;
 	// secrets
 	SECRET: string;
+	OPENAI_KEY?: string; // для gpt-6-luna; без нього одразу Gemma
 	BOT_TOKEN: string;
 	CHAT_ID: string;
 	// vars
@@ -147,15 +148,14 @@ async function transcribe(env: Env, audio: Blob): Promise<string> {
 	return (res.text ?? "").trim();
 }
 
-// ---------- Workers AI: title + summary ----------
-const SUMMARY_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+// ---------- Title + summary: gpt-6-luna, при збої — Gemma 4 ----------
 const SYSTEM_PROMPT = `You write a title and a summary for a voice note transcript.
 Rules:
 - Write in the same language as the transcript.
 - Title: at most 6 words, no quotes, no trailing period.
 - Summary: 2-4 sentences.`;
 
-// Structured output: модель гарантовано повертає JSON саме такої форми.
+// Structured output: модель повертає JSON саме такої форми.
 const SUMMARY_SCHEMA = {
 	type: "object",
 	properties: { title: { type: "string" }, summary: { type: "string" } },
@@ -163,54 +163,86 @@ const SUMMARY_SCHEMA = {
 	additionalProperties: false,
 };
 
-async function summarize(
-	env: Env,
-	transcript: string,
-	recordedAt: string,
-	lastAttempt: boolean,
-): Promise<{ title: string; summary: string }> {
+type Meta = { title: string; summary: string };
+
+async function summarize(env: Env, transcript: string, recordedAt: string, lastAttempt: boolean): Promise<Meta> {
 	if (!transcript) return { title: recordedAt, summary: "(порожній транскрипт)" };
-	const fallback = {
+
+	// Основна модель — Luna; якщо вона недоступна або відповіла не тим, пробуємо Gemma.
+	const models: [string, (env: Env, transcript: string) => Promise<string>][] = [
+		["gpt-6-luna", askLuna],
+		["gemma-4", askGemma],
+	];
+	for (const [name, ask] of models) {
+		let text = "";
+		try {
+			text = await ask(env, transcript);
+			const meta = parseMeta(text);
+			console.log(`summary by ${name}: ${meta.title}`);
+			return meta;
+		} catch (err) {
+			console.error(`${name} failed:`, err, text);
+		}
+	}
+
+	// Обидві моделі не впорались: ретраїмо, а на останній спробі — fallback замість DLQ.
+	if (!lastAttempt) throw new Error("All summary models failed");
+	return {
 		title: recordedAt,
 		summary: transcript.length > 300 ? `${transcript.slice(0, 300)}…` : transcript,
 	};
+}
 
-	let text: string;
-	try {
-		const res = (await env.AI.run(SUMMARY_MODEL, {
-			messages: [
+function parseMeta(text: string): Meta {
+	const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+	const title = String(json.title ?? "").trim();
+	const summary = String(json.summary ?? "").trim();
+	if (!title || !summary) throw new Error("empty title/summary");
+	return { title, summary };
+}
+
+async function askLuna(env: Env, transcript: string): Promise<string> {
+	if (!env.OPENAI_KEY) throw new Error("OPENAI_KEY is not set");
+	const res = await fetch("https://api.openai.com/v1/responses", {
+		method: "POST",
+		headers: { Authorization: `Bearer ${env.OPENAI_KEY}`, "content-type": "application/json" },
+		body: JSON.stringify({
+			model: "gpt-6-luna",
+			reasoning: { effort: "none" },
+			max_output_tokens: 1024,
+			input: [
 				{ role: "system", content: SYSTEM_PROMPT },
 				{ role: "user", content: `<transcript>\n${transcript}\n</transcript>` },
 			],
-			response_format: {
-				type: "json_schema",
-				json_schema: { name: "voice_note", schema: SUMMARY_SCHEMA, strict: true },
-			},
-			chat_template_kwargs: { enable_thinking: false }, // reasoning для назви не потрібен
-			max_completion_tokens: 1024,
-		} as never)) as { choices?: { message?: { content?: unknown } }[]; response?: unknown };
-		// Структуровану відповідь модель може віддати як рядок або вже як об'єкт.
-		const content = res.choices?.[0]?.message?.content ?? res.response ?? "";
-		text = typeof content === "string" ? content : JSON.stringify(content);
-	} catch (err) {
-		// Помилка API: ретраїмо, але на останній спробі краще fallback, ніж DLQ.
-		if (lastAttempt) {
-			console.error("Summary API failed on last attempt, using fallback:", err);
-			return fallback;
-		}
-		throw err;
-	}
+			text: { format: { type: "json_schema", name: "voice_note", schema: SUMMARY_SCHEMA, strict: true } },
+		}),
+	});
+	if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
+	const data = (await res.json()) as { output: { type: string; content?: { type: string; text?: string }[] }[] };
+	return data.output
+		.filter((o) => o.type === "message")
+		.flatMap((o) => o.content ?? [])
+		.filter((c) => c.type === "output_text")
+		.map((c) => c.text ?? "")
+		.join("");
+}
 
-	try {
-		const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
-		const title = String(json.title ?? "").trim();
-		const summary = String(json.summary ?? "").trim();
-		if (!title || !summary) throw new Error("empty title/summary");
-		return { title, summary };
-	} catch (err) {
-		console.error("Bad JSON from model, using fallback:", err, text);
-		return fallback;
-	}
+async function askGemma(env: Env, transcript: string): Promise<string> {
+	const res = (await env.AI.run("@cf/google/gemma-4-26b-a4b-it", {
+		messages: [
+			{ role: "system", content: SYSTEM_PROMPT },
+			{ role: "user", content: `<transcript>\n${transcript}\n</transcript>` },
+		],
+		response_format: {
+			type: "json_schema",
+			json_schema: { name: "voice_note", schema: SUMMARY_SCHEMA, strict: true },
+		},
+		chat_template_kwargs: { enable_thinking: false }, // reasoning для назви не потрібен
+		max_completion_tokens: 1024,
+	} as never)) as { choices?: { message?: { content?: unknown } }[]; response?: unknown };
+	// Структуровану відповідь модель може віддати як рядок або вже як об'єкт.
+	const content = res.choices?.[0]?.message?.content ?? res.response ?? "";
+	return typeof content === "string" ? content : JSON.stringify(content);
 }
 
 // ---------- Telegram ----------
