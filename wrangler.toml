@@ -1,0 +1,35 @@
+name = "voice-notes-worker"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+# Логи в дашборді (Workers Logs)
+[observability]
+enabled = true
+
+[vars]
+TIMEZONE = "Europe/Kyiv" # для fallback-назви "дата й час запису"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "voice-notes"
+
+[[queues.producers]]
+binding = "QUEUE"
+queue = "voice-notes"
+
+# Основний consumer: по одному повідомленню за раз (кожне — це хвилини I/O),
+# 4 повтори з паузою 60 с, потім — у DLQ.
+[[queues.consumers]]
+queue = "voice-notes"
+max_batch_size = 1
+max_batch_timeout = 0
+max_retries = 4
+retry_delay = 60
+dead_letter_queue = "voice-notes-dlq"
+
+# Consumer для DLQ: лише шле в Telegram повідомлення про помилку.
+[[queues.consumers]]
+queue = "voice-notes-dlq"
+max_batch_size = 10
+max_retries = 3
+retry_delay = 60
