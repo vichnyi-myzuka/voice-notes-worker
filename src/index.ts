@@ -1,3 +1,15 @@
+import { askJson, parseJsonObject } from "./llm";
+import {
+	buildThingsUrl,
+	createThingsLink,
+	formatTriage,
+	handleThingsLink,
+	snapshotFromForm,
+	triage,
+	type ThingsSnapshot,
+	type TriageItem,
+} from "./things";
+
 export interface Env {
 	AI: Ai;
 	BUCKET: R2Bucket;
@@ -9,6 +21,7 @@ export interface Env {
 	CHAT_ID: string;
 	// vars
 	TIMEZONE: string;
+	PUBLIC_URL: string; // адреса воркера для кнопки «Додати в Things»
 }
 
 type Job = { key: string };
@@ -19,6 +32,8 @@ type Job = { key: string };
 type State = {
 	transcript?: string;
 	meta?: Meta;
+	triage?: TriageItem[] | null; // null: тріаж не вдався або не потрібен
+	thingsLinkId?: string;
 	audioSent?: boolean;
 };
 
@@ -31,20 +46,38 @@ const TELEGRAM_MAX_BYTES = 50_000_000; // ліміт Bot API на upload: 50 MB
 const CAPTION_MAX = 1024;
 
 export default {
-	// ---------- Producer ----------
 	async fetch(req, env): Promise<Response> {
+		const url = new URL(req.url);
+
+		// Сторінка кнопки «Додати в Things» (без секрету: id випадковий і одноразовий).
+		const link = url.pathname.match(/^\/things\/([0-9a-f-]{36})$/);
+		if (link && req.method === "GET") return handleThingsLink(env, link[1], url.searchParams.has("force"));
+
+		// ---------- Producer ----------
 		if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 		if (!env.SECRET) return new Response("SECRET is not configured", { status: 500 });
 		if (!(await safeEqual(req.headers.get("x-secret") ?? "", env.SECRET))) {
 			return new Response("unauthorized", { status: 401 });
 		}
 
-		// arrayBuffer(), а не стрім: R2 put потребує відомої довжини тіла.
-		const body = await req.arrayBuffer();
+		// Два формати: сирий файл у тілі або форма (audio + знімок Things).
+		// Тіло читаємо повністю (не стрімом): R2 put потребує відомої довжини.
+		let body: ArrayBuffer;
+		let snapshot: ThingsSnapshot | null = null;
+		if ((req.headers.get("content-type") ?? "").startsWith("multipart/form-data")) {
+			const form = await req.formData();
+			const audio = form.get("audio");
+			if (!audio || typeof audio === "string") return new Response("missing audio field", { status: 400 });
+			body = await audio.arrayBuffer();
+			snapshot = snapshotFromForm(form);
+		} else {
+			body = await req.arrayBuffer();
+		}
 		if (body.byteLength === 0) return new Response("empty body", { status: 400 });
 
 		const key = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.m4a`;
 		await env.BUCKET.put(key, body, { httpMetadata: { contentType: "audio/mp4" } });
+		if (snapshot) await env.BUCKET.put(`${key}.things.json`, JSON.stringify(snapshot));
 		await env.QUEUE.send({ key });
 		return new Response("ok");
 	},
@@ -84,6 +117,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	const stateKey = `${key}.state.json`;
+	const thingsKey = `${key}.things.json`;
 	const state: State = (await (await env.BUCKET.get(stateKey))?.json<State>()) ?? {};
 	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
 	const recordedAt = formatRecordedAt(key, env.TIMEZONE);
@@ -110,7 +144,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 			state.audioSent = true;
 			await save();
 		}
-		await env.BUCKET.delete([key, stateKey]);
+		await env.BUCKET.delete([key, stateKey, thingsKey]);
 		return;
 	}
 
@@ -126,14 +160,37 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 	const meta = state.meta;
 
+	// Тріаж задач для Things: лише якщо шорткат надіслав знімок і в нотатці є задачі.
+	// Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
+	if (state.triage === undefined) {
+		const snap = meta.tasks.length ? await (await env.BUCKET.get(thingsKey))?.json<ThingsSnapshot>() : null;
+		state.triage = snap
+			? await triage(env, state.transcript, meta.tasks, snap, new Date(recordedTs(key)), env.TIMEZONE)
+			: null;
+		await save();
+	}
+	const newTasks = state.triage?.filter((i) => !i.duplicateOf) ?? [];
+	if (newTasks.length && !state.thingsLinkId) {
+		const url = buildThingsUrl(newTasks, `🎙 ${meta.title} (${recordedAt})`);
+		state.thingsLinkId = await createThingsLink(env, url, newTasks.length);
+		console.log(`things link ${state.thingsLinkId}: ${newTasks.length} new, ${state.triage!.length - newTasks.length} duplicates`);
+		await save();
+	}
+
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
-		await tgSendAudio(env, audio, meta.title, truncate(formatCaption(meta), CAPTION_MAX));
+		const button = state.thingsLinkId && {
+			inline_keyboard: [
+				[{ text: `➕ Додати в Things (${newTasks.length})`, url: `${env.PUBLIC_URL}/things/${state.thingsLinkId}` }],
+			],
+		};
+		const caption = truncate(formatCaption(meta, state.triage ?? null), CAPTION_MAX);
+		await tgSendAudio(env, audio, meta.title, caption, button || undefined);
 		state.audioSent = true;
 		await save();
 	}
 
-	await env.BUCKET.delete([key, stateKey]);
+	await env.BUCKET.delete([key, stateKey, thingsKey]);
 }
 
 // ---------- Workers AI: whisper-large-v3-turbo ----------
@@ -177,22 +234,12 @@ type Meta = { title: string; summary: string; ideas: string[]; tasks: string[] }
 async function summarize(env: Env, transcript: string, recordedAt: string, lastAttempt: boolean): Promise<Meta> {
 	if (!transcript) return { title: recordedAt, summary: "(порожній транскрипт)", ideas: [], tasks: [] };
 
-	// Основна модель — Luna; якщо вона недоступна або відповіла не тим, пробуємо Gemma.
-	const models: [string, (env: Env, transcript: string) => Promise<string>][] = [
-		["gpt-6-luna", askLuna],
-		["gemma-4", askGemma],
-	];
-	for (const [name, ask] of models) {
-		let text = "";
-		try {
-			text = await ask(env, transcript);
-			const meta = parseMeta(text);
-			console.log(`summary by ${name}: ${meta.title}`);
-			return meta;
-		} catch (err) {
-			console.error(`${name} failed:`, err, text);
-		}
-	}
+	const meta = await askJson(
+		env,
+		{ name: "voice_note", system: SYSTEM_PROMPT, user: `<transcript>\n${transcript}\n</transcript>`, schema: SUMMARY_SCHEMA },
+		parseMeta,
+	);
+	if (meta) return meta;
 
 	// Обидві моделі не впорались: ретраїмо, а на останній спробі — fallback замість DLQ.
 	if (!lastAttempt) throw new Error("All summary models failed");
@@ -205,74 +252,38 @@ async function summarize(env: Env, transcript: string, recordedAt: string, lastA
 }
 
 function parseMeta(text: string): Meta {
-	const json = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
+	const json = parseJsonObject(text);
 	const title = String(json.title ?? "").trim();
 	const summary = String(json.summary ?? "").trim();
 	if (!title || !summary) throw new Error("empty title/summary");
-	const list = (v: unknown) =>
-		Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : [];
+	const list = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
 	return { title, summary, ideas: list(json.ideas), tasks: list(json.tasks) };
 }
 
 // Підпис до аудіо: назва, summary і (якщо є) списки думок і задач.
-function formatCaption({ title, summary, ideas, tasks }: Meta): string {
+// Якщо був тріаж, задачі показуються з проєктом, тегами, датами й позначкою дублікатів.
+function formatCaption({ title, summary, ideas, tasks }: Meta, triaged: TriageItem[] | null): string {
 	const parts = [title, summary];
 	if (ideas.length) parts.push(`💡 Ключові думки:\n${ideas.map((i) => `• ${i}`).join("\n")}`);
-	if (tasks.length) parts.push(`✅ Задачі:\n${tasks.map((t) => `• ${t}`).join("\n")}`);
+	if (triaged?.length) parts.push(`✅ Задачі:\n${formatTriage(triaged)}`);
+	else if (tasks.length) parts.push(`✅ Задачі:\n${tasks.map((t) => `• ${t}`).join("\n")}`);
 	return parts.join("\n\n");
 }
 
-async function askLuna(env: Env, transcript: string): Promise<string> {
-	if (!env.OPENAI_KEY) throw new Error("OPENAI_KEY is not set");
-	const res = await fetch("https://api.openai.com/v1/responses", {
-		method: "POST",
-		headers: { Authorization: `Bearer ${env.OPENAI_KEY}`, "content-type": "application/json" },
-		body: JSON.stringify({
-			model: "gpt-6-luna",
-			reasoning: { effort: "none" },
-			max_output_tokens: 1024,
-			input: [
-				{ role: "system", content: SYSTEM_PROMPT },
-				{ role: "user", content: `<transcript>\n${transcript}\n</transcript>` },
-			],
-			text: { format: { type: "json_schema", name: "voice_note", schema: SUMMARY_SCHEMA, strict: true } },
-		}),
-	});
-	if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
-	const data = (await res.json()) as { output: { type: string; content?: { type: string; text?: string }[] }[] };
-	return data.output
-		.filter((o) => o.type === "message")
-		.flatMap((o) => o.content ?? [])
-		.filter((c) => c.type === "output_text")
-		.map((c) => c.text ?? "")
-		.join("");
-}
-
-async function askGemma(env: Env, transcript: string): Promise<string> {
-	const res = (await env.AI.run("@cf/google/gemma-4-26b-a4b-it", {
-		messages: [
-			{ role: "system", content: SYSTEM_PROMPT },
-			{ role: "user", content: `<transcript>\n${transcript}\n</transcript>` },
-		],
-		response_format: {
-			type: "json_schema",
-			json_schema: { name: "voice_note", schema: SUMMARY_SCHEMA, strict: true },
-		},
-		chat_template_kwargs: { enable_thinking: false }, // reasoning для назви не потрібен
-		max_completion_tokens: 1024,
-	} as never)) as { choices?: { message?: { content?: unknown } }[]; response?: unknown };
-	// Структуровану відповідь модель може віддати як рядок або вже як об'єкт.
-	const content = res.choices?.[0]?.message?.content ?? res.response ?? "";
-	return typeof content === "string" ? content : JSON.stringify(content);
-}
-
 // ---------- Telegram ----------
-async function tgSendAudio(env: Env, audio: Blob, title: string, caption: string): Promise<void> {
+async function tgSendAudio(
+	env: Env,
+	audio: Blob,
+	title: string,
+	caption: string,
+	replyMarkup?: object,
+): Promise<void> {
 	const form = new FormData();
 	form.append("chat_id", env.CHAT_ID);
 	form.append("audio", audio, `${safeFileName(title)}.m4a`);
 	form.append("title", title);
 	form.append("caption", caption);
+	if (replyMarkup) form.append("reply_markup", JSON.stringify(replyMarkup));
 	await tg(env, "sendAudio", form);
 }
 
@@ -299,11 +310,14 @@ async function safeEqual(a: string, b: string): Promise<boolean> {
 	return crypto.subtle.timingSafeEqual(ha, hb);
 }
 
+function recordedTs(key: string): number {
+	return Number(key.split("-")[0]);
+}
+
 function formatRecordedAt(key: string, timeZone: string): string {
-	const ts = Number(key.split("-")[0]);
 	// sv-SE дає формат "2026-11-09 14:30"
 	return new Intl.DateTimeFormat("sv-SE", { timeZone, dateStyle: "short", timeStyle: "short" }).format(
-		new Date(ts),
+		new Date(recordedTs(key)),
 	);
 }
 

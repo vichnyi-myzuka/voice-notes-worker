@@ -10,6 +10,7 @@ enabled = true
 
 [vars]
 TIMEZONE = "Europe/Kyiv" # для fallback-назви "дата й час запису"
+PUBLIC_URL = "https://voice-notes-worker.valentyi-yaroslav.workers.dev" # для кнопки «Додати в Things»
 
 [ai]
 binding = "AI" # Workers AI: whisper-large-v3-turbo
