@@ -9,6 +9,7 @@ import {
 	type ThingsSnapshot,
 	type TriageItem,
 } from "./things";
+import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote } from "./telegram";
 
 export interface Env {
 	AI: Ai;
@@ -18,7 +19,9 @@ export interface Env {
 	SECRET: string;
 	OPENAI_KEY?: string; // для gpt-6-luna; без нього одразу Gemma
 	BOT_TOKEN: string;
-	CHAT_ID: string;
+	CHAT_ID: string; // куди надсилати нотатки (канал)
+	TG_WEBHOOK_SECRET?: string; // секрет вебхука для голосових з особистого чату
+	TG_OWNER_ID?: string; // Telegram user id, від якого бот приймає голосові
 	// vars
 	TIMEZONE: string;
 	PUBLIC_URL: string; // адреса воркера для кнопки «Додати в Things»
@@ -38,6 +41,7 @@ type State = {
 	audioSent?: boolean;
 	messageId?: number; // id повідомлення з аудіо в Telegram
 	messageLinked?: boolean; // посилання на повідомлення дописане в дані кнопки
+	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
 };
 
 const DLQ_NAME = "voice-notes-dlq";
@@ -47,6 +51,22 @@ const MAX_RETRIES = 4; // той самий, що max_retries у wrangler.toml
 const TRANSCRIBE_MAX_BYTES = 25_000_000;
 const TELEGRAM_MAX_BYTES = 50_000_000; // ліміт Bot API на upload: 50 MB
 const CAPTION_MAX = 1024;
+const LATEST_SNAPSHOT_KEY = "things/latest-snapshot.json"; // для голосових з Telegram
+
+// Кладе аудіо в R2 (разом зі знімком Things, якщо є) і ставить у чергу.
+async function enqueueNote(
+	env: Env,
+	key: string,
+	body: ArrayBuffer,
+	contentType: string,
+	snapshot: ThingsSnapshot | null,
+	customMetadata?: Record<string, string | undefined>,
+): Promise<void> {
+	const meta = Object.fromEntries(Object.entries(customMetadata ?? {}).filter(([, v]) => v !== undefined)) as Record<string, string>;
+	await env.BUCKET.put(key, body, { httpMetadata: { contentType }, customMetadata: meta });
+	if (snapshot) await env.BUCKET.put(`${key}.things.json`, JSON.stringify(snapshot));
+	await env.QUEUE.send({ key });
+}
 
 export default {
 	async fetch(req, env): Promise<Response> {
@@ -55,6 +75,25 @@ export default {
 		// Сторінка кнопки «Додати в Things» (без секрету: id випадковий і одноразовий).
 		const link = url.pathname.match(/^\/things\/([0-9a-f-]{36})$/);
 		if (link && req.method === "GET") return handleThingsLink(env, link[1], url.searchParams.has("force"));
+
+		// Вебхук Telegram: голосові й аудіо, надіслані боту в особистий чат.
+		if (url.pathname === "/telegram" && req.method === "POST") {
+			const token = req.headers.get("x-telegram-bot-api-secret-token") ?? "";
+			if (!env.TG_WEBHOOK_SECRET || !(await safeEqual(token, env.TG_WEBHOOK_SECRET))) {
+				return new Response("unauthorized", { status: 401 });
+			}
+			type Msg = Parameters<typeof receiveTelegramVoice>[1];
+			const update = (await req.json()) as { message?: Msg; channel_post?: Msg };
+			const msg = update.message ?? update.channel_post;
+			if (msg) {
+				await receiveTelegramVoice(env, msg, async (key, body, { contentType, ...meta }) => {
+					// Знімка від шорткату тут немає, тож беремо останній збережений.
+					const snapshot = await (await env.BUCKET.get(LATEST_SNAPSHOT_KEY))?.json<ThingsSnapshot>();
+					await enqueueNote(env, key, body, contentType, snapshot ?? null, meta);
+				});
+			}
+			return new Response("ok");
+		}
 
 		// ---------- Producer ----------
 		if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
@@ -79,9 +118,8 @@ export default {
 		if (body.byteLength === 0) return new Response("empty body", { status: 400 });
 
 		const key = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.m4a`;
-		await env.BUCKET.put(key, body, { httpMetadata: { contentType: "audio/mp4" } });
-		if (snapshot) await env.BUCKET.put(`${key}.things.json`, JSON.stringify(snapshot));
-		await env.QUEUE.send({ key });
+		await enqueueNote(env, key, body, "audio/mp4", snapshot);
+		if (snapshot) await env.BUCKET.put(LATEST_SNAPSHOT_KEY, JSON.stringify(snapshot));
 		return new Response("ok");
 	},
 
@@ -91,6 +129,7 @@ export default {
 			for (const msg of batch.messages) {
 				await tgSendMessage(
 					env,
+					env.CHAT_ID,
 					`⚠️ Не вдалося обробити голосовий запис після ${MAX_RETRIES + 1} спроб.\n` +
 						`Ключ: ${msg.body.key}\nФайл лишається в R2 (бакет voice-notes) до 7 днів.`,
 				);
@@ -124,6 +163,16 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	const state: State = (await (await env.BUCKET.get(stateKey))?.json<State>()) ?? {};
 	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
 	const recordedAt = formatRecordedAt(key, env.TIMEZONE);
+	const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
+	// Тіло об'єкта R2 читається лише раз, тож кешуємо.
+	let data: ArrayBuffer | undefined;
+	const read = async () => (data ??= await obj.arrayBuffer());
+	// Аудіо з Telegram пересилаємо за file_id, з шорткату — завантажуємо в Telegram заново.
+	const source = {
+		blob: async () => new Blob([await read()], { type: contentType }),
+		fileId: obj.customMetadata?.fileId,
+		kind: obj.customMetadata?.kind,
+	};
 
 	// Задовгий для транскрипції в межах 15 хв: не ретраїмо, шлемо оригінал без транскрипту.
 	if (obj.size > TRANSCRIBE_MAX_BYTES) {
@@ -132,14 +181,14 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 			if (obj.size > TELEGRAM_MAX_BYTES) {
 				await tgSendMessage(
 					env,
+					env.CHAT_ID,
 					`🎙 Запис ${recordedAt} (${mb} МБ) завеликий і для транскрипції (ліміт 25 МБ), і для Telegram-бота (50 МБ).\n` +
 						`Ключ: ${key}. Файл лишається в R2 до 7 днів.`,
 				);
 			} else {
-				const audio = new Blob([await obj.arrayBuffer()], { type: "audio/mp4" });
-				await tgSendAudio(
+				await tgSendNote(
 					env,
-					audio,
+					source,
 					`Запис ${recordedAt}`,
 					`Запис ${recordedAt}\n\nФайл ${mb} МБ більший за ліміт транскрипції (25 МБ), тому без транскрипту й summary.`,
 				);
@@ -151,10 +200,8 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		return;
 	}
 
-	const audio = new Blob([await obj.arrayBuffer()], { type: "audio/mp4" });
-
 	if (state.transcript === undefined) {
-		state.transcript = await transcribe(env, audio);
+		state.transcript = await transcribe(env, await read(), contentType);
 		await save();
 	}
 	if (state.meta === undefined) {
@@ -188,8 +235,10 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 				[{ text: `➕ Додати в Things (${newTasks.length})`, url: `${env.PUBLIC_URL}/things/${state.thingsLinkId}` }],
 			],
 		};
-		const caption = truncate(formatCaption(meta, state.triage ?? null), CAPTION_MAX);
-		state.messageId = await tgSendAudio(env, audio, meta.title, caption, button || undefined);
+		// Хештеги йдуть окремим рядком у кінці й не обрізаються разом з довгим текстом.
+		const tags = hashtags(new Date(recordedTs(key)), env.TIMEZONE, state.triage ?? null);
+		const caption = `${truncate(formatCaption(meta, state.triage ?? null), CAPTION_MAX - tags.length - 2)}\n\n${tags}`;
+		state.messageId = await tgSendNote(env, source, meta.title, caption, button || undefined);
 		state.audioSent = true;
 		await save();
 	}
@@ -202,15 +251,27 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		await save();
 	}
 
+	// Голосове, надіслане в канал, видаляємо: нотатка вище містить те саме аудіо.
+	const { deleteChatId, deleteMessageId } = obj.customMetadata ?? {};
+	if (deleteChatId && deleteMessageId && !state.originalDeleted) {
+		try {
+			await tg(env, "deleteMessage", { chat_id: deleteChatId, message_id: Number(deleteMessageId) });
+		} catch (err) {
+			console.error("delete original voice failed:", err); // не критично: нотатка вже є
+		}
+		state.originalDeleted = true;
+		await save();
+	}
+
 	await env.BUCKET.delete([key, stateKey, thingsKey]);
 }
 
 // ---------- Workers AI: whisper-large-v3-turbo ----------
-async function transcribe(env: Env, audio: Blob): Promise<string> {
-	// Аудіо передаємо потоком (без base64). Автор завжди говорить українською,
-	// тож задаємо мову явно, щоб модель не сплутала її, наприклад, з російською.
+async function transcribe(env: Env, audio: ArrayBuffer, contentType: string): Promise<string> {
+	// Аудіо передаємо потоком (без base64): m4a з шорткату або ogg/opus з Telegram.
+	// Автор завжди говорить українською, тож задаємо мову явно, щоб модель не сплутала її з російською.
 	const res = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
-		audio: { body: audio.stream(), contentType: "audio/mp4" },
+		audio: { body: new Blob([audio]).stream(), contentType },
 		language: "uk",
 	});
 	return (res.text ?? "").trim();
@@ -283,42 +344,22 @@ function formatCaption({ title, summary, ideas, tasks }: Meta, triaged: TriageIt
 	return parts.join("\n\n");
 }
 
-// ---------- Telegram ----------
-async function tgSendAudio(
-	env: Env,
-	audio: Blob,
-	title: string,
-	caption: string,
-	replyMarkup?: object,
-): Promise<number> {
-	const form = new FormData();
-	form.append("chat_id", env.CHAT_ID);
-	form.append("audio", audio, `${safeFileName(title)}.m4a`);
-	form.append("title", title);
-	form.append("caption", caption);
-	if (replyMarkup) form.append("reply_markup", JSON.stringify(replyMarkup));
-	const res = (await tg(env, "sendAudio", form)) as { result: { message_id: number } };
-	return res.result.message_id;
+// Хештеги для навігації в каналі: місяць, ISO-тиждень (у TIMEZONE) і області нових задач.
+const MONTHS = ["січень", "лютий", "березень", "квітень", "травень", "червень", "липень", "серпень", "вересень", "жовтень", "листопад", "грудень"];
+
+function hashtags(date: Date, timeZone: string, triaged: TriageItem[] | null): string {
+	const [y, m, d] = new Intl.DateTimeFormat("sv-SE", { timeZone }).format(date).split("-").map(Number);
+	const week = isoWeek(y, m, d);
+	const lists = [...new Set((triaged ?? []).filter((i) => !i.duplicateOf && i.list).map((i) => i.list))];
+	return [`#${MONTHS[m - 1]}_${y}`, `#тиждень_${week}`, ...lists.map((l) => `#${l.replace(/[^\p{L}\p{N}_]+/gu, "_")}`)].join(" ");
 }
 
-// Посилання на повідомлення є лише в каналах і супергрупах (chat_id вигляду -100…).
-// В особистому чаті з ботом таких посилань Telegram не має.
-function telegramMessageUrl(chatId: string, messageId: number): string | null {
-	return chatId.startsWith("-100") ? `https://t.me/c/${chatId.slice(4)}/${messageId}` : null;
-}
-
-async function tgSendMessage(env: Env, text: string): Promise<void> {
-	await tg(env, "sendMessage", JSON.stringify({ chat_id: env.CHAT_ID, text }));
-}
-
-async function tg(env: Env, method: string, body: FormData | string): Promise<unknown> {
-	const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
-		method: "POST",
-		headers: typeof body === "string" ? { "content-type": "application/json" } : undefined,
-		body,
-	});
-	if (!res.ok) throw new Error(`Telegram ${method} ${res.status}: ${await res.text()}`);
-	return res.json();
+// ISO-тиждень: номер тижня, що містить четвер цього тижня (тижні з понеділка).
+function isoWeek(y: number, m: number, d: number): number {
+	const thursday = new Date(Date.UTC(y, m - 1, d));
+	thursday.setUTCDate(d + 3 - ((thursday.getUTCDay() + 6) % 7));
+	const jan1 = Date.UTC(thursday.getUTCFullYear(), 0, 1);
+	return Math.floor((thursday.getTime() - jan1) / 86_400_000 / 7) + 1;
 }
 
 // ---------- helpers ----------
@@ -340,15 +381,6 @@ function formatRecordedAt(key: string, timeZone: string): string {
 	return new Intl.DateTimeFormat("sv-SE", { timeZone, dateStyle: "short", timeStyle: "short" }).format(
 		new Date(recordedTs(key)),
 	);
-}
-
-function safeFileName(name: string): string {
-	const clean = name
-		.replace(/[\/\\:*?"<>|\x00-\x1f]/g, " ")
-		.replace(/\s+/g, " ")
-		.trim()
-		.slice(0, 80);
-	return clean || "voice-note";
 }
 
 function truncate(s: string, max: number): string {
