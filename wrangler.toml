@@ -1,6 +1,8 @@
 name = "voice-notes-worker"
 main = "src/index.ts"
 compatibility_date = "2026-11-01"
+workers_dev = true     # URL для Shortcut
+preview_urls = false  # окремі публічні URL для кожної версії не потрібні
 
 # Логи в дашборді (Workers Logs)
 [observability]
