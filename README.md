@@ -100,6 +100,9 @@ curl -X POST http://localhost:8787 -H "x-secret: local-test" \
 | Файл | Що перевіряє |
 |---|---|
 | `shopping-list.m4a` | список з 10 продуктів → окремі задачі в Shopping; з `todos=Купити молоко` у знімку — дублікат |
+| `silence.m4a` | тиша → нічого не публікується (`discarded: empty`) |
+| `cancelled.m4a` | «…стоп, скасуй цей запис» → нічого не публікується (`discarded: cancelled`) |
+| `cancel-meeting-task.m4a` | «скасувати зустріч», «відмінити підписку» — це задачі, нотатка публікується |
 | `mixed-tasks.m4a` | задачі в різних областях, пріоритет (`Critical`), `Pending`, дедлайн, «колись» → Want |
 
 ```sh
@@ -128,6 +131,10 @@ source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
   -d secret_token=$TG_WEBHOOK_SECRET \
   --data-urlencode 'allowed_updates=["message","channel_post"]' -d drop_pending_updates=true
 ```
+
+## Порожні й скасовані записи
+
+Якщо в записі лише тиша, шум або типові «галюцинації» Whisper на тиші, або якщо автор голосом скасовує запис («скасуй», «відміна, не зберігай»), модель повертає `discard`. Тоді воркер нічого не публікує, не робить тріаж і видаляє файл (а для голосового з каналу — і оригінал). У логах: `<key> discarded: empty|cancelled`. Фрази про реальні речі («скасувати зустріч») — це задачі, а не скасування.
 
 ## Хештеги
 
