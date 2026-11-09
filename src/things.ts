@@ -9,7 +9,7 @@ export type ThingsSnapshot = { projects: string[]; areas: string[]; todos: strin
 export type TriageItem = {
 	title: string;
 	duplicateOf: string; // назва існуючої відкритої задачі або ""
-	list: string; // проєкт чи область або "" (Inbox, якщо жодна явно не підходить)
+	list: string; // проєкт чи область або "" (без області)
 	tags: string[];
 	when: string; // today | tomorrow | evening | someday | YYYY-MM-DD | ""
 	deadline: string; // YYYY-MM-DD | ""
@@ -136,12 +136,15 @@ export async function triage(
 				const tags = Array.isArray(r.tags)
 					? [...new Set(r.tags.map(String))].filter((t) => tagSet.has(t) && normalize(t) !== normalize(list))
 					: [];
+				// В Inbox — лише коли немає ні області, ні тегів. Задача без області й дати
+				// потрапила б в Inbox навіть з тегами, тож для неї ставимо when=anytime.
+				const validWhen = whenSet.has(when) || dateRe.test(when) ? when : "";
 				return {
 					title: String(r.title ?? "").trim(),
 					duplicateOf: todoByKey.get(normalize(String(r.duplicate_of ?? ""))) ?? "",
 					list,
 					tags,
-					when: whenSet.has(when) || dateRe.test(when) ? when : "",
+					when: !list && tags.length && !validWhen ? "anytime" : validWhen,
 					deadline: dateRe.test(deadline) ? deadline : "",
 				};
 			})
@@ -175,9 +178,9 @@ export function formatTriage(items: TriageItem[]): string {
 		.map((i) => {
 			if (i.duplicateOf) return `• ↩️ вже є: ${i.duplicateOf}`;
 			const extra = [
-				`→ ${i.list || "Inbox"}`,
+				i.list ? `→ ${i.list}` : !i.tags.length && !i.when ? "→ Inbox" : "",
 				...i.tags.map((t) => `#${t.replace(/\s+/g, "_")}`),
-				i.when && `📅 ${i.when}`,
+				i.when && (i.when === "anytime" ? "📋 Anytime" : `📅 ${i.when}`),
 				i.deadline && `⏰ ${i.deadline}`,
 			].filter(Boolean);
 			return `• ${i.title}${extra.length ? ` ${extra.join(" ")}` : ""}`;
