@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCaption, formatCaption, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks } from "../src/note";
+import { buildCaption, formatCaption, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks, taskLinks } from "../src/note";
 import { taskValidator, type TodoistSnapshot, type TriageItem } from "../src/todoist";
 
 const snap: TodoistSnapshot = {
@@ -83,6 +83,68 @@ describe("caption", () => {
 		expect(c.length).toBeLessThanOrEqual(1024);
 		expect(c.endsWith("ℹ️ примітка\n\n#листопад_2026 #тиждень_46")).toBe(true);
 		expect(c).toContain("…");
+	});
+});
+
+describe("taskLinks", () => {
+	const url = (id: string) => `https://app.todoist.com/app/task/${id}`;
+	const make = (summary: string, titles: string[], ideas: string[] = []) => {
+		const triage = titles.map((t, i) => item(t, { key: `t${i + 1}` }));
+		const meta = { title: "Назва", summary, ideas, tasks: titles };
+		return { triage, caption: buildCaption(meta, triage, Date.parse("2026-11-09T10:00:00Z"), "Europe/Kyiv") };
+	};
+	const texts = (caption: string, links: { offset: number; length: number }[]) =>
+		links.map((l) => caption.slice(l.offset, l.offset + l.length));
+
+	it("offset/length у UTF-16 після емодзі та не-BMP символів", () => {
+		const { triage, caption } = make("Опис 🎉 з емодзі 😀.", ["Купити хліб", "Зателефонувати мамі"], ["Думка 𝒳"]);
+		const links = taskLinks(caption, triage, { t1: "11", t2: "22" });
+		expect(texts(caption, links)).toEqual(["Купити хліб", "Зателефонувати мамі"]);
+		expect(links.map((l) => l.url)).toEqual([url("11"), url("22")]);
+		expect(links.every((l) => l.type === "text_link")).toBe(true);
+	});
+	it("назва і в summary, і в задачах — посилання на рядок задачі", () => {
+		const { triage, caption } = make("Треба Купити хліб сьогодні", ["Купити хліб"]);
+		const [link] = taskLinks(caption, triage, { t1: "11" });
+		expect(link.offset).toBeGreaterThan(caption.indexOf("✅ Задачі:"));
+		expect(caption.slice(link.offset - 3, link.offset + link.length)).toBe("\n• Купити хліб");
+	});
+	it("дублікат і задача без id не отримують посилання", () => {
+		const triage = [
+			item("А", { key: "t1", duplicateOf: "Існуюча" }),
+			item("Б", { key: "t2" }),
+			item("В", { key: "t3" }),
+		];
+		const caption = buildCaption(
+			{ title: "Н", summary: "С", ideas: [], tasks: ["А", "Б", "В"] },
+			triage,
+			Date.parse("2026-11-09T10:00:00Z"),
+			"Europe/Kyiv",
+		);
+		const links = taskLinks(caption, triage, { t1: "1", t3: "3" });
+		expect(texts(caption, links)).toEqual(["В"]);
+		expect(links[0].url).toBe(url("3"));
+	});
+	it("однакова назва двічі — два окремі посилання", () => {
+		const { triage, caption } = make("С", ["Позвонити", "Позвонити"]);
+		const links = taskLinks(caption, triage, { t1: "1", t2: "2" });
+		expect(texts(caption, links)).toEqual(["Позвонити", "Позвонити"]);
+		expect(links[0].offset).toBeLessThan(links[1].offset);
+		expect(links.map((l) => l.url)).toEqual([url("1"), url("2")]);
+	});
+	it("обрізані підписом рядки не мають посилань", () => {
+		const titles = ["Перша задача", "Друга задача", "Третя задача", "Четверта задача"];
+		const { triage, caption } = make("дуже ".repeat(190), titles);
+		expect(caption).toContain("…");
+		expect(caption).not.toContain("Четверта задача");
+		const links = taskLinks(caption, triage, { t1: "1", t2: "2", t3: "3", t4: "4" });
+		expect(links.length).toBeLessThan(titles.length);
+		for (const t of texts(caption, links)) expect(titles).toContain(t);
+	});
+	it("без «✅ Задачі:» — порожній список", () => {
+		const caption = "Назва\n\nОпис\n\n#листопад_2026";
+		expect(taskLinks(caption, [item("А", { key: "t1" })], { t1: "1" })).toEqual([]);
+		expect(taskLinks(caption, null, {})).toEqual([]);
 	});
 });
 

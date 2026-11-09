@@ -1,5 +1,5 @@
 import { askJson } from "./llm";
-import { buildCaption, parseEditedNote, parseMeta, plainTasks, type Meta } from "./note";
+import { buildCaption, parseEditedNote, parseMeta, plainTasks, taskLinks, type Meta } from "./note";
 import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote } from "./telegram";
 import {
 	applyAction,
@@ -49,7 +49,7 @@ type State = {
 	triage?: TriageItem[] | null; // null: тріаж не вдався або не потрібен
 	actionId?: string; // дія в Todoist ("" — робити нічого)
 	todoistApplied?: boolean; // дію виконано (false — не вдалося навіть на останній спробі)
-	todoistMarked?: boolean; // підпис з ☑️ оновлено після виконання
+	todoistMarked?: boolean; // підпис з посиланнями на задачі оновлено після виконання
 	audioSent?: boolean;
 	messageId?: number; // id повідомлення з аудіо в Telegram
 	messageLinked?: boolean; // посилання на повідомлення дописане в дію
@@ -302,7 +302,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		console.log(`note ${state.noteId} published as message ${state.messageId}`);
 	}
 
-	// Задачі одразу в Todoist (посилання на повідомлення вже в описі), потім ☑️ у підписі.
+	// Задачі одразу в Todoist (посилання на повідомлення вже в описі), потім назви задач у підписі стають посиланнями на них.
 	if (state.actionId && state.todoistApplied === undefined) {
 		state.todoistApplied = await applyNow(env, state.actionId, lastAttempt);
 		await save();
@@ -401,10 +401,10 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	}
 
 	if (!state.captionEdited) {
-		const now = new Set(Object.keys(await getInTodoist(env, noteId)));
+		const ids = await todoistIds(env, noteId);
 		const notice = state.todoistApplied === false ? TODOIST_FAILED : "";
-		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice, now);
-		await editNoteMessage(env, note.messageId, caption, NO_BUTTONS);
+		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice);
+		await editNoteMessage(env, note.messageId, caption, taskLinks(caption, state.triage ?? null, ids));
 		state.captionEdited = true;
 		await save();
 	}
@@ -463,17 +463,29 @@ async function handleCallback(env: Env, cb: TgCallback): Promise<void> {
 	}
 }
 
-// Після виконання дії: ☑️ біля задач, що вже в Todoist, і без кнопок.
+// Після виконання дії: назви задач, що вже в Todoist, — посилання на них; кнопки прибираються.
 async function markInTodoist(env: Env, noteId: string, notice = ""): Promise<void> {
 	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
 	if (!note) return;
-	const inTodoist = new Set(Object.keys(await getInTodoist(env, noteId)));
-	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, notice, inTodoist);
-	await editNoteMessage(env, note.messageId, caption, NO_BUTTONS);
+	const ids = await todoistIds(env, noteId);
+	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, notice);
+	await editNoteMessage(env, note.messageId, caption, taskLinks(caption, note.triage, ids));
 }
 
-async function editNoteMessage(env: Env, messageId: number, caption: string, replyMarkup: object): Promise<void> {
-	await tg(env, "editMessageCaption", { chat_id: env.CHAT_ID, message_id: messageId, caption, reply_markup: replyMarkup }).catch(
+// Ключ задачі → id у Todoist.
+async function todoistIds(env: Env, noteId: string): Promise<Record<string, string>> {
+	return Object.fromEntries(Object.entries(await getInTodoist(env, noteId)).map(([key, v]) => [key, v.id]));
+}
+
+// Оновлює підпис (з посиланнями на задачі) і прибирає кнопки.
+async function editNoteMessage(env: Env, messageId: number, caption: string, entities: object[]): Promise<void> {
+	await tg(env, "editMessageCaption", {
+		chat_id: env.CHAT_ID,
+		message_id: messageId,
+		caption,
+		caption_entities: entities,
+		reply_markup: NO_BUTTONS,
+	}).catch(
 		(err) => {
 			if (!String(err).includes("message is not modified")) throw err;
 		},
