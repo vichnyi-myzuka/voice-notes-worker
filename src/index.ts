@@ -213,7 +213,7 @@ Rules:
 - title: at most 6 words, no quotes, no trailing period.
 - summary: 2-4 sentences.
 - ideas: the main thoughts, decisions or insights voiced in the note, up to 5 items, each under 12 words. Do not repeat the summary word for word.
-- tasks: concrete action items, todos and reminders mentioned in the note, up to 7 items, each under 12 words and starting with a verb; include deadlines or people if mentioned.
+- tasks: concrete action items, todos, reminders and wishes for later ("колись хочу прочитати…") mentioned in the note, up to 10 items, each under 12 words and starting with a verb; include deadlines or people if mentioned. Keep separate actions as separate items.
 - If there are no ideas or no tasks, return an empty array for that field. Do not invent anything that is not in the transcript.`;
 
 // Structured output: модель повертає JSON саме такої форми.

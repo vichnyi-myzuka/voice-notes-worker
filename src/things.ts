@@ -52,13 +52,17 @@ const allowedTags: string[] = (() => {
 // ---------- Тріаж ----------
 const TRIAGE_SYSTEM = `You triage tasks from a Ukrainian voice note into the author's Things 3 task manager.
 For each task in <tasks>, return exactly one item, in the same order:
+- quote: the exact fragment of the transcript where this specific task is mentioned (one sentence or clause, copied verbatim).
 - title: a concise to-do title in Ukrainian that starts with a verb. Keep the given wording unless it can be made clearer.
 - duplicate_of: if an existing open to-do in <existing_todos> means the same thing, copy its title exactly as written there; otherwise "". Only mark real duplicates, not merely related tasks.
 - list: the project or area from <lists> that clearly fits the task, or "" (Inbox) if none clearly fits. Never guess.
 - tags: tags from the allowed list that clearly apply, or [] if none.
 - when: "today", "tomorrow", "evening", "someday" or a date YYYY-MM-DD, only if the note says when to do it; otherwise "".
 - deadline: a date YYYY-MM-DD only if the note mentions a deadline; otherwise "".
-Resolve relative dates ("в п'ятницю", "через тиждень") from the recording date. Follow the author's rules in <rules>.`;
+Resolve relative dates ("в п'ятницю", "через тиждень") from the recording date.
+Decide priority tags, "when" and "deadline" ONLY from the words inside that task's quote. If the quote itself has no words about urgency, importance or timing, the task gets no priority tag, no "when" and no "deadline", even if a neighbouring task is urgent. A deadline alone is not a reason for a priority tag.
+If the author says they are waiting for someone or something related to a task, that task is waiting (see the rules for the matching tag).
+Follow the author's rules in <rules>.`;
 
 export async function triage(
 	env: Env,
@@ -72,6 +76,7 @@ export async function triage(
 	const itemSchema: Record<string, unknown> = {
 		type: "object",
 		properties: {
+			quote: { type: "string" }, // спершу цитата: пріоритет і дати модель виводить лише з неї
 			title: { type: "string" },
 			duplicate_of: { type: "string" },
 			// enum гарантує, що модель не вигадає неіснуючий проєкт чи тег
@@ -82,7 +87,7 @@ export async function triage(
 			when: { type: "string" },
 			deadline: { type: "string" },
 		},
-		required: ["title", "duplicate_of", "list", "tags", "when", "deadline"],
+		required: ["quote", "title", "duplicate_of", "list", "tags", "when", "deadline"],
 		additionalProperties: false,
 	};
 	const schema = {
@@ -125,12 +130,16 @@ export async function triage(
 			.map((r: Record<string, unknown>): TriageItem => {
 				const when = String(r.when ?? "").trim();
 				const deadline = String(r.deadline ?? "").trim();
-				const list = String(r.list ?? "").trim();
+				const list = listSet.has(String(r.list ?? "").trim()) ? String(r.list).trim() : "";
 				return {
 					title: String(r.title ?? "").trim(),
 					duplicateOf: todoByKey.get(normalize(String(r.duplicate_of ?? ""))) ?? "",
-					list: listSet.has(list) ? list : "",
-					tags: Array.isArray(r.tags) ? r.tags.map(String).filter((t) => tagSet.has(t)) : [],
+					list,
+					// Лише дозволені теги, без повторів і без тегу, що збігається з назвою області
+					// (наприклад, тег Home в області Home). Смислові збіги — у things-rules.txt.
+					tags: Array.isArray(r.tags)
+						? [...new Set(r.tags.map(String))].filter((t) => tagSet.has(t) && normalize(t) !== normalize(list))
+						: [],
 					when: whenSet.has(when) || dateRe.test(when) ? when : "",
 					deadline: dateRe.test(deadline) ? deadline : "",
 				};
