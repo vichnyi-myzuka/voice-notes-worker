@@ -141,17 +141,21 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 
 // ---------- Workers AI: whisper-large-v3-turbo ----------
 async function transcribe(env: Env, audio: Blob): Promise<string> {
-	// Аудіо передаємо потоком (без base64), мову модель визначає сама.
+	// Аудіо передаємо потоком (без base64). Автор завжди говорить українською,
+	// тож задаємо мову явно, щоб модель не сплутала її, наприклад, з російською.
 	const res = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
 		audio: { body: audio.stream(), contentType: "audio/mp4" },
+		language: "uk",
 	});
 	return (res.text ?? "").trim();
 }
 
 // ---------- Title + summary: gpt-6-luna, при збої — Gemma 4 ----------
 const SYSTEM_PROMPT = `You write a title and a summary for a voice note transcript.
+The author always speaks Ukrainian.
 Rules:
-- Write in the same language as the transcript.
+- Always write the title and summary in Ukrainian, even if the transcript contains words or phrases in other languages or was transcribed imperfectly.
+- Keep names, brands and technical terms as they are commonly written.
 - Title: at most 6 words, no quotes, no trailing period.
 - Summary: 2-4 sentences.`;
 
