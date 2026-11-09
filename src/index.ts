@@ -47,8 +47,9 @@ type State = {
 	transcript?: string;
 	meta?: Meta;
 	triage?: TriageItem[] | null; // null: тріаж не вдався або не потрібен
-	actionId?: string; // дія для кнопки Todoist ("" — робити нічого)
-	actionLabel?: string; // «➕ Додати в Todoist (N)» або «🔄 Оновити в Todoist (N)»
+	actionId?: string; // дія в Todoist ("" — робити нічого)
+	todoistApplied?: boolean; // дію виконано (false — не вдалося навіть на останній спробі)
+	todoistMarked?: boolean; // підпис з ☑️ оновлено після виконання
 	audioSent?: boolean;
 	messageId?: number; // id повідомлення з аудіо в Telegram
 	messageLinked?: boolean; // посилання на повідомлення дописане в дію
@@ -265,7 +266,6 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	if (newTasks.length && !state.actionId) {
 		const ops: TodoistOp[] = newTasks.map((item) => ({ key: item.key ?? "", item }));
 		state.actionId = await createAction(env, ops, `🎙 ${meta.title} (${recordedAt})`, state.noteId);
-		state.actionLabel = `➕ Додати в Todoist (${ops.length})`;
 		console.log(`todoist action ${state.actionId}: ${newTasks.length} new, ${state.triage!.length - newTasks.length} duplicates`);
 		await save();
 	}
@@ -273,7 +273,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
 		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE);
-		state.messageId = await tgSendNote(env, source, meta.title, caption, noteButtons(state.actionId, state.actionLabel));
+		state.messageId = await tgSendNote(env, source, meta.title, caption);
 		state.audioSent = true;
 		await save();
 	}
@@ -300,6 +300,17 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		await env.BUCKET.put(noteKey(state.noteId), JSON.stringify(note));
 		await env.BUCKET.put(noteByMessageKey(state.messageId), state.noteId);
 		console.log(`note ${state.noteId} published as message ${state.messageId}`);
+	}
+
+	// Задачі одразу в Todoist (посилання на повідомлення вже в описі), потім ☑️ у підписі.
+	if (state.actionId && state.todoistApplied === undefined) {
+		state.todoistApplied = await applyNow(env, state.actionId, lastAttempt);
+		await save();
+	}
+	if (state.actionId && !state.todoistMarked) {
+		await markInTodoist(env, state.noteId, state.todoistApplied ? "" : TODOIST_FAILED);
+		state.todoistMarked = true;
+		await save();
 	}
 
 	// Голосове, надіслане в канал, видаляємо: нотатка вище містить те саме аудіо.
@@ -374,7 +385,6 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 			state.actionId = await createAction(env, ops, `🎙 ${meta.title} (${recorded})`, noteId);
 			const messageUrl = telegramMessageUrl(env.CHAT_ID, note.messageId);
 			if (messageUrl) await setActionMessage(env, state.actionId, messageUrl);
-			state.actionLabel = ops.some((op) => op.id) ? `🔄 Оновити в Todoist (${ops.length})` : `➕ Додати в Todoist (${ops.length})`;
 			const n = (f: (op: TodoistOp) => boolean) => ops.filter(f).length;
 			console.log(
 				`todoist action ${state.actionId}: ${n((o) => !o.id)} create, ${n((o) => !!o.id && !!o.item)} update, ${n((o) => !o.item)} delete`,
@@ -385,9 +395,16 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		await save();
 	}
 
+	if (state.actionId && state.todoistApplied === undefined) {
+		state.todoistApplied = await applyNow(env, state.actionId, lastAttempt);
+		await save();
+	}
+
 	if (!state.captionEdited) {
-		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, "", new Set(Object.keys(inTodoist)));
-		await editNoteMessage(env, note.messageId, caption, noteButtons(state.actionId, state.actionLabel));
+		const now = new Set(Object.keys(await getInTodoist(env, noteId)));
+		const notice = state.todoistApplied === false ? TODOIST_FAILED : "";
+		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice, now);
+		await editNoteMessage(env, note.messageId, caption, NO_BUTTONS);
 		state.captionEdited = true;
 		await save();
 	}
@@ -400,13 +417,31 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		actionId: state.actionId || undefined,
 	};
 	await env.BUCKET.put(noteKey(noteId), JSON.stringify(updated));
-	// Стара дія (якщо її не натиснули) більше не актуальна.
+	// Стара дія (з часів кнопки, якщо її не натиснули) більше не актуальна.
 	if (note.actionId && note.actionId !== state.actionId) await deleteAction(env, note.actionId);
 	console.log(`note ${noteId} edited`);
 	await cleanup(note.messageId);
 }
 
-// ---------- Кнопка Todoist (callback_query) ----------
+// ---------- Todoist ----------
+const TODOIST_FAILED = "⚠️ Не вдалося оновити Todoist";
+const NO_BUTTONS = { inline_keyboard: [] }; // прибирає кнопку (у старих нотатках)
+
+// Виконує дію в Todoist одразу. Збій — ретрай черги (сталі uuid не дадуть дублів);
+// на останній спробі повертає false, щоб нотатка все одно дійшла.
+async function applyNow(env: Env, actionId: string, lastAttempt: boolean): Promise<boolean> {
+	try {
+		const res = await applyAction(env, actionId);
+		if (res.status === "applied") console.log(`todoist action ${actionId} applied: ${res.count} ops`);
+		return true;
+	} catch (err) {
+		if (!lastAttempt) throw err;
+		console.error(`todoist action ${actionId} failed:`, err);
+		return false;
+	}
+}
+
+// Кнопка «Додати в Todoist» лишилась лише в нотатках, опублікованих до автододавання.
 async function handleCallback(env: Env, cb: TgCallback): Promise<void> {
 	const answer = (text: string, alert = false) =>
 		tg(env, "answerCallbackQuery", { callback_query_id: cb.id, text, show_alert: alert }).catch((err) =>
@@ -428,13 +463,13 @@ async function handleCallback(env: Env, cb: TgCallback): Promise<void> {
 	}
 }
 
-// Після виконання дії: ☑️ біля задач, що вже в Todoist, і без кнопки Todoist.
-async function markInTodoist(env: Env, noteId: string): Promise<void> {
+// Після виконання дії: ☑️ біля задач, що вже в Todoist, і без кнопок.
+async function markInTodoist(env: Env, noteId: string, notice = ""): Promise<void> {
 	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
 	if (!note) return;
 	const inTodoist = new Set(Object.keys(await getInTodoist(env, noteId)));
-	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, "", inTodoist);
-	await editNoteMessage(env, note.messageId, caption, noteButtons(undefined, undefined));
+	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, notice, inTodoist);
+	await editNoteMessage(env, note.messageId, caption, NO_BUTTONS);
 }
 
 async function editNoteMessage(env: Env, messageId: number, caption: string, replyMarkup: object): Promise<void> {
@@ -443,12 +478,6 @@ async function editNoteMessage(env: Env, messageId: number, caption: string, rep
 			if (!String(err).includes("message is not modified")) throw err;
 		},
 	);
-}
-
-// Кнопка під нотаткою: «Додати / Оновити в Todoist», якщо є що робити (порожня клавіатура прибирає кнопку).
-// Редагування — відповіддю на нотатку (свайп вліво), голосом або текстом.
-function noteButtons(actionId: string | undefined, actionLabel: string | undefined) {
-	return { inline_keyboard: actionId ? [[{ text: actionLabel ?? "➕ Додати в Todoist", callback_data: `td:${actionId}` }]] : [] };
 }
 
 // Видаляє оригінальне голосове з каналу (якщо запис прийшов звідти). Збій не критичний.
@@ -524,6 +553,7 @@ const EDIT_SYSTEM = `${SYSTEM_PROMPT}
 Editing mode: you get an existing note (<note> JSON), its original transcript, earlier edit instructions and a new spoken edit instruction from the author.
 Return the full updated note. Apply exactly what the instruction asks (rename, add, remove, reword, change dates, projects, labels or priority of tasks, etc.) and keep everything else unchanged.
 Tasks: return every task that should remain, in order. An existing task keeps its "key" even if you change its title or fields; a new task gets key "". A removed task is simply omitted.
+Keep the summary and ideas consistent with the edited note: if the instruction changes something they mention (a date, a removed task), update that part, otherwise leave them as is.
 Change a task's title only when the instruction asks to rename or reword it. Moving a task in time ("перенеси на п'ятницю", "зроби на сьогодні") changes only due/deadline and never turns into a title like "Перенести …".
 ${EDIT_TASKS_HELP}
 Relative dates in the instruction ("сьогодні", "завтра", "в п'ятницю") are counted from the edit date; in the original transcript, from the recording date.
