@@ -20,7 +20,6 @@ type State = {
 	title?: string;
 	summary?: string;
 	audioSent?: boolean;
-	textPartsSent?: number;
 };
 
 const DLQ_NAME = "voice-notes-dlq";
@@ -30,7 +29,6 @@ const MAX_RETRIES = 4; // той самий, що max_retries у wrangler.toml
 const TRANSCRIBE_MAX_BYTES = 25_000_000;
 const TELEGRAM_MAX_BYTES = 50_000_000; // ліміт Bot API на upload: 50 MB
 const CAPTION_MAX = 1024;
-const MESSAGE_MAX = 4096;
 
 export default {
 	// ---------- Producer ----------
@@ -122,35 +120,19 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		state.transcript = await transcribe(env, audio);
 		await save();
 	}
-	const transcript = state.transcript;
-
 	if (state.title === undefined || state.summary === undefined) {
-		const meta = await summarize(env, transcript, recordedAt, lastAttempt);
+		const meta = await summarize(env, state.transcript, recordedAt, lastAttempt);
 		state.title = meta.title;
 		state.summary = meta.summary;
 		await save();
 	}
 	const { title, summary } = state;
 
-	// Короткий транскрипт вміщаємо прямо в caption, довгий шлемо окремо.
-	const base = `${title}\n\n${summary}`;
-	const full = transcript ? `${base}\n\n${transcript}` : base;
-	const transcriptInCaption = full.length <= CAPTION_MAX;
-	const caption = transcriptInCaption ? full : truncate(base, CAPTION_MAX);
-
+	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
-		await tgSendAudio(env, audio, title, caption);
+		await tgSendAudio(env, audio, title, truncate(`${title}\n\n${summary}`, CAPTION_MAX));
 		state.audioSent = true;
 		await save();
-	}
-
-	if (!transcriptInCaption) {
-		const parts = splitText(transcript, MESSAGE_MAX);
-		for (let i = state.textPartsSent ?? 0; i < parts.length; i++) {
-			await tgSendMessage(env, parts[i]);
-			state.textPartsSent = i + 1;
-			await save();
-		}
 	}
 
 	await env.BUCKET.delete([key, stateKey]);
@@ -283,18 +265,4 @@ function safeFileName(name: string): string {
 
 function truncate(s: string, max: number): string {
 	return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
-}
-
-function splitText(text: string, max: number): string[] {
-	const parts: string[] = [];
-	let rest = text;
-	while (rest.length > max) {
-		let cut = rest.lastIndexOf("\n", max);
-		if (cut < max / 2) cut = rest.lastIndexOf(" ", max);
-		if (cut < max / 2) cut = max;
-		parts.push(rest.slice(0, cut));
-		rest = rest.slice(cut).trimStart();
-	}
-	if (rest) parts.push(rest);
-	return parts;
 }
