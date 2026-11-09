@@ -3,13 +3,14 @@ import { formatTriage, taskUrl, type TriageItem } from "./todoist";
 
 // Чиста логіка нотатки (без I/O): розбір відповідей моделі, підпис, хештеги. Покрита тестами.
 
-export type Meta = { title: string; summary: string; ideas: string[]; tasks: string[]; discard?: "empty" | "cancelled" };
+// discard: "delete" — лише в режимі редагування («видали нотатку»).
+export type Meta = { title: string; summary: string; ideas: string[]; tasks: string[]; discard?: "empty" | "cancelled" | "delete" };
 
 const CAPTION_MAX = 1024;
 
 export function parseMeta(text: string): Meta {
 	const json = parseJsonObject(text);
-	if (json.discard === "empty" || json.discard === "cancelled") {
+	if (json.discard === "empty" || json.discard === "cancelled" || json.discard === "delete") {
 		return { title: "", summary: "", ideas: [], tasks: [], discard: json.discard };
 	}
 	const title = String(json.title ?? "").trim();

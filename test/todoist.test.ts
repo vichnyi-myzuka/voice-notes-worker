@@ -3,6 +3,7 @@ import {
 	applyAction,
 	buildCommands,
 	createAction,
+	deleteOpenTasks,
 	formatTriage,
 	getInTodoist,
 	planOps,
@@ -231,6 +232,50 @@ describe("formatTriage", () => {
 	});
 	it("p4 не показується", () => {
 		expect(formatTriage([item("А", { priority: 4 })])).not.toMatch(/p4/);
+	});
+});
+
+describe("deleteOpenTasks", () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+	const items = [
+		{ id: "1" },
+		{ id: "2", checked: true },
+		{ id: "3", is_deleted: true },
+		{ id: "4" },
+	];
+	function stubFetch(write: unknown) {
+		const calls: { body: URLSearchParams }[] = [];
+		vi.stubGlobal("fetch", async (_url: string, init: { body: URLSearchParams }) => {
+			calls.push({ body: init.body });
+			return json(calls.length === 1 ? { items } : write);
+		});
+		return calls;
+	}
+
+	it("порожній список → 0, без запитів", async () => {
+		const calls = stubFetch({});
+		expect(await deleteOpenTasks(fakeEnv({ TODOIST_TOKEN: "tok" }), [])).toBe(0);
+		expect(calls).toHaveLength(0);
+	});
+	it("видаляє лише відкриті; виконані, видалені й невідомі пропускає", async () => {
+		const calls = stubFetch({ sync_status: { "delete-1": "ok", "delete-4": "ok" } });
+		expect(await deleteOpenTasks(fakeEnv({ TODOIST_TOKEN: "tok" }), ["1", "2", "3", "4", "999"])).toBe(2);
+		expect(calls).toHaveLength(2);
+		expect(JSON.parse(calls[1].body.get("commands")!)).toEqual([
+			{ type: "item_delete", uuid: "delete-1", args: { id: "1" } },
+			{ type: "item_delete", uuid: "delete-4", args: { id: "4" } },
+		]);
+	});
+	it("відкритих немає → 0, лише запит на читання", async () => {
+		const calls = stubFetch({});
+		expect(await deleteOpenTasks(fakeEnv({ TODOIST_TOKEN: "tok" }), ["2", "3", "999"])).toBe(0);
+		expect(calls).toHaveLength(1);
+	});
+	it("неуспішний sync_status → помилка", async () => {
+		stubFetch({ sync_status: { "delete-1": { error_code: 22, error: "Invalid" } } });
+		await expect(deleteOpenTasks(fakeEnv({ TODOIST_TOKEN: "tok" }), ["1"])).rejects.toThrow(/Todoist delete failed/);
 	});
 });
 
