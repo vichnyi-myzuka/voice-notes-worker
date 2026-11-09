@@ -18,8 +18,7 @@ type Job = { key: string };
 // і не шле в Telegram те, що вже відправлено.
 type State = {
 	transcript?: string;
-	title?: string;
-	summary?: string;
+	meta?: Meta;
 	audioSent?: boolean;
 };
 
@@ -121,17 +120,15 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		state.transcript = await transcribe(env, audio);
 		await save();
 	}
-	if (state.title === undefined || state.summary === undefined) {
-		const meta = await summarize(env, state.transcript, recordedAt, lastAttempt);
-		state.title = meta.title;
-		state.summary = meta.summary;
+	if (state.meta === undefined) {
+		state.meta = await summarize(env, state.transcript, recordedAt, lastAttempt);
 		await save();
 	}
-	const { title, summary } = state;
+	const meta = state.meta;
 
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
-		await tgSendAudio(env, audio, title, truncate(`${title}\n\n${summary}`, CAPTION_MAX));
+		await tgSendAudio(env, audio, meta.title, truncate(formatCaption(meta), CAPTION_MAX));
 		state.audioSent = true;
 		await save();
 	}
@@ -151,26 +148,34 @@ async function transcribe(env: Env, audio: Blob): Promise<string> {
 }
 
 // ---------- Title + summary: gpt-6-luna, при збої — Gemma 4 ----------
-const SYSTEM_PROMPT = `You write a title and a summary for a voice note transcript.
+const SYSTEM_PROMPT = `You write a title, a summary, key ideas and tasks for a voice note transcript.
 The author always speaks Ukrainian.
 Rules:
-- Always write the title and summary in Ukrainian, even if the transcript contains words or phrases in other languages or was transcribed imperfectly.
+- Always write everything in Ukrainian, even if the transcript contains words or phrases in other languages or was transcribed imperfectly.
 - Keep names, brands and technical terms as they are commonly written.
-- Title: at most 6 words, no quotes, no trailing period.
-- Summary: 2-4 sentences.`;
+- title: at most 6 words, no quotes, no trailing period.
+- summary: 2-4 sentences.
+- ideas: the main thoughts, decisions or insights voiced in the note, up to 5 items, each under 12 words. Do not repeat the summary word for word.
+- tasks: concrete action items, todos and reminders mentioned in the note, up to 7 items, each under 12 words and starting with a verb; include deadlines or people if mentioned.
+- If there are no ideas or no tasks, return an empty array for that field. Do not invent anything that is not in the transcript.`;
 
 // Structured output: модель повертає JSON саме такої форми.
 const SUMMARY_SCHEMA = {
 	type: "object",
-	properties: { title: { type: "string" }, summary: { type: "string" } },
-	required: ["title", "summary"],
+	properties: {
+		title: { type: "string" },
+		summary: { type: "string" },
+		ideas: { type: "array", items: { type: "string" } },
+		tasks: { type: "array", items: { type: "string" } },
+	},
+	required: ["title", "summary", "ideas", "tasks"],
 	additionalProperties: false,
 };
 
-type Meta = { title: string; summary: string };
+type Meta = { title: string; summary: string; ideas: string[]; tasks: string[] };
 
 async function summarize(env: Env, transcript: string, recordedAt: string, lastAttempt: boolean): Promise<Meta> {
-	if (!transcript) return { title: recordedAt, summary: "(порожній транскрипт)" };
+	if (!transcript) return { title: recordedAt, summary: "(порожній транскрипт)", ideas: [], tasks: [] };
 
 	// Основна модель — Luna; якщо вона недоступна або відповіла не тим, пробуємо Gemma.
 	const models: [string, (env: Env, transcript: string) => Promise<string>][] = [
@@ -194,6 +199,8 @@ async function summarize(env: Env, transcript: string, recordedAt: string, lastA
 	return {
 		title: recordedAt,
 		summary: transcript.length > 300 ? `${transcript.slice(0, 300)}…` : transcript,
+		ideas: [],
+		tasks: [],
 	};
 }
 
@@ -202,7 +209,17 @@ function parseMeta(text: string): Meta {
 	const title = String(json.title ?? "").trim();
 	const summary = String(json.summary ?? "").trim();
 	if (!title || !summary) throw new Error("empty title/summary");
-	return { title, summary };
+	const list = (v: unknown) =>
+		Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : [];
+	return { title, summary, ideas: list(json.ideas), tasks: list(json.tasks) };
+}
+
+// Підпис до аудіо: назва, summary і (якщо є) списки думок і задач.
+function formatCaption({ title, summary, ideas, tasks }: Meta): string {
+	const parts = [title, summary];
+	if (ideas.length) parts.push(`💡 Ключові думки:\n${ideas.map((i) => `• ${i}`).join("\n")}`);
+	if (tasks.length) parts.push(`✅ Задачі:\n${tasks.map((t) => `• ${t}`).join("\n")}`);
+	return parts.join("\n\n");
 }
 
 async function askLuna(env: Env, transcript: string): Promise<string> {
