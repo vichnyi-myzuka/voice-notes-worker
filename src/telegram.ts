@@ -82,7 +82,7 @@ export type ReceivedVoice = {
 
 // Приймає голосове чи аудіо й кладе в R2 і чергу (через store).
 // Канал: лише дописи в CHAT_ID без підпису (у нотаток бота підпис є завжди), публікувати там можуть лише адміни.
-// Особистий чат: лише від TG_OWNER_ID. В обох випадках ставимо 👍.
+// Особистий чат: лише від TG_OWNER_ID. В обох випадках ставимо ✍.
 // Помилки повідомляє в чат сам; Telegram завжди отримує 200, щоб не повторював запит без кінця.
 export async function receiveTelegramVoice(
 	env: Env,
@@ -120,11 +120,11 @@ export async function receiveTelegramVoice(
 			kind,
 			...(inChannel && { deleteChatId: String(msg.chat.id), deleteMessageId: String(msg.message_id) }),
 		});
-		// 👍: запис прийнято, нотатка з'явиться в каналі. Не критично, якщо реакції вимкнені.
+		// ✍ (саме без U+FE0F, інакше REACTION_INVALID): запис прийнято, нотатка з'явиться в каналі. Не критично, якщо реакції вимкнені.
 		await tg(env, "setMessageReaction", {
 			chat_id: msg.chat.id,
 			message_id: msg.message_id,
-			reaction: [{ type: "emoji", emoji: "👍" }],
+			reaction: [{ type: "emoji", emoji: "✍" }],
 		}).catch((err) => console.error("reaction failed:", err));
 	} catch (err) {
 		console.error("telegram voice failed:", err);
