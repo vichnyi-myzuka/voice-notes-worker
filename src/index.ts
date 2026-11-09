@@ -1,9 +1,9 @@
 import { askJson, parseJsonObject } from "./llm";
 import {
-	buildThingsUrl,
 	createThingsLink,
 	formatTriage,
 	handleThingsLink,
+	setThingsLinkMessage,
 	snapshotFromForm,
 	triage,
 	type ThingsSnapshot,
@@ -35,6 +35,8 @@ type State = {
 	triage?: TriageItem[] | null; // null: тріаж не вдався або не потрібен
 	thingsLinkId?: string;
 	audioSent?: boolean;
+	messageId?: number; // id повідомлення з аудіо в Telegram
+	messageLinked?: boolean; // посилання на повідомлення дописане в дані кнопки
 };
 
 const DLQ_NAME = "voice-notes-dlq";
@@ -171,9 +173,10 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 	const newTasks = state.triage?.filter((i) => !i.duplicateOf) ?? [];
 	if (newTasks.length && !state.thingsLinkId) {
-		const url = buildThingsUrl(newTasks, `🎙 ${meta.title} (${recordedAt})`);
-		state.thingsLinkId = await createThingsLink(env, url, newTasks.length);
+		state.thingsLinkId = await createThingsLink(env, newTasks, `🎙 ${meta.title} (${recordedAt})`);
 		console.log(`things link ${state.thingsLinkId}: ${newTasks.length} new, ${state.triage!.length - newTasks.length} duplicates`);
+		// Telegram не приймає localhost у кнопках, тож при локальному запуску посилання беремо з логу.
+		console.log(`open locally: http://localhost:8787/things/${state.thingsLinkId}`);
 		await save();
 	}
 
@@ -185,8 +188,16 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 			],
 		};
 		const caption = truncate(formatCaption(meta, state.triage ?? null), CAPTION_MAX);
-		await tgSendAudio(env, audio, meta.title, caption, button || undefined);
+		state.messageId = await tgSendAudio(env, audio, meta.title, caption, button || undefined);
 		state.audioSent = true;
+		await save();
+	}
+
+	// Посилання на повідомлення в нотатки задач Things (лише для каналів і супергруп).
+	const messageUrl = state.messageId && telegramMessageUrl(env.CHAT_ID, state.messageId);
+	if (state.thingsLinkId && messageUrl && !state.messageLinked) {
+		await setThingsLinkMessage(env, state.thingsLinkId, messageUrl);
+		state.messageLinked = true;
 		await save();
 	}
 
@@ -278,27 +289,35 @@ async function tgSendAudio(
 	title: string,
 	caption: string,
 	replyMarkup?: object,
-): Promise<void> {
+): Promise<number> {
 	const form = new FormData();
 	form.append("chat_id", env.CHAT_ID);
 	form.append("audio", audio, `${safeFileName(title)}.m4a`);
 	form.append("title", title);
 	form.append("caption", caption);
 	if (replyMarkup) form.append("reply_markup", JSON.stringify(replyMarkup));
-	await tg(env, "sendAudio", form);
+	const res = (await tg(env, "sendAudio", form)) as { result: { message_id: number } };
+	return res.result.message_id;
+}
+
+// Посилання на повідомлення є лише в каналах і супергрупах (chat_id вигляду -100…).
+// В особистому чаті з ботом таких посилань Telegram не має.
+function telegramMessageUrl(chatId: string, messageId: number): string | null {
+	return chatId.startsWith("-100") ? `https://t.me/c/${chatId.slice(4)}/${messageId}` : null;
 }
 
 async function tgSendMessage(env: Env, text: string): Promise<void> {
 	await tg(env, "sendMessage", JSON.stringify({ chat_id: env.CHAT_ID, text }));
 }
 
-async function tg(env: Env, method: string, body: FormData | string): Promise<void> {
+async function tg(env: Env, method: string, body: FormData | string): Promise<unknown> {
 	const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
 		method: "POST",
 		headers: typeof body === "string" ? { "content-type": "application/json" } : undefined,
 		body,
 	});
 	if (!res.ok) throw new Error(`Telegram ${method} ${res.status}: ${await res.text()}`);
+	return res.json();
 }
 
 // ---------- helpers ----------

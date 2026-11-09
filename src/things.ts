@@ -191,17 +191,28 @@ export function formatTriage(items: TriageItem[]): string {
 // ---------- Посилання «Додати в Things» ----------
 // Telegram-кнопки підтримують лише http(s), тож кнопка веде на сторінку воркера,
 // яка відкриває things:///json. Посилання одноразове: повторне відкриття питає підтвердження.
-type ThingsLink = { url: string; count: number; usedAt?: string };
+// things:///json збирається в момент натискання, тож посилання на повідомлення в Telegram
+// (відоме лише після відправки) можна дописати пізніше через setThingsLinkMessage.
+type ThingsLink = { items: TriageItem[]; notes: string; messageUrl?: string; usedAt?: string };
+type LegacyThingsLink = { url: string; count: number; usedAt?: string }; // формат до 2026-11-09, живе до 7 днів
 
-export async function createThingsLink(env: Env, url: string, count: number): Promise<string> {
+export async function createThingsLink(env: Env, items: TriageItem[], notes: string): Promise<string> {
 	const id = crypto.randomUUID();
-	await env.BUCKET.put(`things/${id}.json`, JSON.stringify({ url, count } satisfies ThingsLink));
+	await env.BUCKET.put(`things/${id}.json`, JSON.stringify({ items, notes } satisfies ThingsLink));
 	return id;
+}
+
+export async function setThingsLinkMessage(env: Env, id: string, messageUrl: string): Promise<void> {
+	const key = `things/${id}.json`;
+	const link = await (await env.BUCKET.get(key))?.json<ThingsLink>();
+	if (!link) return;
+	link.messageUrl = messageUrl;
+	await env.BUCKET.put(key, JSON.stringify(link));
 }
 
 export async function handleThingsLink(env: Env, id: string, force: boolean): Promise<Response> {
 	const key = `things/${id}.json`;
-	const link = await (await env.BUCKET.get(key))?.json<ThingsLink>();
+	const link = await (await env.BUCKET.get(key))?.json<ThingsLink | LegacyThingsLink>();
 	if (!link) return page("Посилання застаріло", "<p>Посилання вже недійсне (зберігається 7 днів).</p>", 404);
 
 	if (link.usedAt && !force) {
@@ -214,10 +225,17 @@ export async function handleThingsLink(env: Env, id: string, force: boolean): Pr
 
 	link.usedAt = new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC";
 	await env.BUCKET.put(key, JSON.stringify(link));
-	const href = escapeHtml(link.url);
+	let url: string, count: number;
+	if ("url" in link) {
+		({ url, count } = link);
+	} else {
+		url = buildThingsUrl(link.items, link.messageUrl ? `${link.notes}\n${link.messageUrl}` : link.notes);
+		count = link.items.length;
+	}
+	const href = escapeHtml(url);
 	return page(
 		"Додаю в Things…",
-		`<p>Задач: ${link.count}. Якщо Things не відкрився автоматично:</p>` +
+		`<p>Задач: ${count}. Якщо Things не відкрився автоматично:</p>` +
 			`<p><a class="btn" href="${href}">Відкрити Things</a></p>`,
 		200,
 		`<meta http-equiv="refresh" content="0;url=${href}">`,
