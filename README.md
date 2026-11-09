@@ -92,6 +92,20 @@ curl -X POST http://localhost:8787 -H "x-secret: local-test" \
   -F $'todos=Купити молоко'
 ```
 
+Тестові записи (синтез голосом Lesya через `say`) лежать у `test-audio/` і комітяться:
+
+| Файл | Що перевіряє |
+|---|---|
+| `shopping-list.m4a` | список з 10 продуктів → окремі задачі в Shopping; з `todos=Купити молоко` у знімку — дублікат |
+| `mixed-tasks.m4a` | задачі в різних областях, пріоритет (`Critical`), `Pending`, дедлайн, «колись» → Want |
+
+```sh
+source .env && curl -X POST https://voice-notes-worker.<subdomain>.workers.dev -H "x-secret: $SECRET" \
+  -F "audio=@test-audio/shopping-list.m4a;type=audio/mp4" \
+  -F $'areas=Gifts\nPersonal affairs\nHome\nShopping\nWork\nWant' \
+  -F $'todos=Купити молоко'
+```
+
 `wrangler dev` локально емулює R2 і Queue, тож consumer спрацює одразу в тому ж процесі. Binding `AI` навіть локально звертається до справжнього Workers AI (з безкоштовної квоти), тож для повного ланцюжка потрібні лише `wrangler login` і `BOT_TOKEN`/`CHAT_ID`.
 
 ## Як це працює
