@@ -3,3 +3,4 @@ node_modules/
 .dev.vars
 *.m4a
 .env
+!test-audio/*.m4a
