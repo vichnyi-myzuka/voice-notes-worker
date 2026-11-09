@@ -1,18 +1,17 @@
-import { askJson, parseJsonObject } from "./llm";
+import { askJson } from "./llm";
+import { buildCaption, parseEditedNote, parseMeta, plainTasks, type Meta } from "./note";
 import {
-	changedAttributes,
 	createThingsLink,
-	formatTriage,
 	getInThings,
 	handleThingsDone,
 	handleThingsLink,
 	page,
+	planThingsOps,
 	promptDate,
 	setThingsLinkMessage,
 	snapshotFromForm,
 	taskFieldsSchema,
 	taskRulesBlock,
-	taskValidator,
 	thingsLinkUsed,
 	triage,
 	type ThingsOp,
@@ -80,7 +79,6 @@ const MAX_RETRIES = 4; // той самий, що max_retries у wrangler.toml
 // 25 MB це ~50 хв аудіо iPhone (~64 kbps) або ~100 хв при 32 kbps, тобто з запасом.
 const TRANSCRIBE_MAX_BYTES = 25_000_000;
 const TELEGRAM_MAX_BYTES = 50_000_000; // ліміт Bot API на upload: 50 MB
-const CAPTION_MAX = 1024;
 const LATEST_SNAPSHOT_KEY = "things/latest-snapshot.json"; // для голосових з Telegram
 
 // Кладе аудіо в R2 (разом зі знімком Things, якщо є) і ставить у чергу.
@@ -395,23 +393,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	const inThings = await getInThings(env, noteId);
 	let notice = "";
 	if (state.thingsLinkId === undefined) {
-		const ops: ThingsOp[] = [];
-		if (state.triage) {
-			const kept = new Set<string>();
-			for (const item of state.triage) {
-				const prev = item.key ? inThings[item.key] : undefined;
-				if (prev) {
-					kept.add(item.key!);
-					const attributes = changedAttributes(prev.item, item);
-					if (Object.keys(attributes).length) ops.push({ key: item.key!, item, thingsId: prev.thingsId, attributes });
-				} else if (!item.duplicateOf) {
-					ops.push({ key: item.key ?? "", item });
-				}
-			}
-			for (const [k, prev] of Object.entries(inThings)) {
-				if (!kept.has(k)) ops.push({ key: k, item: null, thingsId: prev.thingsId, attributes: { canceled: true } });
-			}
-		}
+		const ops = state.triage ? planThingsOps(state.triage, inThings) : [];
 		if (ops.length) {
 			const recorded = formatRecordedAt(String(note.recordedTs), env.TIMEZONE);
 			state.thingsLinkId = await createThingsLink(env, ops, `🎙 ${meta.title} (${recorded})`, noteId);
@@ -468,12 +450,6 @@ function noteButtons(env: Env, noteId: string, thingsLinkId: string | undefined,
 	return { inline_keyboard: [row] };
 }
 
-// Підпис з хештегами окремим рядком у кінці: вони не обрізаються разом з довгим текстом.
-function buildCaption(meta: Meta, triaged: TriageItem[] | null, ts: number, timeZone: string, notice = ""): string {
-	const tail = [notice, hashtags(new Date(ts), timeZone, triaged)].filter(Boolean).join("\n\n");
-	return `${truncate(formatCaption(meta, triaged), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
-}
-
 // Видаляє оригінальне голосове з каналу (якщо запис прийшов звідти). Збій не критичний.
 async function deleteOriginal(env: Env, meta: Record<string, string> | undefined): Promise<void> {
 	const { deleteChatId, deleteMessageId } = meta ?? {};
@@ -522,8 +498,6 @@ const SUMMARY_SCHEMA = {
 	additionalProperties: false,
 };
 
-type Meta = { title: string; summary: string; ideas: string[]; tasks: string[]; discard?: "empty" | "cancelled" };
-
 async function summarize(env: Env, transcript: string, recordedAt: string, lastAttempt: boolean): Promise<Meta> {
 	if (!transcript) return { title: "", summary: "", ideas: [], tasks: [], discard: "empty" };
 
@@ -563,8 +537,7 @@ async function editNote(
 	snap: ThingsSnapshot | null,
 ): Promise<{ meta: Meta; triage: TriageItem[] | null } | null> {
 	const { title, summary, ideas } = note.meta;
-	const oldTasks: TriageItem[] =
-		note.triage ?? note.meta.tasks.map((t, i) => ({ title: t, duplicateOf: "", list: "", tags: [], when: "", deadline: "", key: `t${i + 1}` }));
+	const oldTasks = note.triage ?? plainTasks(note.meta.tasks);
 	const tasks = oldTasks.map(({ key, title, list, tags, when, deadline, duplicateOf }) =>
 		snap
 			? { key, title, list, tags, when, deadline, ...(duplicateOf && { already_in_things_as: duplicateOf }) }
@@ -592,67 +565,9 @@ async function editNote(
 		.filter(Boolean)
 		.join("\n\n");
 
-	const validate = snap ? taskValidator(snap) : null;
-	const oldByKey = new Map(oldTasks.map((t) => [t.key, t]));
-	let nextKey = Math.max(0, ...oldTasks.map((t) => Number(t.key?.slice(1)) || 0)) + 1;
-
-	return askJson(env, { name: "voice_note_edit", system: EDIT_SYSTEM, user, schema }, (text) => {
-		const json = parseJsonObject(text);
-		const meta = parseMeta(JSON.stringify({ ...json, tasks: [] }));
-		if (meta.discard) return { meta, triage: null };
-		const used = new Set<string>();
-		const items = (Array.isArray(json.tasks) ? json.tasks : []).map((r: Record<string, unknown>): TriageItem => {
-			let key = String(r.key ?? "");
-			if (!oldByKey.has(key) || used.has(key)) key = `t${nextKey++}`;
-			used.add(key);
-			const base = validate ? validate(r) : { title: String(r.title ?? "").trim(), duplicateOf: "", list: "", tags: [], when: "", deadline: "" };
-			// Дублікат лишається дублікатом, якщо це та сама задача (за ключем).
-			return { ...base, duplicateOf: oldByKey.get(key)?.duplicateOf ?? "", key };
-		});
-		const valid = items.filter((i) => i.title);
-		meta.tasks = valid.map((i) => i.title);
-		return { meta, triage: snap ? valid : null };
-	});
-}
-
-function parseMeta(text: string): Meta {
-	const json = parseJsonObject(text);
-	if (json.discard === "empty" || json.discard === "cancelled") {
-		return { title: "", summary: "", ideas: [], tasks: [], discard: json.discard };
-	}
-	const title = String(json.title ?? "").trim();
-	const summary = String(json.summary ?? "").trim();
-	if (!title || !summary) throw new Error("empty title/summary");
-	const list = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
-	return { title, summary, ideas: list(json.ideas), tasks: list(json.tasks) };
-}
-
-// Підпис до аудіо: назва, summary і (якщо є) списки думок і задач.
-// Якщо був тріаж, задачі показуються з проєктом, тегами, датами й позначкою дублікатів.
-function formatCaption({ title, summary, ideas, tasks }: Meta, triaged: TriageItem[] | null): string {
-	const parts = [title, summary];
-	if (ideas.length) parts.push(`💡 Ключові думки:\n${ideas.map((i) => `• ${i}`).join("\n")}`);
-	if (triaged?.length) parts.push(`✅ Задачі:\n${formatTriage(triaged)}`);
-	else if (tasks.length) parts.push(`✅ Задачі:\n${tasks.map((t) => `• ${t}`).join("\n")}`);
-	return parts.join("\n\n");
-}
-
-// Хештеги для навігації в каналі: місяць, ISO-тиждень (у TIMEZONE) і області нових задач.
-const MONTHS = ["січень", "лютий", "березень", "квітень", "травень", "червень", "липень", "серпень", "вересень", "жовтень", "листопад", "грудень"];
-
-function hashtags(date: Date, timeZone: string, triaged: TriageItem[] | null): string {
-	const [y, m, d] = new Intl.DateTimeFormat("sv-SE", { timeZone }).format(date).split("-").map(Number);
-	const week = isoWeek(y, m, d);
-	const lists = [...new Set((triaged ?? []).filter((i) => !i.duplicateOf && i.list).map((i) => i.list))];
-	return [`#${MONTHS[m - 1]}_${y}`, `#тиждень_${week}`, ...lists.map((l) => `#${l.replace(/[^\p{L}\p{N}_]+/gu, "_")}`)].join(" ");
-}
-
-// ISO-тиждень: номер тижня, що містить четвер цього тижня (тижні з понеділка).
-function isoWeek(y: number, m: number, d: number): number {
-	const thursday = new Date(Date.UTC(y, m - 1, d));
-	thursday.setUTCDate(d + 3 - ((thursday.getUTCDay() + 6) % 7));
-	const jan1 = Date.UTC(thursday.getUTCFullYear(), 0, 1);
-	return Math.floor((thursday.getTime() - jan1) / 86_400_000 / 7) + 1;
+	return askJson(env, { name: "voice_note_edit", system: EDIT_SYSTEM, user, schema }, (text) =>
+		parseEditedNote(text, oldTasks, snap),
+	);
 }
 
 // ---------- helpers ----------
@@ -674,8 +589,4 @@ function formatRecordedAt(key: string, timeZone: string): string {
 	return new Intl.DateTimeFormat("sv-SE", { timeZone, dateStyle: "short", timeStyle: "short" }).format(
 		new Date(recordedTs(key)),
 	);
-}
-
-function truncate(s: string, max: number): string {
-	return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
