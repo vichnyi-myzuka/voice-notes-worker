@@ -1,6 +1,5 @@
 import type { Env } from "./index";
 import { askJson, parseJsonObject } from "./llm";
-import RULES from "./todoist-rules.txt";
 
 // ---------- Типи ----------
 // Що є в Todoist зараз: воркер читає це з API перед тріажем.
@@ -8,7 +7,11 @@ export type TodoistSnapshot = {
 	projects: { id: string; name: string; inbox: boolean; description?: string }[]; // опис — пояснення для тріажу
 	labels: string[];
 	tasks: string[]; // назви відкритих задач — для пошуку дублікатів
+	rules: string; // опис службового проєкту RULES_PROJECT: мітки, пріоритети, загальні правила
 };
+
+// Службовий проєкт з правилами тріажу в описі. Може бути активним або в архіві; у тріажі не бере участі.
+export const RULES_PROJECT = "⚙️ Правила";
 
 // Задача з нотатки після тріажу.
 export type TriageItem = {
@@ -26,6 +29,12 @@ export type TriageItem = {
 // ---------- Todoist API ----------
 const SYNC_URL = "https://api.todoist.com/api/v1/sync";
 
+async function get(env: Env, path: string): Promise<Record<string, unknown>> {
+	const res = await fetch(`https://api.todoist.com/api/v1/${path}`, { headers: { authorization: `Bearer ${env.TODOIST_TOKEN}` } });
+	if (!res.ok) throw new Error(`Todoist ${path} ${res.status}: ${await res.text()}`);
+	return res.json();
+}
+
 async function sync(env: Env, body: Record<string, string>): Promise<Record<string, unknown>> {
 	const res = await fetch(SYNC_URL, {
 		method: "POST",
@@ -42,21 +51,32 @@ export async function fetchSnapshot(env: Env): Promise<TodoistSnapshot> {
 		labels: { name: string; is_deleted?: boolean }[];
 		items: { content: string; checked?: boolean; is_deleted?: boolean }[];
 	};
+	const active = d.projects.filter((p) => !p.is_archived && !p.is_deleted);
 	return {
-		projects: d.projects
-			.filter((p) => !p.is_archived && !p.is_deleted)
+		projects: active
+			.filter((p) => p.name !== RULES_PROJECT)
 			.map((p) => ({ id: p.id, name: p.name, inbox: !!p.inbox_project, ...(p.description?.trim() && { description: p.description.trim() }) })),
 		labels: d.labels.filter((l) => !l.is_deleted).map((l) => l.name),
 		tasks: d.items.filter((i) => !i.checked && !i.is_deleted).map((i) => i.content),
+		rules: (active.find((p) => p.name === RULES_PROJECT)?.description ?? (await archivedRules(env))).trim(),
 	};
 }
 
-// ---------- Правила з todoist-rules.txt ----------
-// Рядки з # — коментарі. Секція [мітки]: «Мітка — опис».
-const rulesText = RULES.split(/\r?\n/)
-	.filter((l) => !l.trim().startsWith("#"))
-	.join("\n")
-	.trim();
+// Опис RULES_PROJECT з архіву (архівних проєктів немає в /sync).
+async function archivedRules(env: Env): Promise<string> {
+	let cursor = "";
+	do {
+		const page = (await get(env, `projects/archived?limit=200${cursor && `&cursor=${encodeURIComponent(cursor)}`}`)) as {
+			results: { name: string; description?: string }[];
+			next_cursor: string | null;
+		};
+		const found = page.results.find((p) => p.name === RULES_PROJECT);
+		if (found) return found.description ?? "";
+		cursor = page.next_cursor ?? "";
+	} while (cursor);
+	console.error(`Todoist project "${RULES_PROJECT}" not found: triage runs without rules`);
+	return "";
+}
 
 const listNames = (snap: TodoistSnapshot) => snap.projects.filter((p) => !p.inbox).map((p) => p.name);
 
@@ -81,7 +101,7 @@ export function taskRulesBlock(snap: TodoistSnapshot): string {
 		.filter((p) => !p.inbox)
 		.map((p) => (p.description ? `${p.name} — ${p.description.replace(/\s*\n\s*/g, " ")}` : p.name));
 	return [
-		`<rules>\n${rulesText || "(no rules)"}\n</rules>`,
+		`<rules>\n${snap.rules || "(no rules)"}\n</rules>`,
 		`<labels>\n${snap.labels.join("\n")}\n</labels>`,
 		`<projects>\n${projects.join("\n")}\n</projects>`,
 	].join("\n\n");

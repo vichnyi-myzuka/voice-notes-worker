@@ -4,10 +4,13 @@ import {
 	buildCommands,
 	createAction,
 	deleteOpenTasks,
+	fetchSnapshot,
 	formatTriage,
 	getInTodoist,
 	planOps,
+	RULES_PROJECT,
 	setActionMessage,
+	taskRulesBlock,
 	taskValidator,
 	type InTodoist,
 	type TodoistSnapshot,
@@ -23,6 +26,7 @@ const snap: TodoistSnapshot = {
 	],
 	labels: ["Errand", "Home", "Waiting"],
 	tasks: ["Купити молоко", "Подзвонити Іллі"],
+	rules: "",
 };
 
 const item = (title: string, extra: Partial<TriageItem> = {}): TriageItem => ({
@@ -402,6 +406,7 @@ describe("applyAction", () => {
 			{ id: "inbox-id", name: "Inbox", inbox_project: true },
 			{ id: "work-id", name: "Work" },
 			{ id: "home-id", name: "Home" },
+			{ id: "rules-id", name: RULES_PROJECT, description: "[правила]" },
 		],
 		labels: [{ name: "Errand" }],
 		items: [],
@@ -593,7 +598,7 @@ describe("applyAction", () => {
 });
 
 describe("час у даті виконання", () => {
-	const snapT: TodoistSnapshot = { projects: [{ id: "i", name: "Inbox", inbox: true }], labels: [], tasks: [] };
+	const snapT: TodoistSnapshot = { projects: [{ id: "i", name: "Inbox", inbox: true }], labels: [], tasks: [], rules: "" };
 	const v = taskValidator(snapT, new Date("2026-11-10T08:00:00Z"), "Europe/Kyiv");
 	const due = (d: string, deadline = "") => v({ title: "Х", due: d, deadline });
 
@@ -619,5 +624,69 @@ describe("час у даті виконання", () => {
 		const [cmd] = buildCommands("a", [{ key: "t1", item: it1 }], "", snapT) as { args: { due: unknown } }[];
 		expect(cmd.args.due).toEqual({ date: "2026-11-10T13:00:00" });
 		expect(formatTriage([it1])).toBe("• Надіслати фото → Inbox p2 📅 2026-11-10 13:00");
+	});
+});
+
+describe("fetchSnapshot: правила", () => {
+	const proj = (name: string, description = "", extra: object = {}) => ({ id: name, name, description, ...extra });
+	const mock = (projects: object[], pages: { results: object[]; next_cursor: string | null }[] = []) => {
+		const calls: string[] = [];
+		vi.stubGlobal("fetch", async (url: string) => {
+			calls.push(url);
+			if (url.includes("/projects/archived")) {
+				const cursor = new URL(url).searchParams.get("cursor");
+				const i = cursor ? Number(cursor) : 0;
+				return { ok: true, json: async () => pages[i] ?? { results: [], next_cursor: null } };
+			}
+			return { ok: true, json: async () => ({ projects, labels: [{ name: "Errand" }], items: [{ content: "Купити молоко" }] }) };
+		});
+		return calls;
+	};
+	const env = fakeEnv({ TODOIST_TOKEN: "tok" });
+
+	it("активний проєкт правил: опис звідти, архів не читається, проєкт не в projects", async () => {
+		const calls = mock([proj("Inbox", "", { inbox_project: true }), proj("Work"), proj(RULES_PROJECT, "  [правила]\np1 — терміново \n")]);
+		const s = await fetchSnapshot(env);
+		expect(s.rules).toBe("[правила]\np1 — терміново");
+		expect(s.projects.map((p) => p.name)).toEqual(["Inbox", "Work"]);
+		expect(calls.some((u) => u.includes("archived"))).toBe(false);
+	});
+
+	it("архівний проєкт правил із пагінацією через next_cursor", async () => {
+		const calls = mock(
+			[proj("Inbox", "", { inbox_project: true }), proj("Work")],
+			[
+				{ results: [proj("Старий")], next_cursor: "1" },
+				{ results: [proj(RULES_PROJECT, "[мітки]\nErrand — вдома")], next_cursor: null },
+			],
+		);
+		const s = await fetchSnapshot(env);
+		expect(s.rules).toBe("[мітки]\nErrand — вдома");
+		expect(s.projects.map((p) => p.name)).toEqual(["Inbox", "Work"]);
+		const archived = calls.filter((u) => u.includes("archived"));
+		expect(archived).toHaveLength(2);
+		expect(archived[0]).toContain("limit=200");
+		expect(archived[1]).toContain("cursor=1");
+	});
+
+	it("is_archived у /sync теж ігнорується, правила беруться з архіву", async () => {
+		mock([proj("Work"), proj(RULES_PROJECT, "зі sync", { is_archived: true })], [{ results: [proj(RULES_PROJECT, "з архіву")], next_cursor: null }]);
+		expect((await fetchSnapshot(env)).rules).toBe("з архіву");
+	});
+
+	it("проєкту немає ніде → rules \"\" і console.error", async () => {
+		mock([proj("Work")], [{ results: [proj("Старий")], next_cursor: null }]);
+		const err = vi.spyOn(console, "error").mockImplementation(() => {});
+		const s = await fetchSnapshot(env);
+		expect(s.rules).toBe("");
+		expect(err).toHaveBeenCalledOnce();
+		err.mockRestore();
+	});
+
+	it("taskRulesBlock: snap.rules або (no rules)", () => {
+		expect(taskRulesBlock({ ...snap, rules: "[правила]\nабв" })).toContain("<rules>\n[правила]\nабв\n</rules>");
+		const empty = taskRulesBlock({ ...snap, rules: "" });
+		expect(empty).toContain("(no rules)");
+		expect(empty).not.toContain("абв");
 	});
 });

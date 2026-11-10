@@ -13,6 +13,7 @@ const snap: TodoistSnapshot = {
 	],
 	labels: ["Critical", "High", "Errand"],
 	tasks: ["Купити молоко"],
+	rules: "",
 };
 const validate = taskValidator(snap, new Date("2026-11-09T10:00:00Z"), "Europe/Kyiv");
 const item = (title: string, extra: Partial<TriageItem> = {}): TriageItem => ({
