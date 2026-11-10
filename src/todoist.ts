@@ -17,8 +17,8 @@ export type TriageItem = {
 	project: string; // назва проєкту або "" (Inbox)
 	labels: string[];
 	priority: number; // як у додатку: 1 (p1, найвищий) … 4 (p4, без пріоритету)
-	due: string; // YYYY-MM-DD | ""
-	deadline: string; // YYYY-MM-DD | ""
+	due: string; // YYYY-MM-DD | YYYY-MM-DDTHH:MM (з часом) | ""
+	deadline: string; // YYYY-MM-DD | "" (у Todoist дедлайн — лише дата)
 	key?: string; // стабільний ключ задачі в нотатці (t1, t2…): за ним редагування знаходить задачу в Todoist
 };
 
@@ -84,8 +84,8 @@ export function taskRulesBlock(snap: TodoistSnapshot): string {
 const TASK_FIELDS_HELP = `- project: a project from <projects> that clearly fits the task, or "" (Inbox) if none clearly fits. Never guess.
 - labels: labels from <labels> that clearly apply, or [] if none.
 - priority: "p1" (highest) … "p4" (no priority), following the rules.
-- due: "today", "tomorrow" or a date YYYY-MM-DD when the task should be done, only if said; otherwise "".
-- deadline: a date YYYY-MM-DD only if a deadline is mentioned; otherwise "".
+- due: when the task should be done, only if said: "today", "tomorrow" or YYYY-MM-DD, plus " HH:MM" if a time is said ("до 13:00", "о 19:00" → "today 13:00", "today 19:00"); otherwise "".
+- deadline: a date YYYY-MM-DD only if a separate final deadline is mentioned that is later than due (e.g. "почати завтра, здати до п'ятниці"); never repeat the due date as a deadline; otherwise "".
 - Task titles never contain dates or timing words ("завтра", "19 листопада"): timing goes only to due/deadline.`;
 
 // Дата у форматі YYYY-MM-DD у часовому поясі.
@@ -113,6 +113,13 @@ export function taskValidator(snap: TodoistSnapshot, base: Date, timeZone: strin
 		const s = String(v ?? "").trim();
 		return s === "today" ? day(0) : s === "tomorrow" ? day(1) : dateRe.test(s) ? s : "";
 	};
+	// Дата з необов'язковим часом: "today 13:00", "2026-11-10T13:00", "2026-11-10 9:05" → "2026-11-10T13:00".
+	const dateTime = (v: unknown) => {
+		const [, dayPart, hh, mm] = String(v ?? "").trim().match(/^(\S+?)(?:[ T@](\d{1,2}):(\d{2})(?::\d{2})?)?$/) ?? [];
+		const ymd = date(dayPart);
+		if (!ymd || hh === undefined) return ymd;
+		return Number(hh) < 24 && Number(mm) < 60 ? `${ymd}T${hh.padStart(2, "0")}:${mm}` : ymd;
+	};
 	return (r) => {
 		const project = projects.has(String(r.project ?? "").trim()) ? String(r.project).trim() : "";
 		const priority = Number(String(r.priority ?? "").replace(/^p/, ""));
@@ -125,8 +132,9 @@ export function taskValidator(snap: TodoistSnapshot, base: Date, timeZone: strin
 				? [...new Set(r.labels.map(String))].filter((l) => labels.has(l) && normalize(l) !== normalize(project))
 				: [],
 			priority: priority >= 1 && priority <= 4 ? priority : 4,
-			due: date(r.due),
-			deadline: date(r.deadline),
+			due: dateTime(r.due),
+			// Дедлайн, що збігається з датою виконання, лише дублює її.
+			deadline: ((dl) => (dl && dl !== dateTime(r.due).slice(0, 10) ? dl : ""))(date(String(r.deadline ?? "").trim().split(/[ T@]/)[0])),
 		};
 	};
 }
@@ -245,7 +253,7 @@ export function buildCommands(actionId: string, ops: TodoistOp[], description: s
 		content: i.title,
 		labels: i.labels,
 		priority: 5 - i.priority, // в API 4 — це p1
-		due: i.due ? { date: i.due } : null,
+		due: i.due ? { date: i.due.includes("T") ? `${i.due}:00` : i.due } : null, // з часом — «плаваючий» час (без поясу)
 		deadline: i.deadline ? { date: i.deadline } : null,
 	});
 	return ops.flatMap((op, n) => {
@@ -357,7 +365,7 @@ export function formatTriage(items: TriageItem[]): string {
 				`→ ${i.project || "Inbox"}`,
 				i.priority < 4 && `p${i.priority}`,
 				...i.labels.map((l) => `@${l}`),
-				i.due && `📅 ${i.due}`,
+				i.due && `📅 ${i.due.replace("T", " ")}`,
 				i.deadline && `⏰ ${i.deadline}`,
 			].filter(Boolean);
 			return `• ${i.title} ${extra.join(" ")}`;

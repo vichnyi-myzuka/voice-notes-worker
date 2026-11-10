@@ -419,3 +419,33 @@ describe("applyAction", () => {
 		await expect(applyAction(env, id)).rejects.toThrow(/401/);
 	});
 });
+
+describe("час у даті виконання", () => {
+	const snapT: TodoistSnapshot = { projects: [{ id: "i", name: "Inbox", inbox: true }], labels: [], tasks: [] };
+	const v = taskValidator(snapT, new Date("2026-11-10T08:00:00Z"), "Europe/Kyiv");
+	const due = (d: string, deadline = "") => v({ title: "Х", due: d, deadline });
+
+	it.each([
+		["today 13:00", "2026-11-10T13:00"],
+		["tomorrow 9:05", "2026-11-11T09:05"],
+		["2026-11-12T19:00", "2026-11-12T19:00"],
+		["2026-11-12 19:00:00", "2026-11-12T19:00"],
+		["today@7:30", "2026-11-10T07:30"],
+		["today 25:00", "2026-11-10"],
+		["today", "2026-11-10"],
+		["о 13:00", ""],
+	])("%s → %s", (input, expected) => expect(due(input).due).toBe(expected));
+
+	it("дедлайн у той самий день, що й дата виконання, відкидається; пізніший лишається; час у дедлайні ігнорується", () => {
+		expect(due("today 13:00", "today").deadline).toBe("");
+		expect(due("today 13:00", "2026-11-14").deadline).toBe("2026-11-14");
+		expect(due("", "tomorrow 18:00").deadline).toBe("2026-11-11");
+	});
+
+	it("у Todoist іде «плаваючий» час з секундами, у підписі — через пробіл", () => {
+		const it1: TriageItem = { title: "Надіслати фото", duplicateOf: "", project: "", labels: [], priority: 2, due: "2026-11-10T13:00", deadline: "" };
+		const [cmd] = buildCommands("a", [{ key: "t1", item: it1 }], "", snapT) as { args: { due: unknown } }[];
+		expect(cmd.args.due).toEqual({ date: "2026-11-10T13:00:00" });
+		expect(formatTriage([it1])).toBe("• Надіслати фото → Inbox p2 📅 2026-11-10 13:00");
+	});
+});
