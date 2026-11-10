@@ -17,7 +17,11 @@ Telegram ──відповідь (голос/текст) на нотатку─
 wrangler.toml          bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE
 src/index.ts           producer, consumer, DLQ consumer, summary, редагування, автододавання в Todoist, callback старих кнопок, тип Env
 src/llm.ts             виклик зі structured output: gpt-6-luna, при збої Gemma 4
-src/todoist.ts         Todoist API (/sync), тріаж, операції create/update/delete, виконання збережених дій
+src/todoist.ts         Todoist API (/sync), тріаж, операції create/update/delete, виконання збережених дій, вкладення
+src/note.ts            підпис нотатки (fitCaption), хештеги, посилання на задачі, текстові нотатки
+src/setup.ts           команди налаштування Todoist (проєкти й мітки голосом)
+src/telegram.ts        Bot API і прийом голосових, тексту й фото з вебхука
+AGENTS.md              правила роботи з репозиторієм для агентів
 .dev.vars.example      шаблон секретів для локального запуску
 ```
 
