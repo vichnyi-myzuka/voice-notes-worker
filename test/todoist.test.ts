@@ -112,6 +112,10 @@ describe("taskValidator", () => {
 	it("назва обрізається по краях", () => {
 		expect(validate({ title: "  Х  " }).title).toBe("Х");
 	});
+	it("подробиці обрізаються по краях; без них — порожній рядок", () => {
+		expect(validate({ title: "Х", details: "  Взяти паспорт  \n" }).details).toBe("Взяти паспорт");
+		expect(validate({ title: "Х" }).details).toBe("");
+	});
 });
 
 describe("taskValidator: нагадування", () => {
@@ -185,6 +189,26 @@ describe("planOps", () => {
 		for (const change of [{ deadline: "2026-12-01" }, { labels: [] }, { due: "" }]) {
 			expect(planOps([{ ...prev, ...change }], { t1: inTodoist.t1 })).toHaveLength(1);
 		}
+	});
+});
+
+describe("planOps: подробиці", () => {
+	const prev = item("Задача", { key: "t1", priority: 2, details: "Старі" });
+	const state: InTodoist = { t1: { id: "100", item: prev } };
+
+	it("змінились лише подробиці → оновлення з describe:true", () => {
+		const next = { ...prev, details: "Нові" };
+		expect(planOps([next], state)).toEqual([{ key: "t1", item: next, id: "100", describe: true }]);
+		const old = item("Задача", { key: "t1" });
+		expect(planOps([{ ...old, details: "Додані" }], { t1: { id: "100", item: old } })[0].describe).toBe(true);
+	});
+	it("інша зміна без зміни подробиць → без describe", () => {
+		const [op] = planOps([{ ...prev, priority: 1 }], state);
+		expect(op.describe).toBeUndefined();
+	});
+	it("undefined і порожній рядок — те саме", () => {
+		const old = item("Задача", { key: "t1" });
+		expect(planOps([{ ...old, details: "" }], { t1: { id: "100", item: old } })).toEqual([]);
 	});
 });
 
@@ -326,6 +350,22 @@ describe("buildCommands", () => {
 			snap,
 		);
 		expect(cmds[1]).toEqual({ type: "item_delete", uuid: "act-1", args: { id: "200" } });
+	});
+});
+
+describe("buildCommands: подробиці", () => {
+	it("створення: опис = «подробиці\\n\\nопис», а без подробиць — лише опис", () => {
+		const [withD] = buildCommands("act", [{ key: "t1", item: item("А", { details: "Взяти паспорт" }) }], "опис", snap) as any[];
+		expect(withD.args.description).toBe("Взяти паспорт\n\nопис");
+		const [empty] = buildCommands("act", [{ key: "t1", item: item("А", { details: "" }) }], "опис", snap) as any[];
+		expect(empty.args.description).toBe("опис");
+	});
+	it("оновлення: description лише коли describe:true", () => {
+		const it1 = item("А", { details: "Нові" });
+		const [on] = buildCommands("act", [{ key: "t1", item: it1, id: "100", describe: true }], "опис", snap) as any[];
+		expect(on.args.description).toBe("Нові\n\nопис");
+		const [off] = buildCommands("act", [{ key: "t1", item: it1, id: "100" }], "опис", snap) as any[];
+		expect("description" in off.args).toBe(false);
 	});
 });
 

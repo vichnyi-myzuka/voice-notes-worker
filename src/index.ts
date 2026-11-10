@@ -666,7 +666,7 @@ async function editNote(
 ): Promise<{ meta: Meta; triage: TriageItem[] | null } | null> {
 	const { title, summary, ideas } = note.meta;
 	const oldTasks = note.triage ?? plainTasks(note.meta.tasks);
-	const tasks = oldTasks.map(({ key, title, project, labels, priority, due, deadline, recurrence, recurrenceLabel, reminders, duplicateOf }) =>
+	const tasks = oldTasks.map(({ key, title, project, labels, priority, due, deadline, recurrence, recurrenceLabel, reminders, details, duplicateOf }) =>
 		snap
 			? {
 					key,
@@ -680,6 +680,7 @@ async function editNote(
 					recurrence_label: recurrenceLabel ?? "",
 					// у форматі для моделі: "before 60" або "2026-11-11 09:00"
 					reminders: (reminders ?? []).map((r) => (r.startsWith("before:") ? r.replace(":", " ") : r.replace("T", " "))),
+					details: details ?? "",
 					...(duplicateOf && { already_exists_as: duplicateOf }),
 				}
 			: { key, title },
@@ -688,7 +689,7 @@ async function editNote(
 		type: "object",
 		properties: { key: { type: "string" }, title: { type: "string" }, ...(snap ? taskFieldsSchema(snap) : {}) },
 		required: snap
-			? ["key", "title", "project", "labels", "priority", "due", "deadline", "recurrence", "recurrence_label", "reminders"]
+			? ["key", "title", "project", "labels", "priority", "due", "deadline", "recurrence", "recurrence_label", "reminders", "details"]
 			: ["key", "title"],
 		additionalProperties: false,
 	};

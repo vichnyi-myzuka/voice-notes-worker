@@ -24,6 +24,7 @@ export type TriageItem = {
 	deadline: string; // YYYY-MM-DD | "" (у Todoist дедлайн — лише дата)
 	recurrence?: string; // повтор для Todoist англійською ("every monday at 9:00") | "" ; due — перше виконання
 	recurrenceLabel?: string; // той самий повтор українською для підпису ("щопонеділка о 9:00")
+	details?: string; // подробиці з запису, що не влізли в назву: ідуть в опис задачі в Todoist; немає в старих нотатках
 	reminders?: string[]; // "before:<хв>" (до часу виконання) | YYYY-MM-DDTHH:MM; немає в нотатках до появи нагадувань
 	key?: string; // стабільний ключ задачі в нотатці (t1, t2…): за ним редагування знаходить задачу в Todoist
 };
@@ -101,6 +102,7 @@ export function taskFieldsSchema(snap: TodoistSnapshot): Record<string, unknown>
 		recurrence: { type: "string" },
 		recurrence_label: { type: "string" },
 		reminders: { type: "array", items: { type: "string" } },
+		details: { type: "string" },
 	};
 }
 
@@ -128,6 +130,7 @@ const TASK_FIELDS_HELP = `- project: a project from <projects> (name before " �
   Several times a day ("двічі на день", "тричі на день"): Todoist cannot repeat a task several times a day, so use "every day" (with "until" if limited) and keep the per-day frequency in the title.
 - recurrence_label: the same repetition in short Ukrainian for display ("щопонеділка о 9:00", "кожні 2 тижні", "щодня до 16.11"), or "" when there is no recurrence.
 - reminders: only if the author explicitly asks to be reminded ("нагадай…"): "before N" = N minutes before the due time (only when due has a time, e.g. "нагадай за годину" → "before 60"), or an absolute "today HH:MM" / "tomorrow HH:MM" / "YYYY-MM-DD HH:MM" ("нагадай завтра о 9" → "tomorrow 09:00"); otherwise [].
+- details: a description of the task in Ukrainian with the specifics the author said that don't fit in the title: what exactly, how, why, names, amounts, addresses, links, list items, conditions. Use the author's facts only, never invent or pad, no timing (it is in due/recurrence). One to a few short sentences or "• " lines; "" if the title already says everything.
 - Task titles never contain dates, timing words or durations ("завтра", "19 листопада", "протягом 7 днів", "щодня"): timing goes only to due/deadline/recurrence. What to do and how much stays in the title, including dosage and per-day frequency ("Приймати Нольпазу 40 мг — 1 таблетку зранку за 30 хвилин до їжі", "Промивати ніс Носолем тричі на день").`;
 
 // Дата у форматі YYYY-MM-DD у часовому поясі.
@@ -193,6 +196,7 @@ export function taskValidator(snap: TodoistSnapshot, base: Date, timeZone: strin
 			due: dateTime(r.due),
 			...recurrence(r),
 			reminders: reminders(r.reminders, dateTime(r.due).includes("T")),
+			details: String(r.details ?? "").trim(),
 			// Дедлайн, що збігається з датою виконання, лише дублює її.
 			deadline: ((dl) => (dl && dl !== dateTime(r.due).slice(0, 10) ? dl : ""))(date(String(r.deadline ?? "").trim().split(/[ T@]/)[0])),
 		};
@@ -231,7 +235,7 @@ export async function triage(
 			duplicate_of: { type: "string" },
 			...taskFieldsSchema(snap),
 		},
-		required: ["quote", "title", "duplicate_of", "project", "labels", "priority", "due", "deadline", "recurrence", "recurrence_label", "reminders"],
+		required: ["quote", "title", "duplicate_of", "project", "labels", "priority", "due", "deadline", "recurrence", "recurrence_label", "reminders", "details"],
 		additionalProperties: false,
 	};
 	const schema = {
@@ -259,7 +263,7 @@ export async function triage(
 }
 
 // Опис полів задач для моделі редагування.
-export const EDIT_TASKS_HELP = `If tasks have Todoist fields (project, labels, priority, due, deadline, recurrence, recurrence_label, reminders), copy them unchanged unless the instruction changes them. Field meanings:
+export const EDIT_TASKS_HELP = `If tasks have Todoist fields (project, labels, priority, due, deadline, recurrence, recurrence_label, reminders, details), copy them unchanged unless the instruction changes them. Field meanings:
 ${TASK_FIELDS_HELP}
 Follow the author's <rules>.`;
 
@@ -267,7 +271,7 @@ Follow the author's <rules>.`;
 // Що з нотатки вже є в Todoist (за ключем задачі).
 export type InTodoist = Record<string, { id: string; item: TriageItem; reminderIds?: string[] }>;
 // Без id — створити; з id і item — оновити (move: змінився проєкт; reminders: перестворити нагадування,
-// oldReminderIds — що видалити); з id без item — видалити.
+// oldReminderIds — що видалити; describe: змінились подробиці, переписати опис); з id без item — видалити.
 export type TodoistOp = {
 	key: string;
 	item: TriageItem | null;
@@ -275,6 +279,7 @@ export type TodoistOp = {
 	move?: boolean;
 	reminders?: boolean;
 	oldReminderIds?: string[];
+	describe?: boolean;
 };
 
 const inTodoistKey = (noteId: string) => `notes/${noteId}.todoist.json`;
@@ -291,6 +296,7 @@ const sameItem = (a: TriageItem, b: TriageItem) =>
 	a.due === b.due &&
 	a.deadline === b.deadline &&
 	(a.recurrence ?? "") === (b.recurrence ?? "") &&
+	(a.details ?? "") === (b.details ?? "") &&
 	sameReminders(a, b);
 const sameReminders = (a: TriageItem, b: TriageItem) => [...(a.reminders ?? [])].sort().join() === [...(b.reminders ?? [])].sort().join();
 
@@ -310,6 +316,7 @@ export function planOps(items: TriageItem[], inTodoist: InTodoist): TodoistOp[] 
 					id: prev.id,
 					...(prev.item.project !== item.project && { move: true }),
 					...(!sameReminders(prev.item, item) && { reminders: true, oldReminderIds: prev.reminderIds ?? [] }),
+					...((prev.item.details ?? "") !== (item.details ?? "") && { describe: true }),
 				});
 			}
 		} else if (!item.duplicateOf) {
@@ -325,6 +332,8 @@ export function planOps(items: TriageItem[], inTodoist: InTodoist): TodoistOp[] 
 // Команди /sync для операцій. uuid сталий для дії й операції: повторне натискання
 // чи ретрай не виконає команду вдруге (Todoist ігнорує повторний uuid).
 export function buildCommands(actionId: string, ops: TodoistOp[], description: string, snap: TodoistSnapshot): object[] {
+	// Опис задачі: подробиці з запису, під ними — посилання на нотатку.
+	const describe = (i: TriageItem) => (i.details ? `${i.details}\n\n${description}` : description);
 	const projectId = (name: string) => snap.projects.find((p) => (name ? p.name === name : p.inbox))?.id;
 	const fields = (i: TriageItem) => ({
 		content: i.title,
@@ -359,13 +368,16 @@ export function buildCommands(actionId: string, ops: TodoistOp[], description: s
 					type: "item_add",
 					uuid: uuid(),
 					temp_id,
-					args: { ...rest, description, ...(project_id && { project_id }), ...(due && { due }), ...(deadline && { deadline }) },
+					args: { ...rest, description: describe(op.item!), ...(project_id && { project_id }), ...(due && { due }), ...(deadline && { deadline }) },
 				},
 				...addReminders(temp_id, op.item!),
 			];
 		}
 		if (!op.item) return [{ type: "item_delete", uuid: uuid(), args: { id: op.id } }];
-		const cmds: object[] = [{ type: "item_update", uuid: uuid(), args: { id: op.id, ...fields(op.item) } }];
+		// Опис переписуємо лише коли змінились подробиці: інакше не чіпаємо те, що автор дописав у Todoist сам.
+		const cmds: object[] = [
+			{ type: "item_update", uuid: uuid(), args: { id: op.id, ...fields(op.item), ...(op.describe && { description: describe(op.item) }) } },
+		];
 		// Проєкт могли перейменувати чи видалити після тріажу: тоді задачу не переміщуємо.
 		const target = op.move ? projectId(op.item.project) : undefined;
 		if (target) cmds.push({ type: "item_move", uuid: uuid("m"), args: { id: op.id, project_id: target } });
