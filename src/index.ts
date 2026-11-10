@@ -1,6 +1,7 @@
 import { askJson, parseJsonObject, toBase64 } from "./llm";
 import { buildCaption, CAPTION_MAX, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote, TEXT_CAPTION_MAX, type Meta } from "./note";
 import { applySetup, planSetup, setupReport, type SetupPlan } from "./setup";
+import { openSteps } from "./steps";
 import { NO_PREVIEW, receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
 import {
 	applyAction,
@@ -218,8 +219,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	const stateKey = `${key}.state.json`;
-	const state: State = (await (await env.BUCKET.get(stateKey))?.json<State>()) ?? {};
-	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
+	const { state, save, step } = await openSteps<State>(env, stateKey, lastAttempt);
 	const recordedAt = formatRecordedAt(key, env.TIMEZONE);
 	const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
 	const isText = contentType.startsWith("text/"); // написаний текст: він і є транскриптом
@@ -236,7 +236,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 
 	// Задовгий для транскрипції в межах 15 хв: не ретраїмо, шлемо оригінал без транскрипту.
 	if (obj.size > TRANSCRIBE_MAX_BYTES) {
-		if (!state.audioSent) {
+		await step("audioSent", async () => {
 			const mb = (obj.size / 1_000_000).toFixed(1);
 			if (obj.size > TELEGRAM_MAX_BYTES) {
 				await tgSendMessage(
@@ -253,26 +253,20 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 					`Запис ${recordedAt}\n\nФайл ${mb} МБ більший за ліміт транскрипції (25 МБ), тому без транскрипту й summary.`,
 				);
 			}
-			state.audioSent = true;
-			await save();
-		}
+			return true;
+		});
 		await env.BUCKET.delete([key, stateKey]);
 		return;
 	}
 
-	if (state.transcript === undefined) {
-		state.transcript = isText
+	const transcript = await step("transcript", async () =>
+		isText
 			? (await obj.text()).trim()
 			: isPhoto
 				? await readImage(env, await read(), contentType, (await (await env.BUCKET.get(captionKey(key)))?.text()) ?? "", lastAttempt)
-				: await transcribe(env, await read(), contentType);
-		await save();
-	}
-	if (state.meta === undefined) {
-		state.meta = await summarize(env, state.transcript, recordedAt, lastAttempt);
-		await save();
-	}
-	const meta = state.meta;
+				: await transcribe(env, await read(), contentType),
+	);
+	const meta = await step("meta", () => summarize(env, transcript, recordedAt, lastAttempt));
 
 	// Тиша, шум або голосове «скасуй»: нічого не публікуємо, прибираємо все, включно з оригіналом у каналі.
 	if (meta.discard) {
@@ -283,92 +277,85 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	// Команди налаштування Todoist («створи проєкт…») — до тріажу, щоб задачі вже бачили новий проєкт.
-	const setup = await runSetup(env, state.transcript, state, save, lastAttempt);
+	const setup = await runSetup(env, transcript, state, save, lastAttempt);
 
 	// Тріаж задач для Todoist. Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
-	if (state.triage === undefined) {
+	const triaged = await step("triage", async () => {
 		const snap = meta.tasks.length ? await todoistSnapshot(env) : null;
-		state.triage = snap
-			? await triage(env, state.transcript, meta.tasks, snap, new Date(recordedTs(key)), env.TIMEZONE)
-			: null;
-		await save();
-	}
-	const newTasks = state.triage?.filter((i) => !i.duplicateOf) ?? [];
-	state.noteId ??= crypto.randomUUID();
-	if (newTasks.length && !state.actionId) {
+		return snap ? await triage(env, transcript, meta.tasks, snap, new Date(recordedTs(key)), env.TIMEZONE) : null;
+	});
+	const noteId = await step("noteId", async () => crypto.randomUUID());
+	// "" — нових задач немає, робити в Todoist нічого.
+	const actionId = await step("actionId", async () => {
+		const newTasks = triaged?.filter((i) => !i.duplicateOf) ?? [];
+		if (!newTasks.length) return "";
 		const ops: TodoistOp[] = newTasks.map((item) => ({ key: item.key ?? "", item }));
-		state.actionId = await createAction(env, ops, `🎙 ${meta.title} (${recordedAt})`, state.noteId);
-		console.log(`todoist action ${state.actionId}: ${newTasks.length} new, ${state.triage!.length - newTasks.length} duplicates`);
-		await save();
-	}
+		const id = await createAction(env, ops, `🎙 ${meta.title} (${recordedAt})`, noteId);
+		console.log(`todoist action ${id}: ${newTasks.length} new, ${triaged!.length - newTasks.length} duplicates`);
+		return id;
+	});
 
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
-	if (!state.audioSent) {
+	const messageId = await step("messageId", async () => {
 		const max = isText ? TEXT_CAPTION_MAX : CAPTION_MAX;
-		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE, captionNotice(setup, false), max);
-		state.messageId = isText
-			? await (({ text, entities }) => tgSendText(env, text, entities))(textNote(caption, state.transcript))
+		const caption = buildCaption(meta, triaged, recordedTs(key), env.TIMEZONE, captionNotice(setup, false), max);
+		return isText
+			? await (({ text, entities }) => tgSendText(env, text, entities))(textNote(caption, transcript))
 			: await tgSendNote(env, source, meta.title, caption);
-		state.audioSent = true;
-		await save();
-	}
+	});
 
 	// Посилання на повідомлення в описі задач Todoist (лише для каналів і супергруп).
-	const messageUrl = state.messageId && telegramMessageUrl(env.CHAT_ID, state.messageId);
-	if (state.actionId && messageUrl && !state.messageLinked) {
-		await setActionMessage(env, state.actionId, messageUrl);
-		state.messageLinked = true;
-		await save();
+	const messageUrl = telegramMessageUrl(env.CHAT_ID, messageId);
+	if (actionId && messageUrl) {
+		await step("messageLinked", async () => {
+			await setActionMessage(env, actionId, messageUrl);
+			return true;
+		});
 	}
 
 	// Зберігаємо нотатку для редагування (повторний запис при ретраї нічого не ламає).
-	if (state.messageId) {
-		const note: Note = {
-			transcript: state.transcript,
-			edits: [],
-			meta,
-			triage: state.triage ?? null,
-			actionId: state.actionId || undefined,
-			messageId: state.messageId,
-			recordedTs: recordedTs(key),
-			...(isText && { text: true }),
-			...(setup.length && { setup }),
-		};
-		await env.BUCKET.put(noteKey(state.noteId), JSON.stringify(note));
-		await env.BUCKET.put(noteByMessageKey(state.messageId), state.noteId);
-		console.log(`note ${state.noteId} published as message ${state.messageId}`);
-	}
+	const note: Note = {
+		transcript,
+		edits: [],
+		meta,
+		triage: triaged,
+		actionId: actionId || undefined,
+		messageId,
+		recordedTs: recordedTs(key),
+		...(isText && { text: true }),
+		...(setup.length && { setup }),
+	};
+	await env.BUCKET.put(noteKey(noteId), JSON.stringify(note));
+	await env.BUCKET.put(noteByMessageKey(messageId), noteId);
+	console.log(`note ${noteId} published as message ${messageId}`);
 
-	// Задачі одразу в Todoist (посилання на повідомлення вже в описі), потім назви задач у підписі стають посиланнями на них.
-	if (state.actionId && state.todoistApplied === undefined) {
-		state.todoistApplied = await applyNow(env, state.actionId, lastAttempt);
-		await save();
-	}
-	if (state.actionId && !state.todoistMarked) {
-		await markInTodoist(env, state.noteId, !state.todoistApplied);
-		state.todoistMarked = true;
-		await save();
-	}
-	// Фото — коментарем-вкладенням до кожної створеної задачі. Збій на останній спробі не блокує нотатку.
-	if (isPhoto && state.todoistApplied && !state.photoAttached) {
-		const ids = Object.values(await getInTodoist(env, state.noteId)).map((t) => t.id);
-		try {
-			await attachFile(env, state.actionId!, ids, await source.blob(), `${meta.title.slice(0, 60) || "photo"}.jpg`);
-			console.log(`photo attached to ${ids.length} tasks`);
-		} catch (err) {
-			if (!lastAttempt) throw err;
-			console.error("photo attach failed:", err);
+	if (actionId) {
+		// Задачі одразу в Todoist (посилання на повідомлення вже в описі), потім назви задач у підписі стають посиланнями на них.
+		const applied = await step("todoistApplied", () => applyOnce(env, actionId), { onFinalFailure: () => false });
+		await step("todoistMarked", async () => {
+			await markInTodoist(env, noteId, !applied);
+			return true;
+		});
+		// Фото — коментарем-вкладенням до кожної створеної задачі. Збій на останній спробі не блокує нотатку.
+		if (isPhoto && applied) {
+			await step(
+				"photoAttached",
+				async () => {
+					const ids = Object.values(await getInTodoist(env, noteId)).map((t) => t.id);
+					await attachFile(env, actionId, ids, await source.blob(), `${meta.title.slice(0, 60) || "photo"}.jpg`);
+					console.log(`photo attached to ${ids.length} tasks`);
+					return true;
+				},
+				{ onFinalFailure: () => true },
+			);
 		}
-		state.photoAttached = true;
-		await save();
 	}
 
 	// Голосове, надіслане в канал, видаляємо: нотатка вище містить те саме аудіо.
-	if (!state.originalDeleted) {
+	await step("originalDeleted", async () => {
 		await deleteOriginal(env, obj.customMetadata);
-		state.originalDeleted = true;
-		await save();
-	}
+		return true;
+	});
 
 	await env.BUCKET.delete([key, stateKey, captionKey(key)]);
 }
@@ -527,11 +514,15 @@ const NO_BUTTONS = { inline_keyboard: [] }; // прибирає кнопку (у
 
 // Виконує дію в Todoist одразу. Збій — ретрай черги (сталі uuid не дадуть дублів);
 // на останній спробі повертає false, щоб нотатка все одно дійшла.
+async function applyOnce(env: Env, actionId: string): Promise<true> {
+	const res = await applyAction(env, actionId);
+	if (res.status === "applied") console.log(`todoist action ${actionId} applied: ${res.count} ops`);
+	return true;
+}
+
 async function applyNow(env: Env, actionId: string, lastAttempt: boolean): Promise<boolean> {
 	try {
-		const res = await applyAction(env, actionId);
-		if (res.status === "applied") console.log(`todoist action ${actionId} applied: ${res.count} ops`);
-		return true;
+		return await applyOnce(env, actionId);
 	} catch (err) {
 		if (!lastAttempt) throw err;
 		console.error(`todoist action ${actionId} failed:`, err);

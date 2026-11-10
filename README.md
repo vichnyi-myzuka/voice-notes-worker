@@ -18,6 +18,7 @@ wrangler.toml          bindings: R2, Queue producer/consumer, DLQ, AI; vars TIME
 src/index.ts           producer, consumer, DLQ consumer, summary, редагування, автододавання в Todoist, callback старих кнопок, тип Env
 src/llm.ts             виклик зі structured output: gpt-6-luna, при збої Gemma 4
 src/todoist.ts         Todoist API (/sync), тріаж, операції create/update/delete, виконання збережених дій, вкладення
+src/steps.ts           контрольовані кроки обробки: результат кроку зберігається в R2, повтор пропускає виконане, на останній спробі крок деградує (onFinalFailure)
 src/note.ts            підпис нотатки (fitCaption), хештеги, посилання на задачі, текстові нотатки
 src/setup.ts           команди налаштування Todoist (проєкти й мітки голосом)
 src/telegram.ts        Bot API і прийом голосових, тексту й фото з вебхука
@@ -76,7 +77,7 @@ npx wrangler deploy
 
 - `npm run lint` — oxlint (`src`, `test`).
 - `npm run typecheck` — `tsc --noEmit`.
-- `npm test` — vitest: unit-тести чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyAction` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `test/todoist.test.ts`. Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
+- `npm test` — vitest: unit-тести кроків обробки (`test/steps.test.ts`), наскрізний `processNote` з підміненими OpenAI і Telegram (`test/process-note.test.ts`: публікація й повтор після збою без повторного LLM), чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyAction` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `test/todoist.test.ts`. Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
 - `npm run check` — усе разом (lint + typecheck + test).
 
 Git-хуки лежать в `.githooks/` і вмикаються автоматично після `npm install` (скрипт `prepare` ставить `core.hooksPath`):

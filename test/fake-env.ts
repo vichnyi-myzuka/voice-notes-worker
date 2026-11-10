@@ -3,12 +3,25 @@ import type { Env } from "../src/index";
 // Мінімальний R2 у пам'яті: лише те, що використовує воркер (get/put/head/delete).
 export function fakeEnv(vars: Partial<Env> = {}): Env & { store: Map<string, string> } {
 	const store = new Map<string, string>();
-	const object = (v: string) => ({ json: async () => JSON.parse(v), text: async () => v });
+	const options = new Map<string, { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }>();
+	const object = (k: string) => {
+		const v = store.get(k)!;
+		return {
+			json: async () => JSON.parse(v),
+			text: async () => v,
+			arrayBuffer: async () => new TextEncoder().encode(v).buffer,
+			size: v.length,
+			...options.get(k),
+		};
+	};
 	const BUCKET = {
-		get: async (k: string) => (store.has(k) ? object(store.get(k)!) : null),
+		get: async (k: string) => (store.has(k) ? object(k) : null),
 		head: async (k: string) => (store.has(k) ? {} : null),
-		put: async (k: string, v: string) => void store.set(k, v),
-		delete: async (k: string | string[]) => [k].flat().forEach((x) => store.delete(x)),
+		put: async (k: string, v: string, opts?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }) => {
+			store.set(k, v);
+			if (opts) options.set(k, opts);
+		},
+		delete: async (k: string | string[]) => [k].flat().forEach((x) => (store.delete(x), options.delete(x))),
 	};
 	return {
 		BUCKET,
