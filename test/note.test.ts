@@ -203,6 +203,18 @@ describe("parseEditedNote", () => {
 		expect(triage![0]).toMatchObject({ due: "2026-11-09", deadline: "2026-11-10" });
 		expect(triage![1].due).toBe("2026-11-10");
 	});
+	it("нагадування проходять через валідатор: нормалізація, відкидання некоректних", () => {
+		const { triage } = parseEditedNote(
+			answer([
+				task("t1", "А", { due: "today 16:00", reminders: ["before 60", "tomorrow 09:00", "tomorrow", "before 60"] }),
+				task("t2", "Б", { due: "2026-11-12", reminders: ["before 30"] }),
+			]),
+			old,
+			validate,
+		);
+		expect(triage![0].reminders).toEqual(["before:60", "2026-11-10T09:00"]);
+		expect(triage![1].reminders).toEqual([]);
+	});
 	it("без Todoist повертає лише назви задач, без тріажу", () => {
 		const r = parseEditedNote(answer([{ key: "t1", title: "Х" }]), plainTasks(["Х"]), null);
 		expect(r.triage).toBeNull();

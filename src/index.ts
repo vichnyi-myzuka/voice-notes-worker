@@ -593,15 +593,26 @@ async function editNote(
 ): Promise<{ meta: Meta; triage: TriageItem[] | null } | null> {
 	const { title, summary, ideas } = note.meta;
 	const oldTasks = note.triage ?? plainTasks(note.meta.tasks);
-	const tasks = oldTasks.map(({ key, title, project, labels, priority, due, deadline, duplicateOf }) =>
+	const tasks = oldTasks.map(({ key, title, project, labels, priority, due, deadline, reminders, duplicateOf }) =>
 		snap
-			? { key, title, project, labels, priority: `p${priority}`, due, deadline, ...(duplicateOf && { already_exists_as: duplicateOf }) }
+			? {
+					key,
+					title,
+					project,
+					labels,
+					priority: `p${priority}`,
+					due,
+					deadline,
+					// у форматі для моделі: "before 60" або "2026-11-11 09:00"
+					reminders: (reminders ?? []).map((r) => (r.startsWith("before:") ? r.replace(":", " ") : r.replace("T", " "))),
+					...(duplicateOf && { already_exists_as: duplicateOf }),
+				}
 			: { key, title },
 	);
 	const taskSchema = {
 		type: "object",
 		properties: { key: { type: "string" }, title: { type: "string" }, ...(snap ? taskFieldsSchema(snap) : {}) },
-		required: snap ? ["key", "title", "project", "labels", "priority", "due", "deadline"] : ["key", "title"],
+		required: snap ? ["key", "title", "project", "labels", "priority", "due", "deadline", "reminders"] : ["key", "title"],
 		additionalProperties: false,
 	};
 	const schema = {

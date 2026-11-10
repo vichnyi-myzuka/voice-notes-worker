@@ -108,6 +108,37 @@ describe("taskValidator", () => {
 	});
 });
 
+describe("taskValidator: нагадування", () => {
+	const v = taskValidator(snap, new Date("2026-11-10T08:00:00Z"), "Europe/Kyiv");
+	const rem = (reminders: unknown, due = "today 16:00") => v({ title: "Х", due, reminders }).reminders;
+
+	it("before N → before:N; абсолютні today/tomorrow/дата з часом → YYYY-MM-DDTHH:MM", () => {
+		expect(rem(["before 60", "before:15", "before45"])).toEqual(["before:60", "before:15", "before:45"]);
+		expect(rem(["today 9:00", "tomorrow 09:00", "2026-11-11 09:30", "2026-11-12T08:05"])).toEqual([
+			"2026-11-10T09:00",
+			"2026-11-11T09:00",
+			"2026-11-11T09:30",
+			"2026-11-12T08:05",
+		]);
+	});
+	it("relative без часу в due відкидається; absolute працює і без due", () => {
+		expect(rem(["before 60"], "2026-11-12")).toEqual([]);
+		expect(rem(["before 60"], "")).toEqual([]);
+		expect(rem(["before 60", "tomorrow 09:00"], "")).toEqual(["2026-11-11T09:00"]);
+	});
+	it("absolute лише з датою відкидається", () => {
+		expect(rem(["tomorrow", "2026-11-12", "today"])).toEqual([]);
+	});
+	it("некоректні значення відкидаються", () => {
+		expect(rem(["before 0", "before", "before -5", "before 99999", "колись", "", "today 25:00", 5, null])).toEqual([]);
+		expect(rem("before 60")).toEqual([]);
+		expect(rem(undefined)).toEqual([]);
+	});
+	it("дублікати після нормалізації прибираються", () => {
+		expect(rem(["before 60", "before:60", "tomorrow 09:00", "2026-11-11T09:00"])).toEqual(["before:60", "2026-11-11T09:00"]);
+	});
+});
+
 describe("planOps", () => {
 	const prev = item("Старе", { key: "t1", project: "Work", labels: ["Errand"], priority: 2, due: "2026-11-10" });
 	const inTodoist: InTodoist = { t1: { id: "100", item: prev }, t2: { id: "200", item: item("Видалене", { key: "t2" }) } };
@@ -148,6 +179,84 @@ describe("planOps", () => {
 		for (const change of [{ deadline: "2026-12-01" }, { labels: [] }, { due: "" }]) {
 			expect(planOps([{ ...prev, ...change }], { t1: inTodoist.t1 })).toHaveLength(1);
 		}
+	});
+});
+
+describe("planOps: нагадування", () => {
+	const prev = item("Зустріч", { key: "t1", due: "2026-11-11T16:00", reminders: ["before:60"] });
+	const state: InTodoist = { t1: { id: "100", item: prev, reminderIds: ["r1"] } };
+
+	it("змінені нагадування → op з reminders:true і oldReminderIds", () => {
+		const next = { ...prev, reminders: ["2026-11-11T09:00"] };
+		expect(planOps([next], state)).toEqual([{ key: "t1", item: next, id: "100", reminders: true, oldReminderIds: ["r1"] }]);
+	});
+	it("без збережених reminderIds → oldReminderIds порожній", () => {
+		const next = { ...prev, reminders: [] };
+		expect(planOps([next], { t1: { id: "100", item: prev } })).toEqual([{ key: "t1", item: next, id: "100", reminders: true, oldReminderIds: [] }]);
+	});
+	it("незмінені (навіть в іншому порядку) → без op", () => {
+		const two = { ...prev, reminders: ["before:60", "before:10"] };
+		expect(planOps([{ ...two, reminders: ["before:10", "before:60"] }], { t1: { id: "100", item: two } })).toEqual([]);
+		expect(planOps([prev], state)).toEqual([]);
+	});
+	it("undefined і [] — те саме", () => {
+		const old = item("А", { key: "t1" });
+		expect(planOps([{ ...old, reminders: [] }], { t1: { id: "1", item: old } })).toEqual([]);
+		expect(planOps([old], { t1: { id: "1", item: { ...old, reminders: [] } } })).toEqual([]);
+	});
+	it("інша зміна без нагадувань → op без reminders", () => {
+		const [op] = planOps([{ ...prev, title: "Нова" }], state);
+		expect(op.reminders).toBeUndefined();
+		expect(op.oldReminderIds).toBeUndefined();
+	});
+	it("старий запис без reminders → додані нагадування дають reminders:true", () => {
+		const old = item("А", { key: "t1", due: "2026-11-11T16:00" });
+		const [op] = planOps([{ ...old, reminders: ["before:5"] }], { t1: { id: "1", item: old } });
+		expect(op).toMatchObject({ reminders: true, oldReminderIds: [] });
+	});
+});
+
+describe("buildCommands: нагадування", () => {
+	it("створення: reminder_add після item_add, item_id = temp_id задачі", () => {
+		const it1 = item("Зустріч", { key: "t1", due: "2026-11-11T16:00", reminders: ["before:60", "2026-11-11T09:00"] });
+		const other = item("Інша", { key: "t2" });
+		const cmds = buildCommands("act", [{ key: "t1", item: it1 }, { key: "t2", item: other }], "", snap) as any[];
+		expect(cmds.map((c) => c.type)).toEqual(["item_add", "reminder_add", "reminder_add", "item_add"]);
+		expect(cmds[1]).toEqual({
+			type: "reminder_add",
+			uuid: "act-0r0",
+			temp_id: "tmp-act-0r0",
+			args: { item_id: "tmp-act-0", type: "relative", minute_offset: 60 },
+		});
+		expect(cmds[2]).toEqual({
+			type: "reminder_add",
+			uuid: "act-0r1",
+			temp_id: "tmp-act-0r1",
+			args: { item_id: "tmp-act-0", type: "absolute", due: { date: "2026-11-11T09:00:00" } },
+		});
+	});
+	it("оновлення зі зміною: reminder_delete для старих, потім reminder_add з id задачі", () => {
+		const next = item("Зустріч", { key: "t1", due: "2026-11-11T16:00", reminders: ["before:30"] });
+		const cmds = buildCommands("act", [{ key: "t1", item: next, id: "100", reminders: true, oldReminderIds: ["a", "b"] }], "", snap) as any[];
+		expect(cmds.map((c) => c.type)).toEqual(["item_update", "reminder_delete", "reminder_delete", "reminder_add"]);
+		expect(cmds[1]).toEqual({ type: "reminder_delete", uuid: "act-0rd0", args: { id: "a" } });
+		expect(cmds[2]).toEqual({ type: "reminder_delete", uuid: "act-0rd1", args: { id: "b" } });
+		expect(cmds[3]).toEqual({
+			type: "reminder_add",
+			uuid: "act-0r0",
+			temp_id: "tmp-act-0r0",
+			args: { item_id: "100", type: "relative", minute_offset: 30 },
+		});
+	});
+	it("оновлення без прапорця reminders → жодних команд нагадувань; видалення всіх нагадувань → лише delete", () => {
+		const withR = item("А", { reminders: ["before:30"] });
+		expect(buildCommands("act", [{ key: "t1", item: withR, id: "100" }], "", snap)).toHaveLength(1);
+		const cleared = item("А", { reminders: [] });
+		const cmds = buildCommands("act", [{ key: "t1", item: cleared, id: "100", reminders: true, oldReminderIds: ["a"] }], "", snap) as any[];
+		expect(cmds.map((c) => c.type)).toEqual(["item_update", "reminder_delete"]);
+	});
+	it("задача без reminders (стара нотатка) → без команд нагадувань", () => {
+		expect(buildCommands("act", [{ key: "t1", item: item("А") }], "", snap)).toHaveLength(1);
 	});
 });
 
@@ -229,6 +338,12 @@ describe("formatTriage", () => {
 	});
 	it("дублікат показується як «вже є»", () => {
 		expect(formatTriage([item("Молоко", { key: "t1", duplicateOf: "Купити молоко" })])).toBe("• ↩️ вже є: Купити молоко");
+	});
+	it("нагадування: 🔔 −N хв і 🔔 дата час; без reminders нічого", () => {
+		expect(formatTriage([item("А", { due: "2026-11-11T16:00", reminders: ["before:60", "2026-11-11T09:00"] })])).toBe(
+			"• А → Inbox 📅 2026-11-11 16:00 🔔 −60 хв 🔔 2026-11-11 09:00",
+		);
+		expect(formatTriage([item("А", { reminders: [] }), item("Б")])).toBe("• А → Inbox\n• Б → Inbox");
 	});
 	it("p4 не показується", () => {
 		expect(formatTriage([item("А", { priority: 4 })])).not.toMatch(/p4/);
@@ -410,6 +525,63 @@ describe("applyAction", () => {
 		expect(uuids).toEqual([`${id}-0`, `${id}-1`]);
 		expect(await getInTodoist(env, "n1")).toEqual({ t1: { id: "301", item: a }, t2: { id: "302", item: b } });
 		expect(JSON.parse(env.store.get(`todoist/${id}.json`)!).appliedAt).toBeDefined();
+	});
+
+	it("нагадування: ID зберігаються для створення й заміни; оновлення без змін нагадувань лишає попередні", async () => {
+		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
+		const withR = item("З нагадуванням", { key: "t3", due: "2026-11-11T16:00", reminders: ["before:60", "2026-11-11T09:00"] });
+		const replaced = item("Заміна", { key: "t1", due: "2026-11-11T16:00", reminders: ["before:30"] });
+		const kept = item("Перейменована", { key: "t2", due: "2026-11-11T16:00", reminders: ["before:15"] });
+		const none = item("Без нагадувань", { key: "t4" });
+		env.store.set(
+			"notes/n1.todoist.json",
+			JSON.stringify({
+				t1: { id: "100", item: item("Стара", { key: "t1", due: "2026-11-11T16:00", reminders: ["before:60"] }), reminderIds: ["old1"] },
+				t2: { id: "200", item: { ...kept, title: "Було" }, reminderIds: ["old2"] },
+			}),
+		);
+		const id = await createAction(
+			env,
+			[
+				{ key: "t3", item: withR },
+				{ key: "t1", item: replaced, id: "100", reminders: true, oldReminderIds: ["old1"] },
+				{ key: "t2", item: kept, id: "200" },
+				{ key: "t4", item: none },
+			],
+			"о",
+			"n1",
+		);
+		const calls = stubFetch({
+			sync_status: Object.fromEntries(
+				[`${id}-0`, `${id}-0r0`, `${id}-0r1`, `${id}-1`, `${id}-1rd0`, `${id}-1r0`, `${id}-2`, `${id}-3`].map((k) => [k, "ok"]),
+			),
+			temp_id_mapping: {
+				[`tmp-${id}-0`]: "300",
+				[`tmp-${id}-0r0`]: "r300a",
+				[`tmp-${id}-0r1`]: "r300b",
+				[`tmp-${id}-1r0`]: "new1",
+				[`tmp-${id}-3`]: "400",
+			},
+		});
+		await applyAction(env, id);
+
+		const types = JSON.parse(calls[1].body.get("commands")!).map((c: { type: string }) => c.type);
+		expect(types).toEqual([
+			"item_add",
+			"reminder_add",
+			"reminder_add",
+			"item_update",
+			"reminder_delete",
+			"reminder_add",
+			"item_update",
+			"item_add",
+		]);
+		expect(await getInTodoist(env, "n1")).toEqual({
+			t3: { id: "300", item: withR, reminderIds: ["r300a", "r300b"] },
+			t1: { id: "100", item: replaced, reminderIds: ["new1"] },
+			t2: { id: "200", item: kept, reminderIds: ["old2"] },
+			t4: { id: "400", item: none },
+		});
 	});
 
 	it("HTTP-помилка Todoist → виняток", async () => {
