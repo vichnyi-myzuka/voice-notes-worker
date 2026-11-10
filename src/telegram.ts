@@ -109,7 +109,8 @@ async function react(env: Env, msg: TgMessage): Promise<void> {
 export async function receiveTelegramVoice(
 	env: Env,
 	msg: TgMessage,
-	store: (key: string, body: ArrayBuffer, meta: ReceivedVoice) => Promise<void>,
+	// Повертає false, якщо повідомлення вже прибране (правка): тоді ✍ не ставимо.
+	store: (key: string, body: ArrayBuffer, meta: ReceivedVoice) => Promise<boolean>,
 ): Promise<void> {
 	const inChannel = msg.chat.type === "channel" && String(msg.chat.id) === env.CHAT_ID && !msg.caption;
 	const inPrivate = msg.chat.type === "private" && !!env.TG_OWNER_ID && String(msg.from?.id) === env.TG_OWNER_ID;
@@ -120,26 +121,26 @@ export async function receiveTelegramVoice(
 	// Текстова відповідь на нотатку в каналі — інструкція редагування (без транскрипції).
 	if (!file && inChannel && msg.text && msg.reply_to_message) {
 		const key = `${msg.date * 1000}-${crypto.randomUUID().slice(0, 8)}.txt`;
-		await store(key, new TextEncoder().encode(msg.text).buffer as ArrayBuffer, {
+		const accepted = await store(key, new TextEncoder().encode(msg.text).buffer as ArrayBuffer, {
 			contentType: "text/plain; charset=utf-8",
 			kind: "text",
 			deleteChatId: String(msg.chat.id),
 			deleteMessageId: String(msg.message_id),
 			replyTo: String(msg.reply_to_message.message_id),
 		});
-		await react(env, msg);
+		if (accepted) await react(env, msg);
 		return;
 	}
 
 	// Звичайний текст (не команда) — нова нотатка, як голосове, але без транскрипції.
 	if (!file && msg.text?.trim() && !msg.text.trim().startsWith("/")) {
 		const key = `${msg.date * 1000}-${crypto.randomUUID().slice(0, 8)}.txt`;
-		await store(key, new TextEncoder().encode(msg.text).buffer as ArrayBuffer, {
+		const accepted = await store(key, new TextEncoder().encode(msg.text).buffer as ArrayBuffer, {
 			contentType: "text/plain; charset=utf-8",
 			kind: "text",
 			...(inChannel && { deleteChatId: String(msg.chat.id), deleteMessageId: String(msg.message_id) }),
 		});
-		await react(env, msg);
+		if (accepted) await react(env, msg);
 		return;
 	}
 
@@ -163,14 +164,14 @@ export async function receiveTelegramVoice(
 		const ext = kind === "voice" ? "ogg" : (info.result.file_path.split(".").pop() ?? "audio");
 		// Ключ починається з часу запису (msg.date), як і для шорткату.
 		const key = `${msg.date * 1000}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-		await store(key, await res.arrayBuffer(), {
+		const accepted = await store(key, await res.arrayBuffer(), {
 			contentType,
 			fileId: file.file_id,
 			kind,
 			...(inChannel && { deleteChatId: String(msg.chat.id), deleteMessageId: String(msg.message_id) }),
 			...(inChannel && msg.reply_to_message && { replyTo: String(msg.reply_to_message.message_id) }),
 		});
-		await react(env, msg);
+		if (accepted) await react(env, msg);
 	} catch (err) {
 		console.error("telegram voice failed:", err);
 		await tgSendMessage(env, msg.chat.id, "⚠️ Не вдалося прийняти запис, спробуй ще раз.");

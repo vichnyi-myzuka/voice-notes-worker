@@ -122,7 +122,16 @@ export default {
 				await receiveTelegramVoice(env, msg, async (key, body, { contentType, replyTo, ...meta }) => {
 					// Відповідь на повідомлення в каналі = редагування; "missing", якщо це не наша нотатка або вона застаріла.
 					const edit = replyTo && ((await (await env.BUCKET.get(noteByMessageKey(replyTo)))?.text()) || "missing");
-					await enqueueNote(env, key, body, contentType, meta, edit || undefined);
+					if (!edit || edit === "missing") {
+						await enqueueNote(env, key, body, contentType, meta, edit || undefined);
+						return true;
+					}
+					// Правка: відповідь одразу прибираємо з каналу, а статус «редагується» (👨‍💻) — на самій нотатці.
+					const { deleteChatId, deleteMessageId, ...rest } = meta;
+					await enqueueNote(env, key, body, contentType, rest, edit);
+					await markEditing(env, Number(replyTo), true);
+					await deleteOriginal(env, { deleteChatId: deleteChatId ?? "", deleteMessageId: deleteMessageId ?? "" });
+					return false;
 				});
 			}
 			return new Response("ok");
@@ -156,6 +165,9 @@ export default {
 	async queue(batch, env): Promise<void> {
 		if (batch.queue === DLQ_NAME) {
 			for (const msg of batch.messages) {
+				// Правка не вдалася: знімаємо з нотатки статус «редагується».
+				const note = msg.body.edit && (await (await env.BUCKET.get(noteKey(msg.body.edit)))?.json<Note>());
+				if (note) await markEditing(env, note.messageId, false);
 				await tgSendMessage(
 					env,
 					env.CHAT_ID,
@@ -339,19 +351,20 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 }
 
 // ---------- Редагування нотатки голосовою інструкцією ----------
+// Поки нотатка редагується, на ній стоїть 👨‍💻 (✏ серед реакцій для ботів немає).
+const markEditing = (env: Env, messageId: number, on: boolean) =>
+	tg(env, "setMessageReaction", {
+		chat_id: env.CHAT_ID,
+		message_id: messageId,
+		reaction: on ? [{ type: "emoji", emoji: "👨‍💻" }] : [],
+	}).catch((err) => console.error("reaction failed:", err));
+
 async function processEdit(env: Env, key: string, noteId: string, lastAttempt: boolean): Promise<void> {
 	const obj = await env.BUCKET.get(key);
 	if (!obj) return; // уже оброблено
 	const stateKey = `${key}.state.json`;
-	// Поки редагуємо, на нотатці стоїть 👨‍💻 (✏ серед реакцій для ботів немає).
-	const markEditing = (on: boolean, messageId: number) =>
-		tg(env, "setMessageReaction", {
-			chat_id: env.CHAT_ID,
-			message_id: messageId,
-			reaction: on ? [{ type: "emoji", emoji: "👨‍💻" }] : [],
-		}).catch((err) => console.error("reaction failed:", err));
 	const cleanup = async (messageId?: number) => {
-		if (messageId) await markEditing(false, messageId);
+		if (messageId) await markEditing(env, messageId, false);
 		await deleteOriginal(env, obj.customMetadata); // інструкцію з каналу прибираємо
 		await env.BUCKET.delete([key, stateKey]);
 	};
@@ -366,7 +379,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	}
 
 	if (state.transcript === undefined) {
-		await markEditing(true, note.messageId);
+		await markEditing(env, note.messageId, true);
 		// Текстова відповідь на нотатку — без Whisper.
 		const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
 		state.transcript = contentType.startsWith("text/")
