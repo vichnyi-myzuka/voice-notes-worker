@@ -5,6 +5,7 @@ import {
 	createAction,
 	deleteOpenTasks,
 	fetchSnapshot,
+	findRulesProject,
 	formatTriage,
 	getInTodoist,
 	planOps,
@@ -680,6 +681,16 @@ describe("fetchSnapshot: правила", () => {
 		const s = await fetchSnapshot(env);
 		expect(s.rules).toBe("");
 		expect(err).toHaveBeenCalledOnce();
+		err.mockRestore();
+	});
+
+	it("findRulesProject: активний → id та опис; в архіві → id; ніде → null", async () => {
+		mock([], [{ results: [proj(RULES_PROJECT, "арх")], next_cursor: null }]);
+		expect(await findRulesProject(env, [{ id: "a1", name: RULES_PROJECT, description: "акт" }])).toEqual({ id: "a1", description: "акт" });
+		expect(await findRulesProject(env, [])).toEqual({ id: RULES_PROJECT, description: "арх" });
+		mock([], [{ results: [], next_cursor: null }]);
+		const err = vi.spyOn(console, "error").mockImplementation(() => {});
+		expect(await findRulesProject(env, [])).toBeNull();
 		err.mockRestore();
 	});
 

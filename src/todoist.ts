@@ -35,7 +35,7 @@ async function get(env: Env, path: string): Promise<Record<string, unknown>> {
 	return res.json();
 }
 
-async function sync(env: Env, body: Record<string, string>): Promise<Record<string, unknown>> {
+export async function sync(env: Env, body: Record<string, string>): Promise<Record<string, unknown>> {
 	const res = await fetch(SYNC_URL, {
 		method: "POST",
 		headers: { authorization: `Bearer ${env.TODOIST_TOKEN}` },
@@ -58,24 +58,30 @@ export async function fetchSnapshot(env: Env): Promise<TodoistSnapshot> {
 			.map((p) => ({ id: p.id, name: p.name, inbox: !!p.inbox_project, ...(p.description?.trim() && { description: p.description.trim() }) })),
 		labels: d.labels.filter((l) => !l.is_deleted).map((l) => l.name),
 		tasks: d.items.filter((i) => !i.checked && !i.is_deleted).map((i) => i.content),
-		rules: (active.find((p) => p.name === RULES_PROJECT)?.description ?? (await archivedRules(env))).trim(),
+		rules: ((await findRulesProject(env, active))?.description ?? "").trim(),
 	};
 }
 
-// Опис RULES_PROJECT з архіву (архівних проєктів немає в /sync).
-async function archivedRules(env: Env): Promise<string> {
+// RULES_PROJECT серед активних проєктів або в архіві (архівних проєктів немає в /sync).
+export async function findRulesProject(
+	env: Env,
+	active: { id: string; name: string; description?: string }[],
+): Promise<{ id: string; description: string } | null> {
+	const own = active.find((p) => p.name === RULES_PROJECT);
+	if (own) return { id: own.id, description: own.description ?? "" };
 	let cursor = "";
 	do {
 		const page = (await get(env, `projects/archived?limit=200${cursor && `&cursor=${encodeURIComponent(cursor)}`}`)) as {
-			results: { name: string; description?: string }[];
-			next_cursor: string | null;
+			results?: { id: string; name: string; description?: string }[];
+			next_cursor?: string | null;
 		};
-		const found = page.results.find((p) => p.name === RULES_PROJECT);
-		if (found) return found.description ?? "";
-		cursor = page.next_cursor ?? "";
+		const found = page.results?.find((p) => p.name === RULES_PROJECT);
+		if (found) return { id: found.id, description: found.description ?? "" };
+		const next = page.next_cursor ?? "";
+		cursor = next !== cursor ? next : ""; // захист від зациклення
 	} while (cursor);
 	console.error(`Todoist project "${RULES_PROJECT}" not found: triage runs without rules`);
-	return "";
+	return null;
 }
 
 const listNames = (snap: TodoistSnapshot) => snap.projects.filter((p) => !p.inbox).map((p) => p.name);
