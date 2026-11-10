@@ -5,7 +5,7 @@ import RULES from "./todoist-rules.txt";
 // ---------- Типи ----------
 // Що є в Todoist зараз: воркер читає це з API перед тріажем.
 export type TodoistSnapshot = {
-	projects: { id: string; name: string; inbox: boolean }[];
+	projects: { id: string; name: string; inbox: boolean; description?: string }[]; // опис — пояснення для тріажу
 	labels: string[];
 	tasks: string[]; // назви відкритих задач — для пошуку дублікатів
 };
@@ -38,14 +38,14 @@ async function sync(env: Env, body: Record<string, string>): Promise<Record<stri
 
 export async function fetchSnapshot(env: Env): Promise<TodoistSnapshot> {
 	const d = (await sync(env, { sync_token: "*", resource_types: JSON.stringify(["projects", "labels", "items"]) })) as {
-		projects: { id: string; name: string; inbox_project?: boolean; is_archived?: boolean; is_deleted?: boolean }[];
+		projects: { id: string; name: string; description?: string; inbox_project?: boolean; is_archived?: boolean; is_deleted?: boolean }[];
 		labels: { name: string; is_deleted?: boolean }[];
 		items: { content: string; checked?: boolean; is_deleted?: boolean }[];
 	};
 	return {
 		projects: d.projects
 			.filter((p) => !p.is_archived && !p.is_deleted)
-			.map((p) => ({ id: p.id, name: p.name, inbox: !!p.inbox_project })),
+			.map((p) => ({ id: p.id, name: p.name, inbox: !!p.inbox_project, ...(p.description?.trim() && { description: p.description.trim() }) })),
 		labels: d.labels.filter((l) => !l.is_deleted).map((l) => l.name),
 		tasks: d.items.filter((i) => !i.checked && !i.is_deleted).map((i) => i.content),
 	};
@@ -75,15 +75,19 @@ export function taskFieldsSchema(snap: TodoistSnapshot): Record<string, unknown>
 }
 
 // Правила автора, мітки й проєкти — і для тріажу, і для редагування задач.
+// Що означає кожен проєкт, автор пише в описі проєкту в Todoist: «Назва — опис».
 export function taskRulesBlock(snap: TodoistSnapshot): string {
+	const projects = snap.projects
+		.filter((p) => !p.inbox)
+		.map((p) => (p.description ? `${p.name} — ${p.description.replace(/\s*\n\s*/g, " ")}` : p.name));
 	return [
 		`<rules>\n${rulesText || "(no rules)"}\n</rules>`,
 		`<labels>\n${snap.labels.join("\n")}\n</labels>`,
-		`<projects>\n${listNames(snap).join("\n")}\n</projects>`,
+		`<projects>\n${projects.join("\n")}\n</projects>`,
 	].join("\n\n");
 }
 
-const TASK_FIELDS_HELP = `- project: a project from <projects> that clearly fits the task, or "" (Inbox) if none clearly fits. Never guess.
+const TASK_FIELDS_HELP = `- project: a project from <projects> (name before " — "; the rest is what the project is for) that clearly fits the task, or "" (Inbox) if none clearly fits. Never guess.
 - labels: labels from <labels> that clearly apply, or [] if none.
 - priority: "p1" (highest) … "p4" (no priority), following the rules.
 - due: when the task should be done, only if said: "today", "tomorrow" or YYYY-MM-DD, plus " HH:MM" if a time is said ("до 13:00", "о 19:00" → "today 13:00", "today 19:00"); otherwise "".
