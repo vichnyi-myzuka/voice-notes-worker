@@ -1,7 +1,7 @@
 import { askJson } from "./llm";
 import { buildCaption, CAPTION_MAX, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote, TEXT_CAPTION_MAX, type Meta } from "./note";
 import { applySetup, planSetup, setupReport, type SetupPlan } from "./setup";
-import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
+import { NO_PREVIEW, receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
 import {
 	applyAction,
 	createAction,
@@ -554,7 +554,7 @@ async function editNoteMessage(env: Env, note: Note, caption: string, entities: 
 	const common = { chat_id: env.CHAT_ID, message_id: note.messageId, reply_markup: NO_BUTTONS };
 	await (
 		note.text
-			? tg(env, "editMessageText", { ...common, ...textNote(caption, note.transcript, entities) })
+			? tg(env, "editMessageText", { ...common, ...textNote(caption, note.transcript, entities), link_preview_options: NO_PREVIEW })
 			: tg(env, "editMessageCaption", { ...common, caption, caption_entities: entities })
 	).catch(
 		(err) => {

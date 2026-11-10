@@ -42,9 +42,12 @@ export async function tgSendNote(
 	return (res as { result: { message_id: number } }).result.message_id;
 }
 
+export const NO_PREVIEW = { is_disabled: true };
+
 // Текстова нотатка: звичайне повідомлення (без аудіо). Повертає message_id.
 export async function tgSendText(env: Env, text: string, entities: object[]): Promise<number> {
-	const res = await tg(env, "sendMessage", { chat_id: env.CHAT_ID, text, entities });
+	// Без прев'ю посилань: інакше Telegram показує картку першої задачі Todoist («This content is private»).
+	const res = await tg(env, "sendMessage", { chat_id: env.CHAT_ID, text, entities, link_preview_options: NO_PREVIEW });
 	return (res as { result: { message_id: number } }).result.message_id;
 }
 
