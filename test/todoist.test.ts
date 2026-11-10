@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	applyAction,
+	attachFile,
 	buildCommands,
 	createAction,
 	deleteOpenTasks,
@@ -926,5 +927,44 @@ describe("повторювані задачі", () => {
 			const plain = item("А", { key: "t2" });
 			expect(withAppliedRecurrence([plain], { t2: { id: "2", item: plain } })).toEqual([plain]);
 		});
+	});
+});
+
+describe("attachFile", () => {
+	afterEach(() => vi.unstubAllGlobals());
+	const env = fakeEnv({ TODOIST_TOKEN: "tok" });
+	const file = new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" });
+	const stub = (syncStatus: Record<string, unknown>) => {
+		const spy = vi.fn(async (url: string, _init: RequestInit) =>
+			url.endsWith("/uploads") ? Response.json({ file_url: "https://x/f.jpg", file_name: "f.jpg" }) : Response.json({ sync_status: syncStatus }),
+		);
+		vi.stubGlobal("fetch", spy);
+		return spy;
+	};
+
+	it("без задач нічого не завантажує", async () => {
+		const spy = stub({});
+		await attachFile(env, "a1", [], file, "f.jpg");
+		expect(spy).not.toHaveBeenCalled();
+	});
+
+	it("завантажує файл і додає коментарі-вкладення зі сталими uuid", async () => {
+		const spy = stub({ "a1-a0": "ok", "a1-a1": "ok" });
+		await attachFile(env, "a1", ["t1", "t2"], file, "f.jpg");
+		expect(spy).toHaveBeenCalledTimes(2);
+		expect(spy.mock.calls[0][0]).toContain("/uploads");
+		const commands = JSON.parse(String((spy.mock.calls[1][1].body as URLSearchParams).get("commands")));
+		expect(commands).toHaveLength(2);
+		expect(commands[0]).toMatchObject({
+			type: "note_add",
+			uuid: "a1-a0",
+			args: { item_id: "t1", file_attachment: { file_url: "https://x/f.jpg", file_name: "f.jpg" } },
+		});
+		expect(commands[1]).toMatchObject({ uuid: "a1-a1", args: { item_id: "t2" } });
+	});
+
+	it("кидає помилку, якщо команда не ok", async () => {
+		stub({ "a1-a0": { error: "boom" } });
+		await expect(attachFile(env, "a1", ["t1"], file, "f.jpg")).rejects.toThrow(/note_add/);
 	});
 });

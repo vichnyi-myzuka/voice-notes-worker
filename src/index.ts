@@ -1,9 +1,10 @@
-import { askJson } from "./llm";
+import { askJson, parseJsonObject, toBase64 } from "./llm";
 import { buildCaption, CAPTION_MAX, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote, TEXT_CAPTION_MAX, type Meta } from "./note";
 import { applySetup, planSetup, setupReport, type SetupPlan } from "./setup";
 import { NO_PREVIEW, receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
 import {
 	applyAction,
+	attachFile,
 	createAction,
 	deleteAction,
 	deleteOpenTasks,
@@ -60,6 +61,7 @@ type State = {
 	noteId?: string; // id нотатки для редагування й дії Todoist, створюється до відправки
 	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено
 	setup?: { id: string; plan: SetupPlan; ok?: boolean } | null; // команди налаштування Todoist (null — немає)
+	photoAttached?: boolean; // (фото) фото додане коментарем до створених задач
 };
 
 // Опублікована нотатка, зберігається для редагування (`notes/<id>.json`, 7 днів за lifecycle бакета).
@@ -77,6 +79,8 @@ type Note = {
 };
 const noteKey = (id: string) => `notes/${id}.json`;
 const noteByMessageKey = (messageId: number | string) => `notes/msg-${messageId}`;
+// Підпис до фото — окремим об'єктом: у customMetadata R2 (2 КБ) 1024 символи кирилиці можуть не влізти.
+const captionKey = (key: string) => `${key}.caption`;
 
 const DLQ_NAME = "voice-notes-dlq";
 const MAX_RETRIES = 4; // той самий, що max_retries у wrangler.toml
@@ -119,7 +123,8 @@ export default {
 			}
 			const msg = update.message ?? update.channel_post;
 			if (msg) {
-				await receiveTelegramVoice(env, msg, async (key, body, { contentType, replyTo, ...meta }) => {
+				await receiveTelegramVoice(env, msg, async (key, body, { contentType, replyTo, caption, ...meta }) => {
+					if (caption) await env.BUCKET.put(captionKey(key), caption);
 					// Відповідь на повідомлення в каналі = редагування; "missing", якщо це не наша нотатка або вона застаріла.
 					const edit = replyTo && ((await (await env.BUCKET.get(noteByMessageKey(replyTo)))?.text()) || "missing");
 					if (!edit || edit === "missing") {
@@ -218,6 +223,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	const recordedAt = formatRecordedAt(key, env.TIMEZONE);
 	const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
 	const isText = contentType.startsWith("text/"); // написаний текст: він і є транскриптом
+	const isPhoto = contentType.startsWith("image/"); // фото: «транскрипт» — підпис і текст із зображення
 	// Тіло об'єкта R2 читається лише раз, тож кешуємо.
 	let data: ArrayBuffer | undefined;
 	const read = async () => (data ??= await obj.arrayBuffer());
@@ -255,7 +261,11 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	if (state.transcript === undefined) {
-		state.transcript = isText ? (await obj.text()).trim() : await transcribe(env, await read(), contentType);
+		state.transcript = isText
+			? (await obj.text()).trim()
+			: isPhoto
+				? await readImage(env, await read(), contentType, (await (await env.BUCKET.get(captionKey(key)))?.text()) ?? "", lastAttempt)
+				: await transcribe(env, await read(), contentType);
 		await save();
 	}
 	if (state.meta === undefined) {
@@ -268,7 +278,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	if (meta.discard) {
 		console.log(`${key} discarded: ${meta.discard}`);
 		await deleteOriginal(env, obj.customMetadata);
-		await env.BUCKET.delete([key, stateKey]);
+		await env.BUCKET.delete([key, stateKey, captionKey(key)]);
 		return;
 	}
 
@@ -339,6 +349,19 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		state.todoistMarked = true;
 		await save();
 	}
+	// Фото — коментарем-вкладенням до кожної створеної задачі. Збій на останній спробі не блокує нотатку.
+	if (isPhoto && state.todoistApplied && !state.photoAttached) {
+		const ids = Object.values(await getInTodoist(env, state.noteId)).map((t) => t.id);
+		try {
+			await attachFile(env, state.actionId!, ids, await source.blob(), `${meta.title.slice(0, 60) || "photo"}.jpg`);
+			console.log(`photo attached to ${ids.length} tasks`);
+		} catch (err) {
+			if (!lastAttempt) throw err;
+			console.error("photo attach failed:", err);
+		}
+		state.photoAttached = true;
+		await save();
+	}
 
 	// Голосове, надіслане в канал, видаляємо: нотатка вище містить те саме аудіо.
 	if (!state.originalDeleted) {
@@ -347,7 +370,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		await save();
 	}
 
-	await env.BUCKET.delete([key, stateKey]);
+	await env.BUCKET.delete([key, stateKey, captionKey(key)]);
 }
 
 // ---------- Редагування нотатки голосовою інструкцією ----------
@@ -594,6 +617,36 @@ async function transcribe(env: Env, audio: ArrayBuffer, contentType: string): Pr
 		language: "uk",
 	});
 	return (res.text ?? "").trim();
+}
+
+// ---------- Фото: текст на зображенні й опис (vision), далі — як текстова нотатка ----------
+const IMAGE_SYSTEM = `The author sent a photo as a note, optionally with a caption. Read the image.
+- text: all text visible on the image, verbatim, in its original language, keeping line breaks; "" if there is none.
+- description: 1–2 sentences in Ukrainian on what the image shows (e.g. receipt, screenshot of a chat, handwritten list, poster, whiteboard), without repeating the text.`;
+
+async function readImage(env: Env, image: ArrayBuffer, type: string, caption: string, lastAttempt: boolean): Promise<string> {
+	const schema = {
+		type: "object",
+		properties: { text: { type: "string" }, description: { type: "string" } },
+		required: ["text", "description"],
+		additionalProperties: false,
+	};
+	const res = await askJson(
+		env,
+		{ name: "image_note", system: IMAGE_SYSTEM, user: caption ? `Caption: ${caption}` : "No caption.", schema, image: { base64: toBase64(image), type } },
+		(t) => {
+			const j = parseJsonObject(t);
+			return { text: String(j.text ?? "").trim(), description: String(j.description ?? "").trim() };
+		},
+	);
+	if (!res && !lastAttempt) throw new Error("All image models failed");
+	return [
+		caption && `Підпис автора: ${caption}`,
+		res?.description && `Що на фото: ${res.description}`,
+		res?.text && `Текст на фото:\n${res.text}`,
+	]
+		.filter(Boolean)
+		.join("\n\n");
 }
 
 // ---------- Title + summary: gpt-6-luna, при збої — Gemma 4 ----------
