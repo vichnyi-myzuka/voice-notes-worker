@@ -58,3 +58,17 @@ npx wrangler dev --port 8787 --var LOCAL_DEV:1 --var TG_OWNER_ID:230295237 --var
 - Реакція ✍ — без U+FE0F, інакше `REACTION_INVALID`; ✏ для ботів недоступна (тому 👨‍💻).
 - Бот не отримує власних дописів у каналі через вебхук.
 - `getFile` — до 20 МБ; посилання на повідомлення є лише для чатів `-100…`.
+
+## Agent skills
+
+### Issue tracker
+
+Задачі ведемо в GitHub Issues (`vichnyi-myzuka/voice-notes-worker`, через `gh`). Див. `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Стандартні п'ять міток: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. Див. `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` у корені. Див. `docs/agents/domain.md`.
