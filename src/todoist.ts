@@ -19,6 +19,7 @@ export type TriageItem = {
 	priority: number; // як у додатку: 1 (p1, найвищий) … 4 (p4, без пріоритету)
 	due: string; // YYYY-MM-DD | YYYY-MM-DDTHH:MM (з часом) | ""
 	deadline: string; // YYYY-MM-DD | "" (у Todoist дедлайн — лише дата)
+	reminders?: string[]; // "before:<хв>" (до часу виконання) | YYYY-MM-DDTHH:MM; немає в нотатках до появи нагадувань
 	key?: string; // стабільний ключ задачі в нотатці (t1, t2…): за ним редагування знаходить задачу в Todoist
 };
 
@@ -69,6 +70,7 @@ export function taskFieldsSchema(snap: TodoistSnapshot): Record<string, unknown>
 		priority: { type: "string", enum: ["p1", "p2", "p3", "p4"] },
 		due: { type: "string" },
 		deadline: { type: "string" },
+		reminders: { type: "array", items: { type: "string" } },
 	};
 }
 
@@ -86,6 +88,7 @@ const TASK_FIELDS_HELP = `- project: a project from <projects> that clearly fits
 - priority: "p1" (highest) … "p4" (no priority), following the rules.
 - due: when the task should be done, only if said: "today", "tomorrow" or YYYY-MM-DD, plus " HH:MM" if a time is said ("до 13:00", "о 19:00" → "today 13:00", "today 19:00"); otherwise "".
 - deadline: a date YYYY-MM-DD only if a separate final deadline is mentioned that is later than due (e.g. "почати завтра, здати до п'ятниці"); never repeat the due date as a deadline; otherwise "".
+- reminders: only if the author explicitly asks to be reminded ("нагадай…"): "before N" = N minutes before the due time (only when due has a time, e.g. "нагадай за годину" → "before 60"), or an absolute "today HH:MM" / "tomorrow HH:MM" / "YYYY-MM-DD HH:MM" ("нагадай завтра о 9" → "tomorrow 09:00"); otherwise [].
 - Task titles never contain dates or timing words ("завтра", "19 листопада"): timing goes only to due/deadline.`;
 
 // Дата у форматі YYYY-MM-DD у часовому поясі.
@@ -120,6 +123,16 @@ export function taskValidator(snap: TodoistSnapshot, base: Date, timeZone: strin
 		if (!ymd || hh === undefined) return ymd;
 		return Number(hh) < 24 && Number(mm) < 60 ? `${ymd}T${hh.padStart(2, "0")}:${mm}` : ymd;
 	};
+	// Нагадування: "before 60" → "before:60" (лише коли в дати виконання є час), дата з часом → YYYY-MM-DDTHH:MM.
+	const reminders = (v: unknown, dueHasTime: boolean): string[] => {
+		const out = (Array.isArray(v) ? v : []).map((x) => {
+			const rel = String(x).trim().match(/^before[ :]?(\d{1,4})$/);
+			if (rel) return dueHasTime && Number(rel[1]) > 0 ? `before:${Number(rel[1])}` : "";
+			const at = dateTime(x);
+			return at.includes("T") ? at : ""; // нагадування без часу Todoist не підтримує
+		});
+		return [...new Set(out.filter(Boolean))];
+	};
 	return (r) => {
 		const project = projects.has(String(r.project ?? "").trim()) ? String(r.project).trim() : "";
 		const priority = Number(String(r.priority ?? "").replace(/^p/, ""));
@@ -133,6 +146,7 @@ export function taskValidator(snap: TodoistSnapshot, base: Date, timeZone: strin
 				: [],
 			priority: priority >= 1 && priority <= 4 ? priority : 4,
 			due: dateTime(r.due),
+			reminders: reminders(r.reminders, dateTime(r.due).includes("T")),
 			// Дедлайн, що збігається з датою виконання, лише дублює її.
 			deadline: ((dl) => (dl && dl !== dateTime(r.due).slice(0, 10) ? dl : ""))(date(String(r.deadline ?? "").trim().split(/[ T@]/)[0])),
 		};
@@ -171,7 +185,7 @@ export async function triage(
 			duplicate_of: { type: "string" },
 			...taskFieldsSchema(snap),
 		},
-		required: ["quote", "title", "duplicate_of", "project", "labels", "priority", "due", "deadline"],
+		required: ["quote", "title", "duplicate_of", "project", "labels", "priority", "due", "deadline", "reminders"],
 		additionalProperties: false,
 	};
 	const schema = {
@@ -199,15 +213,23 @@ export async function triage(
 }
 
 // Опис полів задач для моделі редагування.
-export const EDIT_TASKS_HELP = `If tasks have Todoist fields (project, labels, priority, due, deadline), copy them unchanged unless the instruction changes them. Field meanings:
+export const EDIT_TASKS_HELP = `If tasks have Todoist fields (project, labels, priority, due, deadline, reminders), copy them unchanged unless the instruction changes them. Field meanings:
 ${TASK_FIELDS_HELP}
 Follow the author's <rules>.`;
 
 // ---------- Операції в Todoist ----------
 // Що з нотатки вже є в Todoist (за ключем задачі).
-export type InTodoist = Record<string, { id: string; item: TriageItem }>;
-// Без id — створити; з id і item — оновити (move: змінився проєкт); з id без item — видалити.
-export type TodoistOp = { key: string; item: TriageItem | null; id?: string; move?: boolean };
+export type InTodoist = Record<string, { id: string; item: TriageItem; reminderIds?: string[] }>;
+// Без id — створити; з id і item — оновити (move: змінився проєкт; reminders: перестворити нагадування,
+// oldReminderIds — що видалити); з id без item — видалити.
+export type TodoistOp = {
+	key: string;
+	item: TriageItem | null;
+	id?: string;
+	move?: boolean;
+	reminders?: boolean;
+	oldReminderIds?: string[];
+};
 
 const inTodoistKey = (noteId: string) => `notes/${noteId}.todoist.json`;
 
@@ -221,7 +243,9 @@ const sameItem = (a: TriageItem, b: TriageItem) =>
 	[...a.labels].sort().join() === [...b.labels].sort().join() &&
 	a.priority === b.priority &&
 	a.due === b.due &&
-	a.deadline === b.deadline;
+	a.deadline === b.deadline &&
+	sameReminders(a, b);
+const sameReminders = (a: TriageItem, b: TriageItem) => [...(a.reminders ?? [])].sort().join() === [...(b.reminders ?? [])].sort().join();
 
 // Що зробити в Todoist: змінені задачі оновити, нові створити, прибрані видалити.
 // Дублікати існуючих задач не створюємо; незмінені задачі пропускаємо.
@@ -233,7 +257,13 @@ export function planOps(items: TriageItem[], inTodoist: InTodoist): TodoistOp[] 
 		if (prev) {
 			kept.add(item.key!);
 			if (!sameItem(prev.item, item)) {
-				ops.push({ key: item.key!, item, id: prev.id, ...(prev.item.project !== item.project && { move: true }) });
+				ops.push({
+					key: item.key!,
+					item,
+					id: prev.id,
+					...(prev.item.project !== item.project && { move: true }),
+					...(!sameReminders(prev.item, item) && { reminders: true, oldReminderIds: prev.reminderIds ?? [] }),
+				});
 			}
 		} else if (!item.duplicateOf) {
 			ops.push({ key: item.key ?? "", item });
@@ -258,16 +288,28 @@ export function buildCommands(actionId: string, ops: TodoistOp[], description: s
 	});
 	return ops.flatMap((op, n) => {
 		const uuid = (suffix = "") => `${actionId}-${n}${suffix}`;
+		// Нагадування задачі (item_id може бути temp_id щойно створеної задачі в цьому ж пакеті).
+		const addReminders = (itemId: string, item: TriageItem) =>
+			(item.reminders ?? []).map((r, j) => ({
+				type: "reminder_add",
+				uuid: uuid(`r${j}`),
+				temp_id: `tmp-${actionId}-${n}r${j}`,
+				args: r.startsWith("before:")
+					? { item_id: itemId, type: "relative", minute_offset: Number(r.slice(7)) }
+					: { item_id: itemId, type: "absolute", due: { date: `${r}:00` } },
+			}));
 		if (!op.id) {
 			const { due, deadline, ...rest } = fields(op.item!);
 			const project_id = op.item!.project ? projectId(op.item!.project) : undefined;
+			const temp_id = `tmp-${actionId}-${n}`;
 			return [
 				{
 					type: "item_add",
 					uuid: uuid(),
-					temp_id: `tmp-${actionId}-${n}`,
+					temp_id,
 					args: { ...rest, description, ...(project_id && { project_id }), ...(due && { due }), ...(deadline && { deadline }) },
 				},
+				...addReminders(temp_id, op.item!),
 			];
 		}
 		if (!op.item) return [{ type: "item_delete", uuid: uuid(), args: { id: op.id } }];
@@ -275,6 +317,10 @@ export function buildCommands(actionId: string, ops: TodoistOp[], description: s
 		// Проєкт могли перейменувати чи видалити після тріажу: тоді задачу не переміщуємо.
 		const target = op.move ? projectId(op.item.project) : undefined;
 		if (target) cmds.push({ type: "item_move", uuid: uuid("m"), args: { id: op.id, project_id: target } });
+		if (op.reminders) {
+			(op.oldReminderIds ?? []).forEach((id, k) => cmds.push({ type: "reminder_delete", uuid: uuid(`rd${k}`), args: { id } }));
+			cmds.push(...addReminders(op.id, op.item));
+		}
 		return cmds;
 	});
 }
@@ -327,7 +373,12 @@ export async function applyAction(
 		if (!op.item) delete state[op.key];
 		else {
 			const taskId = op.id ?? res.temp_id_mapping[`tmp-${id}-${n}`];
-			if (taskId) state[op.key] = { id: taskId, item: op.item };
+			// ID нагадувань: нові — з temp_id_mapping, інакше лишаються попередні.
+			const reminderIds =
+				!op.id || op.reminders
+					? (op.item.reminders ?? []).map((_, j) => res.temp_id_mapping[`tmp-${id}-${n}r${j}`]).filter(Boolean)
+					: state[op.key]?.reminderIds;
+			if (taskId) state[op.key] = { id: taskId, item: op.item, ...(reminderIds?.length && { reminderIds }) };
 		}
 	});
 	await env.BUCKET.put(inTodoistKey(action.noteId), JSON.stringify(state));
@@ -367,6 +418,7 @@ export function formatTriage(items: TriageItem[]): string {
 				...i.labels.map((l) => `@${l}`),
 				i.due && `📅 ${i.due.replace("T", " ")}`,
 				i.deadline && `⏰ ${i.deadline}`,
+				...(i.reminders ?? []).map((r) => (r.startsWith("before:") ? `🔔 −${r.slice(7)} хв` : `🔔 ${r.replace("T", " ")}`)),
 			].filter(Boolean);
 			return `• ${i.title} ${extra.join(" ")}`;
 		})
