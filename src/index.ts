@@ -1,7 +1,7 @@
 import { askJson, parseJsonObject, toBase64 } from "./llm";
 import { buildCaption, CAPTION_MAX, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote, TEXT_CAPTION_MAX, type Meta } from "./note";
 import { applySetup, planSetup, setupReport, type SetupPlan } from "./setup";
-import { openSteps } from "./steps";
+import { openSteps, type Steps } from "./steps";
 import { NO_PREVIEW, receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
 import {
 	applyAction,
@@ -61,7 +61,8 @@ type State = {
 	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
 	noteId?: string; // id нотатки для редагування й дії Todoist, створюється до відправки
 	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено
-	setup?: { id: string; plan: SetupPlan; ok?: boolean } | null; // команди налаштування Todoist (null — немає)
+	setup?: { id: string; plan: SetupPlan } | null; // команди налаштування Todoist (null — немає)
+	setupApplied?: boolean; // команди виконано (false — не вдалося навіть на останній спробі)
 	photoAttached?: boolean; // (фото) фото додане коментарем до створених задач
 };
 
@@ -219,7 +220,8 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	const stateKey = `${key}.state.json`;
-	const { state, save, step } = await openSteps<State>(env, stateKey, lastAttempt);
+	const run = await openSteps<State>(env, stateKey, lastAttempt);
+	const { step } = run;
 	const recordedAt = formatRecordedAt(key, env.TIMEZONE);
 	const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
 	const isText = contentType.startsWith("text/"); // написаний текст: він і є транскриптом
@@ -277,7 +279,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	// Команди налаштування Todoist («створи проєкт…») — до тріажу, щоб задачі вже бачили новий проєкт.
-	const setup = await runSetup(env, transcript, state, save, lastAttempt);
+	const setup = await runSetup(env, transcript, run);
 
 	// Тріаж задач для Todoist. Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
 	const triaged = await step("triage", async () => {
@@ -378,8 +380,8 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		await deleteOriginal(env, obj.customMetadata); // інструкцію з каналу прибираємо
 		await env.BUCKET.delete([key, stateKey]);
 	};
-	const state: State = (await (await env.BUCKET.get(stateKey))?.json<State>()) ?? {};
-	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
+	const run = await openSteps<State>(env, stateKey, lastAttempt);
+	const { state, step } = run;
 
 	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
 	if (!note) {
@@ -388,30 +390,26 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		return;
 	}
 
-	if (state.transcript === undefined) {
+	const instruction = await step("transcript", async () => {
 		await markEditing(env, note.messageId, true);
 		// Текстова відповідь на нотатку — без Whisper.
 		const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
-		state.transcript = contentType.startsWith("text/")
-			? (await obj.text()).trim()
-			: await transcribe(env, await obj.arrayBuffer(), contentType);
-		await save();
-	}
-	const instruction = state.transcript;
+		return contentType.startsWith("text/") ? (await obj.text()).trim() : await transcribe(env, await obj.arrayBuffer(), contentType);
+	});
 	// Команди налаштування Todoist — до правки, щоб модель уже бачила нові назви проєктів і міток.
-	const setup = await runSetup(env, instruction, state, save, lastAttempt);
-	if (state.meta === undefined) {
+	const setup = await runSetup(env, instruction, run);
+	// Крок зберігає meta і triage разом: triage пишемо в стан до збереження кроку.
+	const meta = await step("meta", async () => {
 		const snap = await todoistSnapshot(env);
 		const edited = instruction ? await editNote(env, note, instruction, snap) : null;
 		if (instruction && !edited && !lastAttempt) throw new Error("All edit models failed");
 		// Інструкція була лише командою налаштування: нотатку лишаємо, але підпис оновимо (звіт про зміни).
 		const keepNote = setup.length > 0 && (!edited || (edited.meta.discard && edited.meta.discard !== "delete"));
 		// Порожня інструкція або (на останній спробі) збій моделей: нотатку лишаємо як є.
-		state.meta = keepNote ? note.meta : (edited?.meta ?? { title: "", summary: "", ideas: [], tasks: [], discard: "empty" });
 		state.triage = keepNote ? note.triage : (edited?.triage ?? null);
-		await save();
-	}
-	const meta = state.meta;
+		return keepNote ? note.meta : (edited?.meta ?? { title: "", summary: "", ideas: [], tasks: [], discard: "empty" });
+	});
+	const triaged = state.triage ?? null;
 	if (meta.discard === "delete") {
 		// «Видали нотатку»: відкриті задачі в Todoist, саму нотатку в каналі й записи в R2.
 		const ids = Object.values(await getInTodoist(env, noteId)).map((t) => t.id);
@@ -432,48 +430,39 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	}
 
 	// Порівнюємо з тим, що вже є в Todoist: змінені задачі оновлюємо, нові створюємо, прибрані видаляємо.
-	const inTodoist = await getInTodoist(env, noteId);
-	if (state.actionId === undefined) {
-		const ops = state.triage ? planOps(state.triage, inTodoist) : [];
-		if (ops.length) {
-			const recorded = formatRecordedAt(String(note.recordedTs), env.TIMEZONE);
-			state.actionId = await createAction(env, ops, `🎙 ${meta.title} (${recorded})`, noteId);
-			const messageUrl = telegramMessageUrl(env.CHAT_ID, note.messageId);
-			if (messageUrl) await setActionMessage(env, state.actionId, messageUrl);
-			const n = (f: (op: TodoistOp) => boolean) => ops.filter(f).length;
-			console.log(
-				`todoist action ${state.actionId}: ${n((o) => !o.id)} create, ${n((o) => !!o.id && !!o.item)} update, ${n((o) => !o.item)} delete`,
-			);
-		} else {
-			state.actionId = "";
-		}
-		await save();
-	}
+	// "" — змін у Todoist немає.
+	const actionId = await step("actionId", async () => {
+		const ops = triaged ? planOps(triaged, await getInTodoist(env, noteId)) : [];
+		if (!ops.length) return "";
+		const recorded = formatRecordedAt(String(note.recordedTs), env.TIMEZONE);
+		const id = await createAction(env, ops, `🎙 ${meta.title} (${recorded})`, noteId);
+		const messageUrl = telegramMessageUrl(env.CHAT_ID, note.messageId);
+		if (messageUrl) await setActionMessage(env, id, messageUrl);
+		const n = (f: (op: TodoistOp) => boolean) => ops.filter(f).length;
+		console.log(`todoist action ${id}: ${n((o) => !o.id)} create, ${n((o) => !!o.id && !!o.item)} update, ${n((o) => !o.item)} delete`);
+		return id;
+	});
 
-	if (state.actionId && state.todoistApplied === undefined) {
-		state.todoistApplied = await applyNow(env, state.actionId, lastAttempt);
-		await save();
-	}
+	const applied = actionId ? await step("todoistApplied", () => applyOnce(env, actionId), { onFinalFailure: () => false }) : undefined;
 
 	const allSetup = [...(note.setup ?? []), ...setup];
-	if (!state.captionEdited) {
-		const notice = captionNotice(allSetup, state.todoistApplied === false);
-		await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, note, meta, state.triage ?? null, notice)));
-		state.captionEdited = true;
-		await save();
-	}
+	await step("captionEdited", async () => {
+		const notice = captionNotice(allSetup, applied === false);
+		await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, note, meta, triaged, notice)));
+		return true;
+	});
 
 	const updated: Note = {
 		...note,
 		edits: [...note.edits, instruction],
 		meta,
-		triage: state.triage ?? null,
-		actionId: state.actionId || undefined,
+		triage: triaged,
+		actionId: actionId || undefined,
 		...(allSetup.length && { setup: allSetup }),
 	};
 	await env.BUCKET.put(noteKey(noteId), JSON.stringify(updated));
 	// Стара дія (з часів кнопки, якщо її не натиснули) більше не актуальна.
-	if (note.actionId && note.actionId !== state.actionId) await deleteAction(env, note.actionId);
+	if (note.actionId && note.actionId !== actionId) await deleteAction(env, note.actionId);
 	console.log(`note ${noteId} edited`);
 	await cleanup(note.messageId);
 }
@@ -488,27 +477,22 @@ const captionNotice = (setup: string[] | undefined, failed: boolean) =>
 
 // Команди налаштування з тексту: план зберігається в стані, виконання ідемпотентне (сталі uuid).
 // Повертає рядки звіту для підпису ([] — команд не було).
-async function runSetup(env: Env, text: string, state: State, save: () => Promise<unknown>, lastAttempt: boolean): Promise<string[]> {
-	if (state.setup === undefined) {
-		const plan = await planSetup(env, text, lastAttempt);
-		state.setup = plan.changes.length ? { id: crypto.randomUUID(), plan } : null;
-		await save();
-	}
-	const s = state.setup;
+async function runSetup(env: Env, text: string, run: Steps<State>): Promise<string[]> {
+	const s = await run.step("setup", async () => {
+		const plan = await planSetup(env, text, run.lastAttempt);
+		return plan.changes.length ? { id: crypto.randomUUID(), plan } : null;
+	});
 	if (!s) return [];
-	if (s.ok === undefined) {
-		try {
+	const ok = await run.step(
+		"setupApplied",
+		async () => {
 			await applySetup(env, s.id, s.plan);
-			s.ok = true;
-		} catch (err) {
-			if (!lastAttempt) throw err;
-			console.error(`todoist setup ${s.id} failed:`, err);
-			s.ok = false;
-		}
-		console.log(`todoist setup ${s.id}: ${s.plan.changes.length} changes, ${s.ok ? "applied" : "failed"}`);
-		await save();
-	}
-	return s.ok ? setupReport(s.plan) : [SETUP_FAILED];
+			console.log(`todoist setup ${s.id}: ${s.plan.changes.length} changes, applied`);
+			return true;
+		},
+		{ onFinalFailure: () => false },
+	);
+	return ok ? setupReport(s.plan) : [SETUP_FAILED];
 }
 const NO_BUTTONS = { inline_keyboard: [] }; // прибирає кнопку (у старих нотатках)
 
@@ -518,16 +502,6 @@ async function applyOnce(env: Env, actionId: string): Promise<true> {
 	const res = await applyAction(env, actionId);
 	if (res.status === "applied") console.log(`todoist action ${actionId} applied: ${res.count} ops`);
 	return true;
-}
-
-async function applyNow(env: Env, actionId: string, lastAttempt: boolean): Promise<boolean> {
-	try {
-		return await applyOnce(env, actionId);
-	} catch (err) {
-		if (!lastAttempt) throw err;
-		console.error(`todoist action ${actionId} failed:`, err);
-		return false;
-	}
 }
 
 // Кнопка «Додати в Todoist» лишилась лише в нотатках, опублікованих до автододавання.

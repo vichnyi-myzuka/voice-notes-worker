@@ -77,7 +77,7 @@ npx wrangler deploy
 
 - `npm run lint` — oxlint (`src`, `test`).
 - `npm run typecheck` — `tsc --noEmit`.
-- `npm test` — vitest: unit-тести кроків обробки (`test/steps.test.ts`), наскрізний `processNote` з підміненими OpenAI і Telegram (`test/process-note.test.ts`: публікація й повтор після збою без повторного LLM), чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyAction` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `test/todoist.test.ts`. Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
+- `npm test` — vitest: unit-тести кроків обробки (`test/steps.test.ts`), наскрізні `processNote` і `processEdit` з підміненими OpenAI і Telegram (`test/process-note.test.ts`: публікація, правка й повтор після збою без повторного LLM), чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyAction` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `test/todoist.test.ts`. Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
 - `npm run check` — усе разом (lint + typecheck + test).
 
 Git-хуки лежать в `.githooks/` і вмикаються автоматично після `npm install` (скрипт `prepare` ставить `core.hooksPath`):
