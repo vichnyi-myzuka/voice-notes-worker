@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCaption, formatCaption, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote } from "../src/note";
+import { buildCaption, formatCaption, TEXT_CAPTION_MAX, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote } from "../src/note";
 import { taskValidator, type TodoistSnapshot, type TriageItem } from "../src/todoist";
 
 const snap: TodoistSnapshot = {
@@ -136,14 +136,32 @@ describe("taskLinks", () => {
 		expect(links[0].offset).toBeLessThan(links[1].offset);
 		expect(links.map((l) => l.url)).toEqual([url("1"), url("2")]);
 	});
-	it("обрізані підписом рядки не мають посилань", () => {
+	it("довге summary скорочується, а всі задачі лишаються з посиланнями", () => {
 		const titles = ["Перша задача", "Друга задача", "Третя задача", "Четверта задача"];
-		const { triage, caption } = make("дуже ".repeat(190), titles);
-		expect(caption).toContain("…");
-		expect(caption).not.toContain("Четверта задача");
+		const { triage, caption } = make("дуже ".repeat(190), titles, ["Думка, яка не влізе"]);
+		expect(caption.length).toBeLessThanOrEqual(1024);
+		expect(caption).not.toContain("Ключові думки");
 		const links = taskLinks(caption, triage, { t1: "1", t2: "2", t3: "3", t4: "4" });
-		expect(links.length).toBeLessThan(titles.length);
-		for (const t of texts(caption, links)) expect(titles).toContain(t);
+		expect(texts(caption, links)).toEqual(titles);
+	});
+	it("задачі, що не влазять, замінює рядок «…і ще N у Todoist»", () => {
+		const titles = Array.from({ length: 30 }, (_, i) => `Задача номер ${i + 1} з досить довгою назвою`);
+		const { triage, caption } = make("Короткий опис.", titles);
+		expect(caption.length).toBeLessThanOrEqual(1024);
+		const shown = titles.filter((t) => caption.includes(`• ${t} →`)).length;
+		expect(shown).toBeGreaterThan(5);
+		expect(shown).toBeLessThan(30);
+		expect(caption).toContain(`…і ще ${30 - shown} у Todoist`);
+		expect(caption).toContain("Короткий опис.");
+		const links = taskLinks(caption, triage, Object.fromEntries(titles.map((_, i) => [`t${i + 1}`, String(i)])));
+		expect(links.length).toBe(shown);
+	});
+	it("текстова нотатка вміщує більше (TEXT_CAPTION_MAX)", () => {
+		const titles = Array.from({ length: 30 }, (_, i) => `Задача номер ${i + 1} з досить довгою назвою`);
+		const triage = titles.map((t, i) => item(t, { key: `t${i + 1}` }));
+		const caption = buildCaption({ title: "Н", summary: "С", ideas: [], tasks: titles }, triage, Date.parse("2026-11-09T10:00:00Z"), "Europe/Kyiv", "", TEXT_CAPTION_MAX);
+		expect(caption.length).toBeLessThanOrEqual(TEXT_CAPTION_MAX);
+		expect(titles.filter((t) => caption.includes(`• ${t} →`)).length).toBe(30);
 	});
 	it("без «✅ Задачі:» — порожній список", () => {
 		const caption = "Назва\n\nОпис\n\n#листопад_2026";

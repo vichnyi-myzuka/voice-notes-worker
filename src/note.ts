@@ -6,7 +6,8 @@ import { formatTriage, taskUrl, type TriageItem } from "./todoist";
 // discard: "delete" — лише в режимі редагування («видали нотатку»).
 export type Meta = { title: string; summary: string; ideas: string[]; tasks: string[]; discard?: "empty" | "cancelled" | "delete" };
 
-const CAPTION_MAX = 1024;
+export const CAPTION_MAX = 1024; // ліміт підпису до аудіо в Telegram
+export const TEXT_CAPTION_MAX = 3500; // текстова нотатка (ліміт повідомлення 4096): решта — під цитату оригіналу
 
 export function parseMeta(text: string): Meta {
 	const json = parseJsonObject(text);
@@ -71,9 +72,39 @@ export function buildCaption(
 	ts: number,
 	timeZone: string,
 	notice = "",
+	max = CAPTION_MAX,
 ): string {
 	const tail = [notice, hashtags(new Date(ts), timeZone, triaged)].filter(Boolean).join("\n\n");
-	return `${truncate(formatCaption(meta, triaged), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
+	return `${fitCaption(meta, triaged, max - tail.length - 2)}\n\n${tail}`;
+}
+
+const SUMMARY_MIN = 150; // коротше summary не ріжемо: далі вже скорочуємо список задач
+
+// Підпис у межах room. Задачі важливіші за решту: спершу прибираємо ключові думки, потім скорочуємо
+// summary, і лише тоді обрізаємо список задач рядком «…і ще N» (а не посеред задачі).
+export function fitCaption(meta: Meta, triaged: TriageItem[] | null, room: number): string {
+	const full = formatCaption(meta, triaged);
+	if (full.length <= room) return full;
+	const lines = (triaged?.length ? formatTriage(triaged) : meta.tasks.map((t) => `• ${t}`).join("\n")).split("\n").filter(Boolean);
+	const caption = (summary: string, shown: number) => {
+		const parts = [meta.title, summary];
+		if (lines.length) {
+			const rest = lines.length - shown;
+			const more = rest ? [`…і ще ${rest}${triaged?.length ? " у Todoist" : ""}`] : [];
+			parts.push(`✅ Задачі:\n${[...lines.slice(0, shown), ...more].join("\n")}`);
+		}
+		return parts.join("\n\n");
+	};
+	// Усі задачі з summary, скороченим до того, що лишилось.
+	const withoutSummary = caption("", lines.length).length;
+	if (room - withoutSummary >= SUMMARY_MIN) return caption(truncate(meta.summary, room - withoutSummary), lines.length);
+	// Summary мінімальне, задач — скільки влізе.
+	const summary = truncate(meta.summary, SUMMARY_MIN);
+	for (let shown = lines.length - 1; shown >= 1; shown--) {
+		const c = caption(summary, shown);
+		if (c.length <= room) return c;
+	}
+	return truncate(caption(summary, Math.min(1, lines.length)), room);
 }
 
 // Текстова нотатка: підпис, а під ним оригінальний текст у згорнутій цитаті (як аудіо в голосовій нотатці).

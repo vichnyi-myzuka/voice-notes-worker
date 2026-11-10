@@ -1,5 +1,5 @@
 import { askJson } from "./llm";
-import { buildCaption, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote, type Meta } from "./note";
+import { buildCaption, CAPTION_MAX, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote, TEXT_CAPTION_MAX, type Meta } from "./note";
 import { applySetup, planSetup, setupReport, type SetupPlan } from "./setup";
 import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
 import {
@@ -282,7 +282,8 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
-		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE, captionNotice(setup, false));
+		const max = isText ? TEXT_CAPTION_MAX : CAPTION_MAX;
+		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE, captionNotice(setup, false), max);
 		state.messageId = isText
 			? await (({ text, entities }) => tgSendText(env, text, entities))(textNote(caption, state.transcript))
 			: await tgSendNote(env, source, meta.title, caption);
@@ -434,7 +435,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	const allSetup = [...(note.setup ?? []), ...setup];
 	if (!state.captionEdited) {
 		const notice = captionNotice(allSetup, state.todoistApplied === false);
-		await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, meta, state.triage ?? null, note.recordedTs, notice)));
+		await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, note, meta, state.triage ?? null, notice)));
 		state.captionEdited = true;
 		await save();
 	}
@@ -529,21 +530,21 @@ async function markInTodoist(env: Env, noteId: string, failed = false): Promise<
 	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
 	if (!note) return;
 	const notice = captionNotice(note.setup, failed);
-	await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, note.meta, note.triage, note.recordedTs, notice)));
+	await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, note, note.meta, note.triage, notice)));
 }
 
 // Підпис після виконання в Todoist: назви задач — посилання, 🔁 лише в задач, де Todoist прийняв повтор.
 async function appliedCaption(
 	env: Env,
 	noteId: string,
+	note: Note,
 	meta: Meta,
 	triage: TriageItem[] | null,
-	ts: number,
 	notice: string,
 ): Promise<[string, object[]]> {
 	const inTodoist = await getInTodoist(env, noteId);
 	const shown = withAppliedRecurrence(triage, inTodoist);
-	const caption = buildCaption(meta, shown, ts, env.TIMEZONE, notice);
+	const caption = buildCaption(meta, shown, note.recordedTs, env.TIMEZONE, notice, note.text ? TEXT_CAPTION_MAX : CAPTION_MAX);
 	const ids = Object.fromEntries(Object.entries(inTodoist).map(([key, v]) => [key, v.id]));
 	return [caption, taskLinks(caption, shown, ids)];
 }
