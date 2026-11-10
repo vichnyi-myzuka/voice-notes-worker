@@ -1,5 +1,6 @@
 import { askJson } from "./llm";
 import { buildCaption, parseEditedNote, parseMeta, plainTasks, taskLinks, type Meta } from "./note";
+import { applySetup, planSetup, setupReport, type SetupPlan } from "./setup";
 import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote } from "./telegram";
 import {
 	applyAction,
@@ -57,6 +58,7 @@ type State = {
 	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
 	noteId?: string; // id нотатки для редагування й дії Todoist, створюється до відправки
 	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено
+	setup?: { id: string; plan: SetupPlan; ok?: boolean } | null; // команди налаштування Todoist (null — немає)
 };
 
 // Опублікована нотатка, зберігається для редагування (`notes/<id>.json`, 7 днів за lifecycle бакета).
@@ -69,6 +71,7 @@ type Note = {
 	actionId?: string;
 	messageId: number;
 	recordedTs: number;
+	setup?: string[]; // зміни налаштувань Todoist, зроблені цією нотаткою та її правками (для підпису)
 };
 const noteKey = (id: string) => `notes/${id}.json`;
 const noteByMessageKey = (messageId: number | string) => `notes/msg-${messageId}`;
@@ -254,6 +257,9 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		return;
 	}
 
+	// Команди налаштування Todoist («створи проєкт…») — до тріажу, щоб задачі вже бачили новий проєкт.
+	const setup = await runSetup(env, state.transcript, state, save, lastAttempt);
+
 	// Тріаж задач для Todoist. Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
 	if (state.triage === undefined) {
 		const snap = meta.tasks.length ? await todoistSnapshot(env) : null;
@@ -273,7 +279,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
-		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE);
+		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE, captionNotice(setup, false));
 		state.messageId = await tgSendNote(env, source, meta.title, caption);
 		state.audioSent = true;
 		await save();
@@ -297,6 +303,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 			actionId: state.actionId || undefined,
 			messageId: state.messageId,
 			recordedTs: recordedTs(key),
+			...(setup.length && { setup }),
 		};
 		await env.BUCKET.put(noteKey(state.noteId), JSON.stringify(note));
 		await env.BUCKET.put(noteByMessageKey(state.messageId), state.noteId);
@@ -309,7 +316,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		await save();
 	}
 	if (state.actionId && !state.todoistMarked) {
-		await markInTodoist(env, state.noteId, state.todoistApplied ? "" : TODOIST_FAILED);
+		await markInTodoist(env, state.noteId, !state.todoistApplied);
 		state.todoistMarked = true;
 		await save();
 	}
@@ -361,13 +368,17 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		await save();
 	}
 	const instruction = state.transcript;
+	// Команди налаштування Todoist — до правки, щоб модель уже бачила нові назви проєктів і міток.
+	const setup = await runSetup(env, instruction, state, save, lastAttempt);
 	if (state.meta === undefined) {
 		const snap = await todoistSnapshot(env);
 		const edited = instruction ? await editNote(env, note, instruction, snap) : null;
 		if (instruction && !edited && !lastAttempt) throw new Error("All edit models failed");
+		// Інструкція була лише командою налаштування: нотатку лишаємо, але підпис оновимо (звіт про зміни).
+		const keepNote = setup.length > 0 && (!edited || (edited.meta.discard && edited.meta.discard !== "delete"));
 		// Порожня інструкція або (на останній спробі) збій моделей: нотатку лишаємо як є.
-		state.meta = edited?.meta ?? { title: "", summary: "", ideas: [], tasks: [], discard: "empty" };
-		state.triage = edited?.triage ?? null;
+		state.meta = keepNote ? note.meta : (edited?.meta ?? { title: "", summary: "", ideas: [], tasks: [], discard: "empty" });
+		state.triage = keepNote ? note.triage : (edited?.triage ?? null);
 		await save();
 	}
 	const meta = state.meta;
@@ -414,9 +425,10 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		await save();
 	}
 
+	const allSetup = [...(note.setup ?? []), ...setup];
 	if (!state.captionEdited) {
 		const ids = await todoistIds(env, noteId);
-		const notice = state.todoistApplied === false ? TODOIST_FAILED : "";
+		const notice = captionNotice(allSetup, state.todoistApplied === false);
 		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice);
 		await editNoteMessage(env, note.messageId, caption, taskLinks(caption, state.triage ?? null, ids));
 		state.captionEdited = true;
@@ -429,6 +441,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		meta,
 		triage: state.triage ?? null,
 		actionId: state.actionId || undefined,
+		...(allSetup.length && { setup: allSetup }),
 	};
 	await env.BUCKET.put(noteKey(noteId), JSON.stringify(updated));
 	// Стара дія (з часів кнопки, якщо її не натиснули) більше не актуальна.
@@ -439,6 +452,36 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 
 // ---------- Todoist ----------
 const TODOIST_FAILED = "⚠️ Не вдалося оновити Todoist";
+const SETUP_FAILED = "⚠️ Не вдалося змінити проєкти чи мітки";
+
+// Блок під нотаткою: зміни налаштувань Todoist і збій задач.
+const captionNotice = (setup: string[] | undefined, failed: boolean) =>
+	[setup?.length ? `⚙️ Todoist:\n${setup.join("\n")}` : "", failed ? TODOIST_FAILED : ""].filter(Boolean).join("\n\n");
+
+// Команди налаштування з тексту: план зберігається в стані, виконання ідемпотентне (сталі uuid).
+// Повертає рядки звіту для підпису ([] — команд не було).
+async function runSetup(env: Env, text: string, state: State, save: () => Promise<unknown>, lastAttempt: boolean): Promise<string[]> {
+	if (state.setup === undefined) {
+		const plan = await planSetup(env, text, lastAttempt);
+		state.setup = plan.changes.length ? { id: crypto.randomUUID(), plan } : null;
+		await save();
+	}
+	const s = state.setup;
+	if (!s) return [];
+	if (s.ok === undefined) {
+		try {
+			await applySetup(env, s.id, s.plan);
+			s.ok = true;
+		} catch (err) {
+			if (!lastAttempt) throw err;
+			console.error(`todoist setup ${s.id} failed:`, err);
+			s.ok = false;
+		}
+		console.log(`todoist setup ${s.id}: ${s.plan.changes.length} changes, ${s.ok ? "applied" : "failed"}`);
+		await save();
+	}
+	return s.ok ? setupReport(s.plan) : [SETUP_FAILED];
+}
 const NO_BUTTONS = { inline_keyboard: [] }; // прибирає кнопку (у старих нотатках)
 
 // Виконує дію в Todoist одразу. Збій — ретрай черги (сталі uuid не дадуть дублів);
@@ -478,11 +521,11 @@ async function handleCallback(env: Env, cb: TgCallback): Promise<void> {
 }
 
 // Після виконання дії: назви задач, що вже в Todoist, — посилання на них; кнопки прибираються.
-async function markInTodoist(env: Env, noteId: string, notice = ""): Promise<void> {
+async function markInTodoist(env: Env, noteId: string, failed = false): Promise<void> {
 	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
 	if (!note) return;
 	const ids = await todoistIds(env, noteId);
-	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, notice);
+	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, captionNotice(note.setup, failed));
 	await editNoteMessage(env, note.messageId, caption, taskLinks(caption, note.triage, ids));
 }
 
@@ -538,7 +581,8 @@ Rules:
 - tasks: concrete action items, todos, reminders and wishes for later ("колись хочу прочитати…") mentioned in the note, up to 10 items, each under 12 words and starting with a verb; include deadlines or people if mentioned. Keep separate actions as separate items.
 - Do not create vague "start" tasks ("почати роботу над…", "зайнятися…", "працювати над проєктом…") when the note also names a concrete action for the same thing. Merge them into one concrete task and keep the timing from the vague one. Example: "19 листопада треба почати новий проєкт, там треба розгорнути інстанс на Cloudflare" → one task: "Розгорнути інстанс на Cloudflare для нового проєкту" (the 19 November timing belongs to it).
 - If there are no ideas or no tasks, return an empty array for that field. Do not invent anything that is not in the transcript.
-- discard: normally "none". Use "empty" when the transcript has no meaningful content: silence, noise, filler, or typical speech-recognition hallucinations on silence ("Дякую за перегляд", "Субтитри зроблені…", "Продовження наступне", a single repeated word). Use "cancelled" when the author explicitly asks to cancel, discard or not save this whole recording ("скасуй", "відміна, не зберігай", "видали цей запис", "забудь, не надсилай"), usually at the end. A cancel phrase that is about a real-world thing ("скасувати зустріч", "відмінити підписку") is a task, not "cancelled". When discard is not "none", the other fields may be empty.`;
+- discard: normally "none". Use "empty" when the transcript has no meaningful content: silence, noise, filler, or typical speech-recognition hallucinations on silence ("Дякую за перегляд", "Субтитри зроблені…", "Продовження наступне", a single repeated word). Use "cancelled" when the author explicitly asks to cancel, discard or not save this whole recording ("скасуй", "відміна, не зберігай", "видали цей запис", "забудь, не надсилай"), usually at the end. A cancel phrase that is about a real-world thing ("скасувати зустріч", "відмінити підписку") is a task, not "cancelled". When discard is not "none", the other fields may be empty.
+- Commands that change the Todoist setup (create, rename or delete a project or a label, change its description: "створи проєкт Спорт", "видали мітку Office") are carried out automatically: never list them as tasks, mention them briefly in the summary, and never discard such a note as "empty".`;
 
 // Structured output: модель повертає JSON саме такої форми.
 const SUMMARY_SCHEMA = {
@@ -582,6 +626,7 @@ Tasks: return every task that should remain, in order. An existing task keeps it
 Keep the summary and ideas consistent with the edited note: if the instruction changes something they mention (a date, a removed task), update that part, otherwise leave them as is.
 Change a task's title only when the instruction asks to rename or reword it. Moving a task in time ("перенеси на п'ятницю", "зроби на сьогодні") changes only due/deadline and never turns into a title like "Перенести …".
 ${EDIT_TASKS_HELP}
+Commands in the instruction that change the Todoist setup (create, rename or delete a project or a label, change its description) are carried out separately and are already applied: never turn them into tasks; if the instruction has nothing else, return the note unchanged with discard "none". If a task's project or label was renamed, use the new name from <projects> / <labels>.
 Relative dates in the instruction ("сьогодні", "завтра", "в п'ятницю") are counted from the edit date; in the original transcript, from the recording date.
 In editing mode, discard means: "delete" if the author asks to delete the whole note ("видали нотатку", "видали цей запис повністю", "видали все") — not when they ask to remove one or some tasks, that is a normal edit; "cancelled" if the author cancels this edit itself ("скасуй", "нічого не міняй"); "empty" if the instruction has no meaningful content; otherwise "none".`;
 
