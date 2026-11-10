@@ -76,6 +76,20 @@ export function buildCaption(
 	return `${truncate(formatCaption(meta, triaged), CAPTION_MAX - tail.length - 2)}\n\n${tail}`;
 }
 
+// Текстова нотатка: підпис, а під ним оригінальний текст у згорнутій цитаті (як аудіо в голосовій нотатці).
+// Ліміт повідомлення Telegram — 4096 символів (UTF-16); довгий оригінал обрізається.
+const TEXT_MAX = 4096;
+export function textNote(caption: string, original: string, entities: object[] = []): { text: string; entities: object[] } {
+	const room = TEXT_MAX - caption.length - 2;
+	let cut = room - 1;
+	if (/[\uD800-\uDBFF]/.test(original[cut - 1] ?? "")) cut--; // не розрізаємо emoji (сурогатну пару)
+	const quote = original.length > room ? `${original.slice(0, cut)}…` : original;
+	return {
+		text: `${caption}\n\n${quote}`,
+		entities: [...entities, { type: "expandable_blockquote", offset: caption.length + 2, length: quote.length }],
+	};
+}
+
 // Telegram caption_entities: назви задач, що вже в Todoist, стають посиланнями на них.
 // Шукаємо рядки «• <назва> →» по черзі після заголовка задач; обрізане підписом — без посилання.
 // offset/length у UTF-16, як і довжина рядків у JS.

@@ -30,13 +30,63 @@ describe("receiveTelegramVoice", () => {
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 
-	it("текст без відповіді на нотатку в каналі ігнорується", async () => {
-		const fetchSpy = vi.fn();
+	it.each([
+		["порожній текст", { ...base, chat: { id: -1004390223227, type: "channel" }, text: "" }],
+		["лише пробіли", { ...base, chat: { id: -1004390223227, type: "channel" }, text: " \n\t " }],
+		["команда /start у каналі", { ...base, chat: { id: -1004390223227, type: "channel" }, text: "/start" }],
+		["команда з аргументами", { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "/help me" }],
+		["текст від чужого в приваті", { ...base, chat: { id: 1, type: "private" }, from: { id: 1 }, text: "привіт" }],
+		["текст в іншому каналі", { ...base, chat: { id: -1001, type: "channel" }, text: "привіт" }],
+		["текст у групі", { ...base, chat: { id: -5, type: "group" }, from: { id: 230295237 }, text: "привіт" }],
+		["текст з підписом у каналі", { ...base, chat: { id: -1004390223227, type: "channel" }, caption: "x", text: "привіт" }],
+	])("текст не стає нотаткою: %s", async (_, msg) => {
+		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
 		vi.stubGlobal("fetch", fetchSpy);
 		const store = vi.fn();
-		await receiveTelegramVoice(env, { ...base, chat: { id: -1004390223227, type: "channel" }, text: "просто текст" }, store);
+		await receiveTelegramVoice(env, msg, store);
 		expect(store).not.toHaveBeenCalled();
 		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+
+	it("/start від власника в приваті — лише відповідь, без нотатки", async () => {
+		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
+		vi.stubGlobal("fetch", fetchSpy);
+		const store = vi.fn();
+		await receiveTelegramVoice(env, { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "/start" }, store);
+		expect(store).not.toHaveBeenCalled();
+		expect(fetchSpy).toHaveBeenCalledOnce();
+		expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain("sendMessage");
+	});
+
+	it("звичайний текст у каналі — нова нотатка з даними для видалення", async () => {
+		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
+		vi.stubGlobal("fetch", fetchSpy);
+		const store = vi.fn();
+		await receiveTelegramVoice(env, { ...base, message_id: 9, chat: { id: -1004390223227, type: "channel" }, text: "Купити хліб і зателефонувати мамі" }, store);
+		expect(store).toHaveBeenCalledOnce();
+		const [key, body, meta] = store.mock.calls[0];
+		expect(key).toMatch(/^1000-[0-9a-f]{8}\.txt$/);
+		expect(new TextDecoder().decode(body)).toBe("Купити хліб і зателефонувати мамі");
+		expect(meta).toEqual({
+			contentType: "text/plain; charset=utf-8",
+			kind: "text",
+			deleteChatId: "-1004390223227",
+			deleteMessageId: "9",
+		});
+		expect(fetchSpy).toHaveBeenCalledOnce();
+		expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain("setMessageReaction");
+	});
+
+	it("звичайний текст від власника в приваті — нотатка без даних для видалення", async () => {
+		vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true })));
+		const store = vi.fn();
+		await receiveTelegramVoice(env, { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "ідея для проєкту" }, store);
+		expect(store).toHaveBeenCalledOnce();
+		const [key, , meta] = store.mock.calls[0];
+		expect(key).toMatch(/\.txt$/);
+		expect(meta).toEqual({ contentType: "text/plain; charset=utf-8", kind: "text" });
+		expect(meta).not.toHaveProperty("deleteMessageId");
+		expect(meta).not.toHaveProperty("deleteChatId");
 	});
 
 	it("текстова відповідь на нотатку в каналі — інструкція редагування без завантаження файлу", async () => {

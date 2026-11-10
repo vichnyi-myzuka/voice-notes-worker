@@ -1,7 +1,7 @@
 import { askJson } from "./llm";
-import { buildCaption, parseEditedNote, parseMeta, plainTasks, taskLinks, type Meta } from "./note";
+import { buildCaption, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote, type Meta } from "./note";
 import { applySetup, planSetup, setupReport, type SetupPlan } from "./setup";
-import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote } from "./telegram";
+import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
 import {
 	applyAction,
 	createAction,
@@ -71,6 +71,7 @@ type Note = {
 	actionId?: string;
 	messageId: number;
 	recordedTs: number;
+	text?: boolean; // текстова нотатка: повідомлення без аудіо, оригінал — у цитаті під підписом
 	setup?: string[]; // зміни налаштувань Todoist, зроблені цією нотаткою та її правками (для підпису)
 };
 const noteKey = (id: string) => `notes/${id}.json`;
@@ -203,6 +204,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
 	const recordedAt = formatRecordedAt(key, env.TIMEZONE);
 	const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
+	const isText = contentType.startsWith("text/"); // написаний текст: він і є транскриптом
 	// Тіло об'єкта R2 читається лише раз, тож кешуємо.
 	let data: ArrayBuffer | undefined;
 	const read = async () => (data ??= await obj.arrayBuffer());
@@ -240,7 +242,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	}
 
 	if (state.transcript === undefined) {
-		state.transcript = await transcribe(env, await read(), contentType);
+		state.transcript = isText ? (await obj.text()).trim() : await transcribe(env, await read(), contentType);
 		await save();
 	}
 	if (state.meta === undefined) {
@@ -280,7 +282,9 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	if (!state.audioSent) {
 		const caption = buildCaption(meta, state.triage ?? null, recordedTs(key), env.TIMEZONE, captionNotice(setup, false));
-		state.messageId = await tgSendNote(env, source, meta.title, caption);
+		state.messageId = isText
+			? await (({ text, entities }) => tgSendText(env, text, entities))(textNote(caption, state.transcript))
+			: await tgSendNote(env, source, meta.title, caption);
 		state.audioSent = true;
 		await save();
 	}
@@ -303,6 +307,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 			actionId: state.actionId || undefined,
 			messageId: state.messageId,
 			recordedTs: recordedTs(key),
+			...(isText && { text: true }),
 			...(setup.length && { setup }),
 		};
 		await env.BUCKET.put(noteKey(state.noteId), JSON.stringify(note));
@@ -430,7 +435,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		const ids = await todoistIds(env, noteId);
 		const notice = captionNotice(allSetup, state.todoistApplied === false);
 		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice);
-		await editNoteMessage(env, note.messageId, caption, taskLinks(caption, state.triage ?? null, ids));
+		await editNoteMessage(env, note, caption, taskLinks(caption, state.triage ?? null, ids));
 		state.captionEdited = true;
 		await save();
 	}
@@ -526,7 +531,7 @@ async function markInTodoist(env: Env, noteId: string, failed = false): Promise<
 	if (!note) return;
 	const ids = await todoistIds(env, noteId);
 	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, captionNotice(note.setup, failed));
-	await editNoteMessage(env, note.messageId, caption, taskLinks(caption, note.triage, ids));
+	await editNoteMessage(env, note, caption, taskLinks(caption, note.triage, ids));
 }
 
 // Ключ задачі → id у Todoist.
@@ -534,15 +539,14 @@ async function todoistIds(env: Env, noteId: string): Promise<Record<string, stri
 	return Object.fromEntries(Object.entries(await getInTodoist(env, noteId)).map(([key, v]) => [key, v.id]));
 }
 
-// Оновлює підпис (з посиланнями на задачі) і прибирає кнопки.
-async function editNoteMessage(env: Env, messageId: number, caption: string, entities: object[]): Promise<void> {
-	await tg(env, "editMessageCaption", {
-		chat_id: env.CHAT_ID,
-		message_id: messageId,
-		caption,
-		caption_entities: entities,
-		reply_markup: NO_BUTTONS,
-	}).catch(
+// Оновлює підпис (з посиланнями на задачі) і прибирає кнопки. Текстова нотатка — це текст повідомлення з цитатою оригіналу.
+async function editNoteMessage(env: Env, note: Note, caption: string, entities: object[]): Promise<void> {
+	const common = { chat_id: env.CHAT_ID, message_id: note.messageId, reply_markup: NO_BUTTONS };
+	await (
+		note.text
+			? tg(env, "editMessageText", { ...common, ...textNote(caption, note.transcript, entities) })
+			: tg(env, "editMessageCaption", { ...common, caption, caption_entities: entities })
+	).catch(
 		(err) => {
 			if (!String(err).includes("message is not modified")) throw err;
 		},
