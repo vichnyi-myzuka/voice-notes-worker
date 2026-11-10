@@ -123,9 +123,12 @@ const TASK_FIELDS_HELP = `- project: a project from <projects> (name before " �
 - due: when the task should be done, only if said: "today", "tomorrow" or YYYY-MM-DD, plus " HH:MM" if a time is said ("до 13:00", "о 19:00" → "today 13:00", "today 19:00"); otherwise "".
 - deadline: a date YYYY-MM-DD only if a separate final deadline is mentioned that is later than due (e.g. "почати завтра, здати до п'ятниці"); never repeat the due date as a deadline; otherwise "".
 - recurrence: only if the author says the task repeats ("щодня", "щопонеділка", "кожні два тижні", "раз на місяць", "щороку 1 березня"): a Todoist recurring date in English that starts with "every", with the time if said: "every day", "every weekday", "every monday at 9:00", "every 2 weeks", "every month on the 5th", "every year on march 1"; otherwise "". When set, due is the first occurrence (with the time, if said).
-- recurrence_label: the same repetition in short Ukrainian for display ("щопонеділка о 9:00", "кожні 2 тижні"), or "" when there is no recurrence.
+  Regular intake or procedures over several days ("двічі на день протягом 5 днів", "тричі на день тиждень", "щоранку до 20 листопада") are recurring too.
+  Limited period ("протягом 7 днів", "тиждень", "до 20 листопада"): add " until YYYY-MM-DD" with the last day, counting the first day as day 1 ("протягом 7 днів" from 2026-11-10 → "every day until 2026-11-16"); for a range ("2–3 дні") take the longer one.
+  Several times a day ("двічі на день", "тричі на день"): Todoist cannot repeat a task several times a day, so use "every day" (with "until" if limited) and keep the per-day frequency in the title.
+- recurrence_label: the same repetition in short Ukrainian for display ("щопонеділка о 9:00", "кожні 2 тижні", "щодня до 16.11"), or "" when there is no recurrence.
 - reminders: only if the author explicitly asks to be reminded ("нагадай…"): "before N" = N minutes before the due time (only when due has a time, e.g. "нагадай за годину" → "before 60"), or an absolute "today HH:MM" / "tomorrow HH:MM" / "YYYY-MM-DD HH:MM" ("нагадай завтра о 9" → "tomorrow 09:00"); otherwise [].
-- Task titles never contain dates or timing words ("завтра", "19 листопада"): timing goes only to due/deadline.`;
+- Task titles never contain dates, timing words or durations ("завтра", "19 листопада", "протягом 7 днів", "щодня"): timing goes only to due/deadline/recurrence. What to do and how much stays in the title, including dosage and per-day frequency ("Приймати Нольпазу 40 мг — 1 таблетку зранку за 30 хвилин до їжі", "Промивати ніс Носолем тричі на день").`;
 
 // Дата у форматі YYYY-MM-DD у часовому поясі.
 export function isoDate(date: Date, timeZone: string): string {
