@@ -17,6 +17,7 @@ import {
 	taskRulesBlock,
 	taskValidator,
 	triage,
+	withAppliedRecurrence,
 	type TodoistOp,
 	type TodoistSnapshot,
 	type TriageItem,
@@ -432,10 +433,8 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 
 	const allSetup = [...(note.setup ?? []), ...setup];
 	if (!state.captionEdited) {
-		const ids = await todoistIds(env, noteId);
 		const notice = captionNotice(allSetup, state.todoistApplied === false);
-		const caption = buildCaption(meta, state.triage ?? null, note.recordedTs, env.TIMEZONE, notice);
-		await editNoteMessage(env, note, caption, taskLinks(caption, state.triage ?? null, ids));
+		await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, meta, state.triage ?? null, note.recordedTs, notice)));
 		state.captionEdited = true;
 		await save();
 	}
@@ -529,14 +528,24 @@ async function handleCallback(env: Env, cb: TgCallback): Promise<void> {
 async function markInTodoist(env: Env, noteId: string, failed = false): Promise<void> {
 	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
 	if (!note) return;
-	const ids = await todoistIds(env, noteId);
-	const caption = buildCaption(note.meta, note.triage, note.recordedTs, env.TIMEZONE, captionNotice(note.setup, failed));
-	await editNoteMessage(env, note, caption, taskLinks(caption, note.triage, ids));
+	const notice = captionNotice(note.setup, failed);
+	await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, note.meta, note.triage, note.recordedTs, notice)));
 }
 
-// Ключ задачі → id у Todoist.
-async function todoistIds(env: Env, noteId: string): Promise<Record<string, string>> {
-	return Object.fromEntries(Object.entries(await getInTodoist(env, noteId)).map(([key, v]) => [key, v.id]));
+// Підпис після виконання в Todoist: назви задач — посилання, 🔁 лише в задач, де Todoist прийняв повтор.
+async function appliedCaption(
+	env: Env,
+	noteId: string,
+	meta: Meta,
+	triage: TriageItem[] | null,
+	ts: number,
+	notice: string,
+): Promise<[string, object[]]> {
+	const inTodoist = await getInTodoist(env, noteId);
+	const shown = withAppliedRecurrence(triage, inTodoist);
+	const caption = buildCaption(meta, shown, ts, env.TIMEZONE, notice);
+	const ids = Object.fromEntries(Object.entries(inTodoist).map(([key, v]) => [key, v.id]));
+	return [caption, taskLinks(caption, shown, ids)];
 }
 
 // Оновлює підпис (з посиланнями на задачі) і прибирає кнопки. Текстова нотатка — це текст повідомлення з цитатою оригіналу.
@@ -628,6 +637,7 @@ Editing mode: you get an existing note (<note> JSON), its original transcript, e
 Return the full updated note. Apply exactly what the instruction asks (rename, add, remove, reword, change dates, projects, labels or priority of tasks, etc.) and keep everything else unchanged.
 Tasks: return every task that should remain, in order. An existing task keeps its "key" even if you change its title or fields; a new task gets key "". A removed task is simply omitted.
 Keep the summary and ideas consistent with the edited note: if the instruction changes something they mention (a date, a removed task), update that part, otherwise leave them as is.
+Removing a property of a task ("прибери повтор", "зроби разовою", "без дати", "прибери нагадування", "зніми мітку") keeps the task and clears only that field (removing a recurrence keeps due as the next occurrence, so the task stays a one-time task on that date); remove a task only when the instruction asks to remove the task itself.
 Change a task's title only when the instruction asks to rename or reword it. Moving a task in time ("перенеси на п'ятницю", "зроби на сьогодні") changes only due/deadline and never turns into a title like "Перенести …".
 ${EDIT_TASKS_HELP}
 Commands in the instruction that change the Todoist setup (create, rename or delete a project or a label, change its description) are carried out separately and are already applied: never turn them into tasks; if the instruction has nothing else, return the note unchanged with discard "none". If a task's project or label was renamed, use the new name from <projects> / <labels>.
@@ -642,7 +652,7 @@ async function editNote(
 ): Promise<{ meta: Meta; triage: TriageItem[] | null } | null> {
 	const { title, summary, ideas } = note.meta;
 	const oldTasks = note.triage ?? plainTasks(note.meta.tasks);
-	const tasks = oldTasks.map(({ key, title, project, labels, priority, due, deadline, reminders, duplicateOf }) =>
+	const tasks = oldTasks.map(({ key, title, project, labels, priority, due, deadline, recurrence, recurrenceLabel, reminders, duplicateOf }) =>
 		snap
 			? {
 					key,
@@ -652,6 +662,8 @@ async function editNote(
 					priority: `p${priority}`,
 					due,
 					deadline,
+					recurrence: recurrence ?? "",
+					recurrence_label: recurrenceLabel ?? "",
 					// у форматі для моделі: "before 60" або "2026-11-11 09:00"
 					reminders: (reminders ?? []).map((r) => (r.startsWith("before:") ? r.replace(":", " ") : r.replace("T", " "))),
 					...(duplicateOf && { already_exists_as: duplicateOf }),
@@ -661,7 +673,9 @@ async function editNote(
 	const taskSchema = {
 		type: "object",
 		properties: { key: { type: "string" }, title: { type: "string" }, ...(snap ? taskFieldsSchema(snap) : {}) },
-		required: snap ? ["key", "title", "project", "labels", "priority", "due", "deadline", "reminders"] : ["key", "title"],
+		required: snap
+			? ["key", "title", "project", "labels", "priority", "due", "deadline", "recurrence", "recurrence_label", "reminders"]
+			: ["key", "title"],
 		additionalProperties: false,
 	};
 	const schema = {
