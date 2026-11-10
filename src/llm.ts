@@ -8,7 +8,17 @@ export type JsonRequest = {
 	user: string;
 	schema: object;
 	reasoning?: "none" | "low"; // для Luna; Gemma завжди без reasoning
+	image?: { base64: string; type: string }; // зображення до user-повідомлення (обидві моделі вміють vision)
 };
+
+// ArrayBuffer → base64 частинами (String.fromCharCode з великим масивом переповнює стек).
+export function toBase64(data: ArrayBuffer): string {
+	const bytes = new Uint8Array(data);
+	let s = "";
+	for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+	return btoa(s);
+}
+const dataUrl = (image: NonNullable<JsonRequest["image"]>) => `data:${image.type};base64,${image.base64}`;
 
 // Повертає розібраний результат або null, якщо не впоралась жодна модель.
 export async function askJson<T>(env: Env, req: JsonRequest, parse: (text: string) => T): Promise<T | null> {
@@ -46,7 +56,15 @@ async function askLuna(env: Env, req: JsonRequest): Promise<string> {
 			max_output_tokens: 4096,
 			input: [
 				{ role: "system", content: req.system },
-				{ role: "user", content: req.user },
+				{
+					role: "user",
+					content: req.image
+						? [
+								{ type: "input_text", text: req.user },
+								{ type: "input_image", image_url: dataUrl(req.image) },
+							]
+						: req.user,
+				},
 			],
 			text: { format: { type: "json_schema", name: req.name, schema: req.schema, strict: true } },
 		}),
@@ -65,7 +83,15 @@ async function askGemma(env: Env, req: JsonRequest): Promise<string> {
 	const res = (await env.AI.run("@cf/google/gemma-4-26b-a4b-it", {
 		messages: [
 			{ role: "system", content: req.system },
-			{ role: "user", content: req.user },
+			{
+				role: "user",
+				content: req.image
+					? [
+							{ type: "text", text: req.user },
+							{ type: "image_url", image_url: { url: dataUrl(req.image) } },
+						]
+					: req.user,
+			},
 		],
 		response_format: {
 			type: "json_schema",

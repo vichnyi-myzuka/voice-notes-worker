@@ -26,7 +26,9 @@ export async function tgSendNote(
 ): Promise<number> {
 	const common = { chat_id: env.CHAT_ID, caption, ...(replyMarkup && { reply_markup: replyMarkup }) };
 	let res: unknown;
-	if (audio.fileId && audio.kind === "voice") {
+	if (audio.fileId && audio.kind === "photo") {
+		res = await tg(env, "sendPhoto", { ...common, photo: audio.fileId });
+	} else if (audio.fileId && audio.kind === "voice") {
 		res = await tg(env, "sendVoice", { ...common, voice: audio.fileId });
 	} else if (audio.fileId) {
 		res = await tg(env, "sendAudio", { ...common, audio: audio.fileId, title });
@@ -79,13 +81,15 @@ type TgMessage = {
 	caption?: string;
 	voice?: TgFile;
 	audio?: TgFile;
+	photo?: TgFile[]; // розміри від меншого до більшого
 	reply_to_message?: { message_id: number };
 };
 
 export type ReceivedVoice = {
 	contentType: string;
 	fileId?: string; // для тексту немає
-	kind: string; // voice | audio | text
+	kind: string; // voice | audio | text | photo
+	caption?: string; // підпис до фото: іде в модель разом із зображенням
 	// Голосове з каналу видаляється після публікації нотатки: нотатка містить те саме аудіо.
 	deleteChatId?: string;
 	deleteMessageId?: string;
@@ -102,7 +106,7 @@ async function react(env: Env, msg: TgMessage): Promise<void> {
 	}).catch((err) => console.error("reaction failed:", err));
 }
 
-// Приймає голосове чи аудіо й кладе в R2 і чергу (через store).
+// Приймає голосове, аудіо, текст чи фото й кладе в R2 і чергу (через store).
 // Канал: лише дописи в CHAT_ID без підпису (у нотаток бота підпис є завжди), публікувати там можуть лише адміни.
 // Особистий чат: лише від TG_OWNER_ID. В обох випадках ставимо ✍.
 // Помилки повідомляє в чат сам; Telegram завжди отримує 200, щоб не повторював запит без кінця.
@@ -112,11 +116,13 @@ export async function receiveTelegramVoice(
 	// Повертає false, якщо повідомлення вже прибране (правка): тоді ✍ не ставимо.
 	store: (key: string, body: ArrayBuffer, meta: ReceivedVoice) => Promise<boolean>,
 ): Promise<void> {
-	const inChannel = msg.chat.type === "channel" && String(msg.chat.id) === env.CHAT_ID && !msg.caption;
+	// Фото приймаємо й з підписом: підпис — частина нотатки (власних дописів бот у вебхуку не отримує).
+	const inChannel = msg.chat.type === "channel" && String(msg.chat.id) === env.CHAT_ID && (!msg.caption || !!msg.photo);
 	const inPrivate = msg.chat.type === "private" && !!env.TG_OWNER_ID && String(msg.from?.id) === env.TG_OWNER_ID;
 	if (!inChannel && !inPrivate) return;
 
-	const file = msg.voice ?? msg.audio;
+	const photo = msg.photo?.at(-1); // найбільший розмір
+	const file = msg.voice ?? msg.audio ?? photo;
 
 	// Текстова відповідь на нотатку в каналі — інструкція редагування (без транскрипції).
 	if (!file && inChannel && msg.text && msg.reply_to_message) {
@@ -159,9 +165,10 @@ export async function receiveTelegramVoice(
 		const info = (await tg(env, "getFile", { file_id: file.file_id })) as { result: { file_path: string } };
 		const res = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${info.result.file_path}`);
 		if (!res.ok) throw new Error(`download ${res.status}`);
-		const kind = msg.voice ? "voice" : "audio";
-		const contentType = file.mime_type ?? (kind === "voice" ? "audio/ogg" : "audio/mp4");
-		const ext = kind === "voice" ? "ogg" : (info.result.file_path.split(".").pop() ?? "audio");
+		const kind = photo ? "photo" : msg.voice ? "voice" : "audio";
+		// Фото в Telegram завжди JPEG.
+		const contentType = photo ? "image/jpeg" : (file.mime_type ?? (kind === "voice" ? "audio/ogg" : "audio/mp4"));
+		const ext = photo ? "jpg" : kind === "voice" ? "ogg" : (info.result.file_path.split(".").pop() ?? "audio");
 		// Ключ починається з часу запису (msg.date), як і для шорткату.
 		const key = `${msg.date * 1000}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
 		const accepted = await store(key, await res.arrayBuffer(), {
@@ -169,7 +176,9 @@ export async function receiveTelegramVoice(
 			fileId: file.file_id,
 			kind,
 			...(inChannel && { deleteChatId: String(msg.chat.id), deleteMessageId: String(msg.message_id) }),
-			...(inChannel && msg.reply_to_message && { replyTo: String(msg.reply_to_message.message_id) }),
+			// Фото — завжди нова нотатка, навіть у відповідь на іншу (правки фото поки не вміють).
+			...(inChannel && !photo && msg.reply_to_message && { replyTo: String(msg.reply_to_message.message_id) }),
+			...(photo && msg.caption?.trim() && { caption: msg.caption.trim() }),
 		});
 		if (accepted) await react(env, msg);
 	} catch (err) {

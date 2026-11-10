@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { receiveTelegramVoice, telegramMessageUrl, type ReceivedVoice } from "../src/telegram";
+import { receiveTelegramVoice, telegramMessageUrl, tgSendNote, type ReceivedVoice } from "../src/telegram";
 import { fakeEnv } from "./fake-env";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -148,5 +148,59 @@ describe("receiveTelegramVoice", () => {
 			deleteMessageId: "7",
 			replyTo: "5",
 		});
+	});
+
+	it("фото з підписом у каналі — найбільший розмір, підпис без пробілів, без replyTo", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string) =>
+				url.includes("/getFile")
+					? Response.json({ result: { file_path: "photos/f.jpg" } })
+					: url.includes("/file/")
+						? new Response(new Uint8Array([1, 2, 3]))
+						: Response.json({ ok: true }),
+			),
+		);
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => true);
+		await receiveTelegramVoice(
+			env,
+			{
+				...base,
+				message_id: 11,
+				chat: { id: -1004390223227, type: "channel" },
+				caption: "  Чек з аптеки \n",
+				photo: [
+					{ file_id: "small", file_size: 100 },
+					{ file_id: "big", file_size: 1000 },
+				],
+				reply_to_message: { message_id: 5 },
+			},
+			store,
+		);
+		expect(store).toHaveBeenCalledOnce();
+		const [key, , meta] = store.mock.calls[0];
+		expect(key).toMatch(/^1000-[0-9a-f]{8}\.jpg$/);
+		expect(meta).toEqual({
+			kind: "photo",
+			contentType: "image/jpeg",
+			fileId: "big",
+			caption: "Чек з аптеки",
+			deleteChatId: "-1004390223227",
+			deleteMessageId: "11",
+		});
+		expect(meta).not.toHaveProperty("replyTo");
+	});
+});
+
+describe("tgSendNote", () => {
+	it("фото з fileId іде через sendPhoto з photo і підписом", async () => {
+		const fetchSpy = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ result: { message_id: 42 } }));
+		vi.stubGlobal("fetch", fetchSpy);
+		const id = await tgSendNote(fakeEnv(), { blob: async () => new Blob(), fileId: "big", kind: "photo" }, "Назва", "Підпис");
+		expect(id).toBe(42);
+		expect(fetchSpy).toHaveBeenCalledOnce();
+		const [url, init] = fetchSpy.mock.calls[0];
+		expect(url).toContain("/sendPhoto");
+		expect(JSON.parse(String(init.body))).toMatchObject({ photo: "big", caption: "Підпис" });
 	});
 });
