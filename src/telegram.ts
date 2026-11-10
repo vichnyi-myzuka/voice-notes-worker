@@ -42,6 +42,12 @@ export async function tgSendNote(
 	return (res as { result: { message_id: number } }).result.message_id;
 }
 
+// Текстова нотатка: звичайне повідомлення (без аудіо). Повертає message_id.
+export async function tgSendText(env: Env, text: string, entities: object[]): Promise<number> {
+	const res = await tg(env, "sendMessage", { chat_id: env.CHAT_ID, text, entities });
+	return (res as { result: { message_id: number } }).result.message_id;
+}
+
 // Посилання на повідомлення є лише в каналах і супергрупах (chat_id вигляду -100…).
 export function telegramMessageUrl(chatId: string, messageId: number): string | null {
 	return chatId.startsWith("-100") ? `https://t.me/c/${chatId.slice(4)}/${messageId}` : null;
@@ -122,9 +128,21 @@ export async function receiveTelegramVoice(
 		return;
 	}
 
+	// Звичайний текст (не команда) — нова нотатка, як голосове, але без транскрипції.
+	if (!file && msg.text?.trim() && !msg.text.trim().startsWith("/")) {
+		const key = `${msg.date * 1000}-${crypto.randomUUID().slice(0, 8)}.txt`;
+		await store(key, new TextEncoder().encode(msg.text).buffer as ArrayBuffer, {
+			contentType: "text/plain; charset=utf-8",
+			kind: "text",
+			...(inChannel && { deleteChatId: String(msg.chat.id), deleteMessageId: String(msg.message_id) }),
+		});
+		await react(env, msg);
+		return;
+	}
+
 	if (!file) {
 		if (inPrivate && msg.text?.startsWith("/start")) {
-			await tgSendMessage(env, msg.chat.id, "Надішли голосове або аудіофайл: я розшифрую його, а нотатка з'явиться в каналі.");
+			await tgSendMessage(env, msg.chat.id, "Надішли голосове, аудіофайл або текст: нотатка з'явиться в каналі.");
 		}
 		return;
 	}
