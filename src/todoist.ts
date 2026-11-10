@@ -22,6 +22,8 @@ export type TriageItem = {
 	priority: number; // як у додатку: 1 (p1, найвищий) … 4 (p4, без пріоритету)
 	due: string; // YYYY-MM-DD | YYYY-MM-DDTHH:MM (з часом) | ""
 	deadline: string; // YYYY-MM-DD | "" (у Todoist дедлайн — лише дата)
+	recurrence?: string; // повтор для Todoist англійською ("every monday at 9:00") | "" ; due — перше виконання
+	recurrenceLabel?: string; // той самий повтор українською для підпису ("щопонеділка о 9:00")
 	reminders?: string[]; // "before:<хв>" (до часу виконання) | YYYY-MM-DDTHH:MM; немає в нотатках до появи нагадувань
 	key?: string; // стабільний ключ задачі в нотатці (t1, t2…): за ним редагування знаходить задачу в Todoist
 };
@@ -96,6 +98,8 @@ export function taskFieldsSchema(snap: TodoistSnapshot): Record<string, unknown>
 		priority: { type: "string", enum: ["p1", "p2", "p3", "p4"] },
 		due: { type: "string" },
 		deadline: { type: "string" },
+		recurrence: { type: "string" },
+		recurrence_label: { type: "string" },
 		reminders: { type: "array", items: { type: "string" } },
 	};
 }
@@ -118,6 +122,8 @@ const TASK_FIELDS_HELP = `- project: a project from <projects> (name before " �
 - priority: "p1" (highest) … "p4" (no priority), following the rules.
 - due: when the task should be done, only if said: "today", "tomorrow" or YYYY-MM-DD, plus " HH:MM" if a time is said ("до 13:00", "о 19:00" → "today 13:00", "today 19:00"); otherwise "".
 - deadline: a date YYYY-MM-DD only if a separate final deadline is mentioned that is later than due (e.g. "почати завтра, здати до п'ятниці"); never repeat the due date as a deadline; otherwise "".
+- recurrence: only if the author says the task repeats ("щодня", "щопонеділка", "кожні два тижні", "раз на місяць", "щороку 1 березня"): a Todoist recurring date in English that starts with "every", with the time if said: "every day", "every weekday", "every monday at 9:00", "every 2 weeks", "every month on the 5th", "every year on march 1"; otherwise "". When set, due is the first occurrence (with the time, if said).
+- recurrence_label: the same repetition in short Ukrainian for display ("щопонеділка о 9:00", "кожні 2 тижні"), or "" when there is no recurrence.
 - reminders: only if the author explicitly asks to be reminded ("нагадай…"): "before N" = N minutes before the due time (only when due has a time, e.g. "нагадай за годину" → "before 60"), or an absolute "today HH:MM" / "tomorrow HH:MM" / "YYYY-MM-DD HH:MM" ("нагадай завтра о 9" → "tomorrow 09:00"); otherwise [].
 - Task titles never contain dates or timing words ("завтра", "19 листопада"): timing goes only to due/deadline.`;
 
@@ -163,6 +169,12 @@ export function taskValidator(snap: TodoistSnapshot, base: Date, timeZone: strin
 		});
 		return [...new Set(out.filter(Boolean))];
 	};
+	// Повтор: лише фраза Todoist, що починається з "every"; без неї й підпис порожній.
+	const recurrence = (r: Record<string, unknown>) => {
+		const every = String(r.recurrence ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+		if (!/^every\b/.test(every)) return { recurrence: "", recurrenceLabel: "" };
+		return { recurrence: every, recurrenceLabel: String(r.recurrence_label ?? "").trim() || every };
+	};
 	return (r) => {
 		const project = projects.has(String(r.project ?? "").trim()) ? String(r.project).trim() : "";
 		const priority = Number(String(r.priority ?? "").replace(/^p/, ""));
@@ -176,6 +188,7 @@ export function taskValidator(snap: TodoistSnapshot, base: Date, timeZone: strin
 				: [],
 			priority: priority >= 1 && priority <= 4 ? priority : 4,
 			due: dateTime(r.due),
+			...recurrence(r),
 			reminders: reminders(r.reminders, dateTime(r.due).includes("T")),
 			// Дедлайн, що збігається з датою виконання, лише дублює її.
 			deadline: ((dl) => (dl && dl !== dateTime(r.due).slice(0, 10) ? dl : ""))(date(String(r.deadline ?? "").trim().split(/[ T@]/)[0])),
@@ -215,7 +228,7 @@ export async function triage(
 			duplicate_of: { type: "string" },
 			...taskFieldsSchema(snap),
 		},
-		required: ["quote", "title", "duplicate_of", "project", "labels", "priority", "due", "deadline", "reminders"],
+		required: ["quote", "title", "duplicate_of", "project", "labels", "priority", "due", "deadline", "recurrence", "recurrence_label", "reminders"],
 		additionalProperties: false,
 	};
 	const schema = {
@@ -243,7 +256,7 @@ export async function triage(
 }
 
 // Опис полів задач для моделі редагування.
-export const EDIT_TASKS_HELP = `If tasks have Todoist fields (project, labels, priority, due, deadline, reminders), copy them unchanged unless the instruction changes them. Field meanings:
+export const EDIT_TASKS_HELP = `If tasks have Todoist fields (project, labels, priority, due, deadline, recurrence, recurrence_label, reminders), copy them unchanged unless the instruction changes them. Field meanings:
 ${TASK_FIELDS_HELP}
 Follow the author's <rules>.`;
 
@@ -274,6 +287,7 @@ const sameItem = (a: TriageItem, b: TriageItem) =>
 	a.priority === b.priority &&
 	a.due === b.due &&
 	a.deadline === b.deadline &&
+	(a.recurrence ?? "") === (b.recurrence ?? "") &&
 	sameReminders(a, b);
 const sameReminders = (a: TriageItem, b: TriageItem) => [...(a.reminders ?? [])].sort().join() === [...(b.reminders ?? [])].sort().join();
 
@@ -313,7 +327,12 @@ export function buildCommands(actionId: string, ops: TodoistOp[], description: s
 		content: i.title,
 		labels: i.labels,
 		priority: 5 - i.priority, // в API 4 — це p1
-		due: i.due ? { date: i.due.includes("T") ? `${i.due}:00` : i.due } : null, // з часом — «плаваючий» час (без поясу)
+		// Повтор — фразою (Todoist сам рахує дати); інакше дата, з часом — «плаваючий» час (без поясу).
+		due: i.recurrence
+			? { string: i.recurrence, lang: "en" }
+			: i.due
+				? { date: i.due.includes("T") ? `${i.due}:00` : i.due }
+				: null,
 		deadline: i.deadline ? { date: i.deadline } : null,
 	});
 	return ops.flatMap((op, n) => {
@@ -388,25 +407,45 @@ export async function applyAction(
 
 	const snap = await fetchSnapshot(env);
 	const description = action.messageUrl ? `${action.description}\n${action.messageUrl}` : action.description;
-	const commands = buildCommands(id, action.ops, description, snap);
-	const res = (await sync(env, { commands: JSON.stringify(commands) })) as {
-		sync_status: Record<string, unknown>;
-		temp_id_mapping: Record<string, string>;
-	};
+	type SyncResult = { sync_status: Record<string, unknown>; temp_id_mapping: Record<string, string> };
+	const run = async (commands: object[]) => (await sync(env, { commands: JSON.stringify(commands) })) as SyncResult;
+	const res = await run(buildCommands(id, action.ops, description, snap));
+
+	// Повтор, якого Todoist не розпізнав (INVALID_DATE), відхиляє всю команду: такі задачі пробуємо ще раз без повтору
+	// (з датою першого виконання). В InTodoist вони потрапляють без повтору, тож підпис не покаже 🔁.
+	const prefix = action.ops.map(() => id);
+	const ops = [...action.ops];
+	const bad = action.ops.flatMap((op, n) => (op.item?.recurrence && invalidDate(res.sync_status[`${id}-${n}`]) ? [n] : []));
+	if (bad.length) {
+		const retryId = `${id}x`;
+		bad.forEach((n) => {
+			ops[n] = { ...ops[n], item: { ...ops[n].item!, recurrence: "", recurrenceLabel: "" } };
+			prefix[n] = retryId;
+			// Статуси задачі й залежних команд (нагадування, переміщення): їх замінять статуси повтору.
+			const own = new RegExp(`^${id}-${n}(?:[a-z]|$)`);
+			for (const k of Object.keys(res.sync_status)) if (own.test(k)) delete res.sync_status[k];
+			console.error(`todoist: recurrence "${action.ops[n].item!.recurrence}" not recognized, task "${action.ops[n].item!.title}" saved without it`);
+		});
+		const mine = (c: object) => bad.some((n) => new RegExp(`^${retryId}-${n}(?:[a-z]|$)`).test((c as { uuid: string }).uuid));
+		const retry = await run(buildCommands(retryId, ops, description, snap).filter(mine));
+		Object.assign(res.sync_status, retry.sync_status);
+		Object.assign(res.temp_id_mapping, retry.temp_id_mapping);
+	}
 	const errors = Object.values(res.sync_status).filter((s) => s !== "ok");
 
 	// Стан оновлюємо і для успішних команд при частковому збої: інакше ID створених задач загубляться.
 	// Повтор безпечний: Todoist не виконує команду з тим самим uuid вдруге.
 	const state = await getInTodoist(env, action.noteId);
-	action.ops.forEach((op, n) => {
-		if (res.sync_status[`${id}-${n}`] !== "ok") return;
+	ops.forEach((op, n) => {
+		const p = prefix[n];
+		if (res.sync_status[`${p}-${n}`] !== "ok") return;
 		if (!op.item) delete state[op.key];
 		else {
-			const taskId = op.id ?? res.temp_id_mapping[`tmp-${id}-${n}`];
+			const taskId = op.id ?? res.temp_id_mapping[`tmp-${p}-${n}`];
 			// ID нагадувань: нові — з temp_id_mapping, інакше лишаються попередні.
 			const reminderIds =
 				!op.id || op.reminders
-					? (op.item.reminders ?? []).map((_, j) => res.temp_id_mapping[`tmp-${id}-${n}r${j}`]).filter(Boolean)
+					? (op.item.reminders ?? []).map((_, j) => res.temp_id_mapping[`tmp-${p}-${n}r${j}`]).filter(Boolean)
 					: state[op.key]?.reminderIds;
 			if (taskId) state[op.key] = { id: taskId, item: op.item, ...(reminderIds?.length && { reminderIds }) };
 		}
@@ -416,6 +455,18 @@ export async function applyAction(
 	action.appliedAt = new Date().toISOString();
 	await env.BUCKET.put(actionKey(id), JSON.stringify(action));
 	return { status: "applied", noteId: action.noteId, count: action.ops.length };
+}
+
+const invalidDate = (status: unknown) => (status as { error_tag?: string } | undefined)?.error_tag === "INVALID_DATE";
+
+// Підпис показує повтор лише тих задач, які в Todoist справді з повтором.
+export function withAppliedRecurrence(items: TriageItem[] | null, inTodoist: InTodoist): TriageItem[] | null {
+	return (
+		items?.map((i) => {
+			const applied = i.key ? inTodoist[i.key] : undefined;
+			return i.recurrence && applied && !applied.item.recurrence ? { ...i, recurrence: "", recurrenceLabel: "" } : i;
+		}) ?? null
+	);
 }
 
 // Видаляє задачі, які ще відкриті (виконані лишаються в історії Todoist). Повертає кількість видалених.
@@ -447,6 +498,7 @@ export function formatTriage(items: TriageItem[]): string {
 				i.priority < 4 && `p${i.priority}`,
 				...i.labels.map((l) => `@${l}`),
 				i.due && `📅 ${i.due.replace("T", " ")}`,
+				i.recurrence && `🔁 ${i.recurrenceLabel || i.recurrence}`,
 				i.deadline && `⏰ ${i.deadline}`,
 				...(i.reminders ?? []).map((r) => (r.startsWith("before:") ? `🔔 −${r.slice(7)} хв` : `🔔 ${r.replace("T", " ")}`)),
 			].filter(Boolean);

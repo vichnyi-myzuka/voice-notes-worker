@@ -13,6 +13,7 @@ import {
 	setActionMessage,
 	taskRulesBlock,
 	taskValidator,
+	withAppliedRecurrence,
 	type InTodoist,
 	type TodoistSnapshot,
 	type TriageItem,
@@ -699,5 +700,191 @@ describe("fetchSnapshot: правила", () => {
 		const empty = taskRulesBlock({ ...snap, rules: "" });
 		expect(empty).toContain("(no rules)");
 		expect(empty).not.toContain("абв");
+	});
+});
+
+describe("повторювані задачі", () => {
+	const v = taskValidator(snap, new Date("2026-11-10T08:00:00Z"), "Europe/Kyiv");
+
+	describe("taskValidator: recurrence", () => {
+		it("фраза з every нормалізується (регістр, пробіли); підпис береться з recurrence_label", () => {
+			expect(v({ title: "Х", recurrence: "  Every   Monday at 9:00 ", recurrence_label: " щопонеділка о 9:00 " })).toMatchObject({
+				recurrence: "every monday at 9:00",
+				recurrenceLabel: "щопонеділка о 9:00",
+			});
+		});
+		it("без recurrence_label підпис = фраза", () => {
+			expect(v({ title: "Х", recurrence: "every 2 weeks" })).toMatchObject({ recurrence: "every 2 weeks", recurrenceLabel: "every 2 weeks" });
+		});
+		it("не «every» → порожні recurrence і підпис", () => {
+			for (const recurrence of ["", "daily", "everyday", "each monday", "щодня", " ", 5, null, undefined]) {
+				expect(v({ title: "Х", recurrence, recurrence_label: "щодня" })).toMatchObject({ recurrence: "", recurrenceLabel: "" });
+			}
+		});
+		it("recurrence_label без recurrence ігнорується", () => {
+			expect(v({ title: "Х", recurrence_label: "щодня" })).toMatchObject({ recurrence: "", recurrenceLabel: "" });
+		});
+		it("due зберігається разом із повтором", () => {
+			expect(v({ title: "Х", due: "2026-11-16 09:00", recurrence: "every monday at 9:00" })).toMatchObject({
+				due: "2026-11-16T09:00",
+				recurrence: "every monday at 9:00",
+			});
+		});
+	});
+
+	describe("buildCommands: due", () => {
+		const rec = item("Звіт", { key: "t1", due: "2026-11-16T09:00", recurrence: "every monday at 9:00", recurrenceLabel: "щопонеділка о 9:00" });
+		it("створення з повтором: due {string, lang:en} замість дати", () => {
+			const [cmd] = buildCommands("act", [{ key: "t1", item: rec }], "", snap) as any[];
+			expect(cmd.args.due).toEqual({ string: "every monday at 9:00", lang: "en" });
+		});
+		it("оновлення з повтором: те саме", () => {
+			const [cmd] = buildCommands("act", [{ key: "t1", item: rec, id: "100" }], "", snap) as any[];
+			expect(cmd.args.due).toEqual({ string: "every monday at 9:00", lang: "en" });
+		});
+		it("без повтору — дата (з часом — :00), без дати — null/відсутній", () => {
+			const dated = item("А", { key: "t1", due: "2026-11-16T09:00", recurrence: "" });
+			const [c1] = buildCommands("act", [{ key: "t1", item: dated, id: "100" }], "", snap) as any[];
+			expect(c1.args.due).toEqual({ date: "2026-11-16T09:00:00" });
+			const [c2] = buildCommands("act", [{ key: "t1", item: dated }], "", snap) as any[];
+			expect(c2.args.due).toEqual({ date: "2026-11-16T09:00:00" });
+			const [c3] = buildCommands("act", [{ key: "t1", item: item("Б", { key: "t1" }) }], "", snap) as any[];
+			expect("due" in c3.args).toBe(false);
+			const [c4] = buildCommands("act", [{ key: "t1", item: item("Б", { key: "t1" }), id: "100" }], "", snap) as any[];
+			expect(c4.args.due).toBeNull();
+		});
+	});
+
+	describe("planOps", () => {
+		const base = item("Звіт", { key: "t1", due: "2026-11-16" });
+		it("додано, змінено чи прибрано повтор → оновлення", () => {
+			const rec = { ...base, recurrence: "every monday" };
+			expect(planOps([rec], { t1: { id: "1", item: base } })).toHaveLength(1);
+			expect(planOps([base], { t1: { id: "1", item: rec } })).toHaveLength(1);
+			expect(planOps([{ ...rec, recurrence: "every tuesday" }], { t1: { id: "1", item: rec } })).toHaveLength(1);
+		});
+		it("той самий повтор, undefined і порожній рядок — без змін; інший підпис не зміна", () => {
+			const rec = { ...base, recurrence: "every monday", recurrenceLabel: "щопонеділка" };
+			expect(planOps([{ ...rec, recurrenceLabel: "щопонеділка." }], { t1: { id: "1", item: rec } })).toEqual([]);
+			expect(planOps([{ ...base, recurrence: "" }], { t1: { id: "1", item: base } })).toEqual([]);
+			expect(planOps([base], { t1: { id: "1", item: { ...base, recurrence: "" } } })).toEqual([]);
+		});
+	});
+
+	describe("formatTriage", () => {
+		it("показує 🔁 з підписом, інакше з фразою; без повтору — нічого", () => {
+			expect(formatTriage([item("А", { key: "t1", due: "2026-11-16", recurrence: "every monday", recurrenceLabel: "щопонеділка" })])).toBe(
+				"• А → Inbox 📅 2026-11-16 🔁 щопонеділка",
+			);
+			expect(formatTriage([item("А", { key: "t1", recurrence: "every day" })])).toBe("• А → Inbox 🔁 every day");
+			expect(formatTriage([item("А", { key: "t1", recurrence: "", recurrenceLabel: "" })])).not.toContain("🔁");
+		});
+	});
+
+	describe("applyAction: запасний шлях без повтору", () => {
+		afterEach(() => vi.unstubAllGlobals());
+		const raw = {
+			projects: [
+				{ id: "inbox-id", name: "Inbox", inbox_project: true },
+				{ id: "rules-id", name: RULES_PROJECT, description: "[правила]" },
+			],
+			labels: [],
+			items: [],
+		};
+		const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
+		// перший fetch — знімок, далі — відповіді з `writes` по черзі
+		function stub(...writes: unknown[]) {
+			const calls: { body: URLSearchParams }[] = [];
+			vi.stubGlobal("fetch", async (_url: string, init: { body: URLSearchParams }) => {
+				calls.push({ body: init.body });
+				return json(calls.length === 1 ? raw : writes[calls.length - 2]);
+			});
+			return calls;
+		}
+		const invalid = { error_code: 17, error_tag: "INVALID_DATE", error: "Invalid date format" };
+		const rec = item("Звіт", {
+			key: "t1",
+			due: "2026-11-16T09:00",
+			recurrence: "every blah",
+			recurrenceLabel: "якось",
+			reminders: ["before:30", "2026-11-16T08:00"],
+		});
+		const plain = item("Інша", { key: "t2" });
+		const ops = [
+			{ key: "t1", item: rec },
+			{ key: "t2", item: plain },
+		];
+
+		it("INVALID_DATE для повтору → другий sync лише з командами повтору (uuid з x), стан без повтору", async () => {
+			const env = fakeEnv({ TODOIST_TOKEN: "tok" });
+			const err = vi.spyOn(console, "error").mockImplementation(() => {});
+			const id = await createAction(env, ops, "о", "n1");
+			const calls = stub(
+				{ sync_status: { [`${id}-0`]: invalid, [`${id}-1`]: "ok" }, temp_id_mapping: { [`tmp-${id}-1`]: "302" } },
+				{
+					sync_status: { [`${id}x-0`]: "ok", [`${id}x-0r0`]: "ok", [`${id}x-0r1`]: "ok" },
+					temp_id_mapping: { [`tmp-${id}x-0`]: "301", [`tmp-${id}x-0r0`]: "r1", [`tmp-${id}x-0r1`]: "r2" },
+				},
+			);
+
+			expect(await applyAction(env, id)).toEqual({ status: "applied", noteId: "n1", count: 2 });
+
+			expect(calls).toHaveLength(3);
+			const first = JSON.parse(calls[1].body.get("commands")!);
+			expect(first[0].args.due).toEqual({ string: "every blah", lang: "en" });
+			const retry = JSON.parse(calls[2].body.get("commands")!);
+			expect(retry.map((c: { uuid: string }) => c.uuid)).toEqual([`${id}x-0`, `${id}x-0r0`, `${id}x-0r1`]);
+			expect(retry[0]).toMatchObject({ type: "item_add", temp_id: `tmp-${id}x-0`, args: { content: "Звіт", due: { date: "2026-11-16T09:00:00" } } });
+			expect(retry[1].args.item_id).toBe(`tmp-${id}x-0`);
+			expect(JSON.stringify(retry)).not.toContain("every blah");
+
+			const state = await getInTodoist(env, "n1");
+			expect(state.t1).toEqual({ id: "301", item: { ...rec, recurrence: "", recurrenceLabel: "" }, reminderIds: ["r1", "r2"] });
+			expect(state.t2).toEqual({ id: "302", item: plain });
+			expect(JSON.parse(env.store.get(`todoist/${id}.json`)!).appliedAt).toBeDefined();
+			expect(err).toHaveBeenCalledTimes(1);
+			err.mockRestore();
+		});
+
+		it("INVALID_DATE у задачі без повтору або інша помилка → кидає, без повторного sync", async () => {
+			const env = fakeEnv({ TODOIST_TOKEN: "tok" });
+			const id = await createAction(env, ops, "о", "n1");
+			const calls = stub({
+				sync_status: { [`${id}-0`]: { error_code: 15, error_tag: "SOMETHING", error: "x" }, [`${id}-1`]: invalid },
+				temp_id_mapping: {},
+			});
+			await expect(applyAction(env, id)).rejects.toThrow(/Todoist commands failed/);
+			expect(calls).toHaveLength(2);
+		});
+
+		it("помилка в самому ретраї → кидає; успішні задачі зберігаються", async () => {
+			const env = fakeEnv({ TODOIST_TOKEN: "tok" });
+			const err = vi.spyOn(console, "error").mockImplementation(() => {});
+			const id = await createAction(env, ops, "о", "n1");
+			stub(
+				{ sync_status: { [`${id}-0`]: invalid, [`${id}-1`]: "ok" }, temp_id_mapping: { [`tmp-${id}-1`]: "302" } },
+				{ sync_status: { [`${id}x-0`]: { error_code: 15, error_tag: "OTHER", error: "x" } }, temp_id_mapping: {} },
+			);
+			await expect(applyAction(env, id)).rejects.toThrow(/Todoist commands failed/);
+			expect(await getInTodoist(env, "n1")).toEqual({ t2: { id: "302", item: plain } });
+			err.mockRestore();
+		});
+	});
+
+	describe("withAppliedRecurrence", () => {
+		const rec = item("Звіт", { key: "t1", recurrence: "every day", recurrenceLabel: "щодня" });
+		it("прибирає повтор, якщо в Todoist задача без повтору", () => {
+			const inT: InTodoist = { t1: { id: "1", item: { ...rec, recurrence: "", recurrenceLabel: "" } } };
+			expect(withAppliedRecurrence([rec], inT)).toEqual([{ ...rec, recurrence: "", recurrenceLabel: "" }]);
+		});
+		it("лишає повтор, якщо Todoist його прийняв або задачі ще немає; null → null", () => {
+			expect(withAppliedRecurrence([rec], { t1: { id: "1", item: rec } })).toEqual([rec]);
+			expect(withAppliedRecurrence([rec], {})).toEqual([rec]);
+			expect(withAppliedRecurrence(null, {})).toBeNull();
+		});
+		it("задачі без повтору не змінюються", () => {
+			const plain = item("А", { key: "t2" });
+			expect(withAppliedRecurrence([plain], { t2: { id: "2", item: plain } })).toEqual([plain]);
+		});
 	});
 });
