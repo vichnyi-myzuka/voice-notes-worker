@@ -460,7 +460,8 @@ export class AgentSession extends DurableObject<Env> {
 		await this.serial(async () => {
 			const proc = await this.ctx.container!.exec(
 				["sh", "-c", CLEANUP, "sh", tracked.folder ?? id],
-				{ cwd: "/workspace", env: { HOME: "/root" } },
+				// exec не успадковує env контейнера: для видалення сайтів сесії (publish --delete) потрібен доступ до бакета сайтів
+				{ cwd: "/workspace", env: { HOME: "/root", ...publishEnv(this.env) } },
 			);
 			const out = await proc.output();
 			if (out.exitCode !== 0) console.error(`remove ${id}: cleanup failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
@@ -540,6 +541,11 @@ function positiveNumber(value: string | undefined): number | undefined {
 function positiveInt(value: string | undefined): number | undefined {
 	const n = Number(value);
 	return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+function publishEnv(env: Env): Record<string, string> {
+	const vars = { R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY, R2_ENDPOINT: env.R2_ENDPOINT, SITES_BASE_URL: env.SITES_BASE_URL };
+	return Object.fromEntries(Object.entries(vars).filter((e): e is [string, string] => !!e[1]));
 }
 
 function containerEnv(env: Env): Record<string, string> {

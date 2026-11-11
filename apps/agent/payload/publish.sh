@@ -17,6 +17,31 @@ export RCLONE_CONFIG_SITES_TYPE=s3 RCLONE_CONFIG_SITES_PROVIDER=Cloudflare RCLON
 	RCLONE_CONFIG_SITES_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" RCLONE_CONFIG_SITES_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" \
 	RCLONE_CONFIG_SITES_NO_CHECK_BUCKET=true
 
+# Кому належить сайт: сесії, з теки якої його опублікували (cwd у /workspace/sessions/<тека>/...). Список назв лежить у
+# /workspace/published/<тека>; /delete сесії за ним видаляє її сайти. Сайт належить одній сесії: перепублікація з іншої її забирає.
+PUBLISHED="${PUBLISHED_DIR:-/workspace/published}"
+SESSIONS="${SESSIONS_ROOT:-/workspace/sessions}"
+session_of() {
+	case "$PWD" in
+		"$SESSIONS"/*) s=${PWD#"$SESSIONS"/}; printf '%s' "${s%%/*}" ;;
+	esac
+}
+disown() {
+	[ -d "$PUBLISHED" ] || return 0
+	for f in "$PUBLISHED"/*; do
+		[ -f "$f" ] || continue
+		grep -vxF "$1" "$f" > "$f.tmp" || true
+		mv "$f.tmp" "$f"
+	done
+}
+own() {
+	disown "$1"
+	session=$(session_of)
+	[ -n "$session" ] || return 0
+	mkdir -p "$PUBLISHED"
+	echo "$1" >> "$PUBLISHED/$session"
+}
+
 valid_name() { printf '%s' "$1" | grep -Eq '^[a-z0-9][a-z0-9-]{1,39}$'; }
 
 case "${1:-}" in
@@ -27,6 +52,7 @@ case "${1:-}" in
 		[ $# -eq 2 ] || usage
 		valid_name "$2" || { echo "publish: bad name '$2' (a-z, 0-9, '-', 2-40 chars)" >&2; exit 2; }
 		rclone purge "sites:$BUCKET/$2"
+		disown "$2"
 		echo "deleted $2"
 		;;
 	"" | -*)
@@ -45,6 +71,7 @@ case "${1:-}" in
 		[ "$files" -le "$MAX_FILES" ] || { echo "publish: $files files, the limit is $MAX_FILES" >&2; exit 2; }
 		# Без прихованих файлів (.git, .env), node_modules і завеликих файлів.
 		rclone sync "$dir" "sites:$BUCKET/$name" --exclude '.*' --exclude '.*/**' --exclude 'node_modules/**' --max-size 20M >&2
+		own "$name"
 		echo "$SITES_BASE_URL/$name/"
 		;;
 esac

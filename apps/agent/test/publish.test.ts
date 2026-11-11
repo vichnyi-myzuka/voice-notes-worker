@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -26,9 +26,9 @@ const env = {
 	SITES_BASE_URL: "https://sites.example",
 };
 
-function run(args: string[], extra: Record<string, string> = {}) {
+function run(args: string[], extra: Record<string, string> = {}, cwd?: string) {
 	try {
-		const stdout = execFileSync("sh", [SCRIPT, ...args], { env: { PATH: `${bin}:${process.env.PATH}`, ...env, ...extra }, stdio: ["ignore", "pipe", "pipe"] }).toString();
+		const stdout = execFileSync("sh", [SCRIPT, ...args], { cwd, env: { PATH: `${bin}:${process.env.PATH}`, ...env, ...extra }, stdio: ["ignore", "pipe", "pipe"] }).toString();
 		return { code: 0, stdout, stderr: "" };
 	} catch (err) {
 		const e = err as { status: number; stderr: Buffer; stdout: Buffer };
@@ -78,4 +78,54 @@ describe("publish", () => {
 		expect(res.code).toBe(1);
 		expect(res.stderr).toContain("R2_ACCESS_KEY_ID is not set");
 	});
+
+	describe("кому належить сайт (для /delete сесії)", () => {
+		// Тека сесій і список належності підміняються змінними, як /workspace у контейнері.
+		const world = () => {
+			const root = realpathSync(mkdtempSync(join(tmpdir(), "own-"))); // справжній шлях: на macOS /var є посиланням на /private/var, а sh бере cwd без посилань
+			const sessions = join(root, "sessions");
+			const published = join(root, "published");
+			for (const s of ["docs-1", "feat-2"]) mkdirSync(join(sessions, s, "site"), { recursive: true });
+			const x = { SESSIONS_ROOT: sessions, PUBLISHED_DIR: published };
+			const listOf = (s: string) => (existsSync(join(published, s)) ? readFileSync(join(published, s), "utf8").trim().split("\n").filter(Boolean) : []);
+			return { sessions, x, listOf, inSession: (s: string) => join(sessions, s, "site") };
+		};
+
+		it("публікація з теки сесії записує назву в її список (без дублів)", () => {
+			const w = world();
+			expect(run([site(), "demo"], w.x, w.inSession("docs-1")).code).toBe(0);
+			expect(run([site(), "demo"], w.x, w.inSession("docs-1")).code).toBe(0);
+			expect(run([site(), "other"], w.x, w.inSession("docs-1")).code).toBe(0);
+			expect(w.listOf("docs-1")).toEqual(["demo", "other"]);
+		});
+
+		it("перепублікація тієї ж назви з іншої сесії забирає сайт: стара сесія його вже не видалить", () => {
+			const w = world();
+			run([site(), "demo"], w.x, w.inSession("docs-1"));
+			run([site(), "demo"], w.x, w.inSession("feat-2"));
+			expect(w.listOf("docs-1")).toEqual([]);
+			expect(w.listOf("feat-2")).toEqual(["demo"]);
+		});
+
+		it("publish --delete знімає назву зі списку", () => {
+			const w = world();
+			run([site(), "demo"], w.x, w.inSession("docs-1"));
+			expect(run(["--delete", "demo"], w.x, w.inSession("docs-1")).code).toBe(0);
+			expect(w.listOf("docs-1")).toEqual([]);
+		});
+
+		it("поза текою сесії (наприклад, через SSH) сайт публікується, але нікому не належить", () => {
+			const w = world();
+			expect(run([site(), "manual"], w.x, tmpdir()).code).toBe(0);
+			expect(w.listOf("docs-1")).toEqual([]);
+			expect(existsSync(join(w.x.PUBLISHED_DIR, "docs-1"))).toBe(false);
+		});
+
+		it("невдала публікація нікому не записується", () => {
+			const w = world();
+			expect(run([site({ "page.html": "x" }), "bad-site"], w.x, w.inSession("docs-1")).code).toBe(2);
+			expect(w.listOf("docs-1")).toEqual([]);
+		});
+	});
 });
+

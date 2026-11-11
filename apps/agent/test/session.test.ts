@@ -354,6 +354,7 @@ describe("AgentSession", () => {
 		const cleanup = opencode.execs.at(-1)!.cmd;
 		expect(cleanup.slice(0, 2)).toEqual(["sh", "-c"]);
 		expect(cleanup.at(-1)).toBe(ID); // id іде аргументом, а не в тексті скрипта
+		expect(cleanup[2]).toContain("publish --delete"); // сайти сесії видаляються разом з нею
 		expect(cleanup[2]).toContain("worktree remove --force");
 		// гілка видаляється лише якщо її кінчик уже на GitHub (origin/<гілка>) або збігається з головною: інакше робота лишається
 		expect(cleanup[2]).toContain("branch -D");
