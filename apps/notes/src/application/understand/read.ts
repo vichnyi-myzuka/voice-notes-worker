@@ -1,5 +1,4 @@
-import { parseJsonObject } from "../../domain/json";
-import type { Llm } from "../../domain/llm";
+import { parseJsonObject, type Llm } from "@voice-notes/core";
 
 export const IMAGE_SYSTEM = `The author sent a photo as a note, optionally with a caption. Read the image.
 - text: all text visible on the image, verbatim, in its original language, keeping line breaks; "" if there is none.

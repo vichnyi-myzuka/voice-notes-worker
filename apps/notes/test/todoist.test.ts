@@ -7,7 +7,7 @@ import { r2Ledger } from "../src/infrastructure/r2";
 import { buildCommands, RULES_PROJECT, todoistTracker } from "../src/infrastructure/todoist";
 import { fetchSnapshot, findRulesProject } from "../src/infrastructure/todoist/api";
 import { taskRulesBlock, taskValidator } from "../src/infrastructure/todoist/fields";
-import type { Json } from "../src/domain/json";
+import type { Json } from "@voice-notes/core";
 import type { Env } from "../src/infrastructure/env";
 import { fakeEnv } from "./fake-env";
 

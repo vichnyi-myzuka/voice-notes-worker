@@ -1,5 +1,5 @@
 import type { Channel, Incoming, OnIncoming } from "../../domain/channel";
-import type { Env } from "../env";
+import type { TelegramEnv } from "./env";
 import { safeEqual } from "../security";
 import { NO_PREVIEW, deleteOriginal, markEditing, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./api";
 import { receiveTelegramMessage } from "./receive";
@@ -23,7 +23,7 @@ export function textNote(caption: string, original: string, entities: TgEntity[]
 }
 
 // Вебхук: перевірка секрета, розбір оновлення, передача запису ядру.
-async function webhook(env: Env, req: Request, onIncoming: OnIncoming): Promise<Response> {
+async function webhook(env: TelegramEnv, req: Request, onIncoming: OnIncoming): Promise<Response> {
 	const token = req.headers.get("x-telegram-bot-api-secret-token") ?? "";
 	if (!env.TG_WEBHOOK_SECRET || !(await safeEqual(token, env.TG_WEBHOOK_SECRET))) {
 		return new Response("unauthorized", { status: 401 });
@@ -45,7 +45,7 @@ function toIncoming({ contentType, caption, replyTo, kind, fileId, deleteChatId,
 }
 
 // Адаптер Channel для Telegram: нотатки публікуються в CHAT_ID.
-export function telegramChannel(env: Env): Channel {
+export function telegramChannel(env: TelegramEnv): Channel {
 	return {
 		limits: { caption: CAPTION_MAX, textNote: TEXT_CAPTION_MAX },
 		webhookPath: "/telegram",

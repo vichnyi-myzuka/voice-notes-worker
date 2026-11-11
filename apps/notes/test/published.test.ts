@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { captionNotice, refreshNote, showNote } from "../src/application/pipeline";
 import type { Note } from "../src/domain/published";
-import { workersLlm } from "../src/infrastructure/llm";
+import { telegramChannel, workersLlm } from "@voice-notes/core";
 import { r2Ledger, r2Notes } from "../src/infrastructure/r2";
-import { telegramChannel } from "../src/infrastructure/telegram";
 import { todoistTracker } from "../src/infrastructure/todoist";
+import type { Env } from "../src/infrastructure/env";
 import { fakeEnv } from "./fake-env";
 
 const meta = { title: "Назва", summary: "Коротко.", ideas: [], tasks: [] };
 const note = (extra: Partial<Note> = {}): Note => ({ transcript: "Оригінал.", edits: [], meta, triage: null, messageId: 42, recordedTs: 1762700000000, ...extra });
 
-const ports = (env: Parameters<typeof telegramChannel>[0]) => ({ channel: telegramChannel(env), tracker: todoistTracker(env), notes: r2Notes(env), ledger: r2Ledger(env), llm: workersLlm(env) });
+const ports = (env: Env) => ({ channel: telegramChannel(env), tracker: todoistTracker(env), notes: r2Notes(env), ledger: r2Ledger(env), llm: workersLlm(env) });
 
 afterEach(() => vi.unstubAllGlobals());
 

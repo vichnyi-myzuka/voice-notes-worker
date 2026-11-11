@@ -3,7 +3,7 @@ import worker from "../src/index";
 import { fakeEnv } from "./fake-env";
 
 // Node-vitest не має crypto.subtle.timingSafeEqual: для вебхука підміняємо порівняння секретів.
-vi.mock("../src/infrastructure/security", () => ({ safeEqual: async (a: string, b: string) => a === b }));
+vi.mock("../../../packages/core/src/infrastructure/security", () => ({ safeEqual: async (a: string, b: string) => a === b }));
 
 // Наскрізний прогін через справжню точку входу (worker.fetch → черга → worker.queue):
 // вебхук каналу → запис у R2 і чергу → обробка → публікація в Telegram → задача в Todoist → правка «Видали нотатку».

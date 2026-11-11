@@ -1,5 +1,5 @@
 import type { Env } from "../../infrastructure/env";
-import { safeEqual } from "../../infrastructure/security";
+import { safeEqual } from "@voice-notes/core";
 import { enqueueNote } from "../../application/intake";
 
 // Шорткат: сирий файл у тілі або форма з полем audio (інші поля ігноруються).

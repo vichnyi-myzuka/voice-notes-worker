@@ -1,7 +1,6 @@
 import { promptDate } from "../../domain/recording";
 import type { TrackerSnapshot, TriageItem } from "../../domain/tracker";
-import type { Llm } from "../../domain/llm";
-import { isJsonObject, parseJsonObject } from "../../domain/json";
+import { isJsonObject, parseJsonObject, type Llm } from "@voice-notes/core";
 import { TASK_FIELDS_HELP, taskFieldsSchema, taskRulesBlock, taskValidator } from "./fields";
 
 

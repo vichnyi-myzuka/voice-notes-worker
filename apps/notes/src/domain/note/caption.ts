@@ -1,4 +1,4 @@
-import type { TextLink } from "../channel";
+import type { TextLink } from "@voice-notes/core";
 import type { TriageItem } from "../tracker";
 import type { Meta } from "./types";
 

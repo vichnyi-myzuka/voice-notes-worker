@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildCaption, formatCaption, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks, taskLinks } from "../src/domain/note";
-import { TEXT_CAPTION_MAX } from "../src/infrastructure/telegram";
+import { TEXT_CAPTION_MAX } from "@voice-notes/core";
 import type { TrackerSnapshot, TriageItem } from "../src/domain/tracker";
 import { taskUrl } from "../src/infrastructure/todoist";
 import { taskValidator } from "../src/infrastructure/todoist/fields";

@@ -4,3 +4,4 @@ export { CAPTION_MAX, TEXT_CAPTION_MAX, telegramChannel, textNote } from "./chan
 export { receiveTelegramMessage } from "./receive";
 export { telegramMessageUrl, tgSendNote } from "./api";
 export type { ReceivedMessage } from "./types";
+export type { TelegramEnv } from "./env";

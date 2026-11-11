@@ -2,7 +2,7 @@ import type { Env } from "../../infrastructure/env";
 import type { Note } from "../../domain/published";
 import { formatRecordedAt } from "../../domain/recording";
 import { runSetup } from "../setup";
-import { openSteps } from "../../infrastructure/steps";
+import { openSteps } from "@voice-notes/core";
 import { syncTasks } from "../tasks";
 import { editNote } from "../understand";
 import { captionNotice, showNote } from "./show";

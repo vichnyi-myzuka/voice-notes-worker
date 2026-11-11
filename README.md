@@ -15,6 +15,8 @@ Telegram ──відповідь (голос/текст) на нотатку─
 Моно-репозиторій на npm workspaces: `apps/*` — воркери, `packages/*` — спільний код. Застосунки залежать від пакетів, але не один від одного.
 
 ```
+packages/core/        спільне ядро, імпортується як `@voice-notes/core` (лише через `src/index.ts`):
+                       порти Channel і Llm, JSON-типи, адаптери Telegram і Llm (Workers AI / OpenAI), openSteps, safeEqual
 apps/notes/            воркер нотаток (цей бот); команди wrangler запускай із цієї теки
 apps/notes/wrangler.toml  bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE
 apps/notes/test/       тести воркера нотаток
@@ -31,20 +33,13 @@ apps/notes/src/<шар>/<модуль>/    шари: interface → application �
     setup/             команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»), runSetup
     tasks/             задачі нотатки в трекері: syncTasks (ops → actionId → tasksApplied), planOps, applyOps, стан TrackedTasks (порт TaskLedger)
   domain/              правила й дані предметної області
-    channel/           порт каналу (Channel): як записи приходять і нотатки публікуються; Telegram — лише адаптер
     tracker/           порт трекера задач (TaskTracker) і нейтральні типи (TriageItem, TaskOp, SetupPlan…); Todoist — лише адаптер
     note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
     published/         опублікована нотатка: Note і порт NoteRepository
-    llm/               порт Llm: askJson (structured output) і transcribe (голос → текст)
-    json/              Json, JsonObject, parseJsonObject — спільні для всіх шарів
     recording/         ключі запису в R2, ліміти розміру, час запису
   infrastructure/      зовнішні сервіси й сховище
     env/               Env і Job
-    steps/             openSteps: крок = поле стану, результат у R2, onFinalFailure для деградації на lastAttempt
-    llm/               адаптер Llm: gpt-6-luna → fallback Gemma 4 (Workers AI), Whisper
     r2/                адаптери NoteRepository і TaskLedger (нотатки та задачі нотаток у R2)
-    telegram/          адаптер Channel для Telegram: Bot API, вебхук, прийом голосових / тексту / фото, реакції, сутності тексту
-    security/          safeEqual (порівняння секретів)
     todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
 AGENTS.md              правила роботи з репозиторієм для агентів
 .dev.vars.example      (в apps/notes) шаблон секретів для локального запуску
@@ -54,11 +49,11 @@ AGENTS.md              правила роботи з репозиторієм �
 
 Залежності йдуть згори вниз: `interface` → `application` → `domain`; `infrastructure` реалізує порти домену. Ядро (`interface`, `application`, `domain`) не знає ні про Telegram, ні про Todoist, лише про порти:
 
-- **`Channel`** (`domain/channel`): звідки приходять записи й куди публікуються нотатки. Реалізація: `infrastructure/telegram` (вебхук, Bot API, сутності тексту, реакції, ліміти підпису).
+- **`Channel`** (`packages/core`, `domain/channel`): звідки приходять записи й куди публікуються нотатки. Реалізація: `packages/core` → `infrastructure/telegram` (вебхук, Bot API, сутності тексту, реакції, ліміти підпису).
 - **`TaskTracker`** (`domain/tracker`): знімок проєктів і міток, тріаж, створення й оновлення задач, налаштування проєктів і міток. Реалізація: `infrastructure/todoist` (`/sync`, команди, промпти й валідація полів задач).
 
 - **`NoteRepository`** і **`TaskLedger`** (`domain/published`, `domain/tracker`): збереження нотаток і задач нотаток. Реалізація: `infrastructure/r2`.
-- **`Llm`** (`domain/llm`): structured output і розпізнавання голосу. Реалізація: `infrastructure/llm`.
+- **`Llm`** (`packages/core`, `domain/llm`): structured output і розпізнавання голосу. Реалізація: `packages/core` → `infrastructure/llm`.
 
 Адаптери створюються в `src/index.ts` і передаються вниз як `{ channel, tracker, notes, ledger, llm }`. Домен не імпортує `infrastructure`. Запис у R2 (аудіо, `<key>.state.json`) лишається в `application` через `Env`. Щоб підключити інший канал чи трекер, потрібно реалізувати відповідний інтерфейс; промпти тріажу при цьому належать адаптеру, бо описують модель конкретного трекера.
 
@@ -114,7 +109,7 @@ npx wrangler deploy
 
 ## Тести, lint і git-хуки
 
-- `npm run lint` — oxlint (`src`, `test` кожного застосунку).
+- `npm run lint` — oxlint (`src`, `test` кожного застосунку й пакета).
 - `npm run typecheck` — `tsc --noEmit`.
 - `npm test` — vitest: наскрізний e2e через `worker.fetch` і `worker.queue` з підміненими OpenAI, Telegram і Todoist (`apps/notes/test/e2e.test.ts`: вебхук → нотатка → задача → «Видали нотатку»), unit-тести кроків обробки (`apps/notes/test/steps.test.ts`), маршрутизація `handleFetch` із каналом-заглушкою (`apps/notes/test/inbox.test.ts`), наскрізні `processNote` і `processEdit` з підміненими OpenAI і Telegram (`apps/notes/test/process-note.test.ts`: публікація, правка й повтор після збою без повторного LLM), чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyOps` і `syncTasks` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `apps/notes/test/todoist.test.ts` і `apps/notes/test/sync-tasks.test.ts`. Без мережі й без LLM — у `apps/notes/test/fake-env.ts` R2 у пам'яті.
 - `npm run check` — усе разом (lint + typecheck + test).

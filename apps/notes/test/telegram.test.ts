@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { receiveTelegramMessage, telegramMessageUrl, textNote, tgSendNote, type ReceivedMessage } from "../src/infrastructure/telegram";
+import { receiveTelegramMessage, telegramMessageUrl, textNote, tgSendNote, type ReceivedMessage } from "@voice-notes/core";
 import { fakeEnv } from "./fake-env";
 
 afterEach(() => vi.unstubAllGlobals());

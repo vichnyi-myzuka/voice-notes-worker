@@ -22,9 +22,10 @@
 
 ## Код
 
-Шляхи нижче — всередині `apps/notes/`. Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../../application/tasks`; в межах шару — `../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`. Ядро (domain, application, interface) нічого не знає про Telegram і Todoist: воно працює з портами `Channel`, `TaskTracker`, `NoteRepository`, `TaskLedger`, `Llm` (у `domain`), адаптери — `infrastructure/{telegram,todoist,r2,llm}`, складання — у `src/index.ts`. Службові дані каналу (`fileId`, `deleteChatId` тощо) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
+Порти `Channel` і `Llm`, їхні адаптери (`telegram`, `llm`), `openSteps`, `safeEqual` і JSON-типи живуть у `packages/core` (імпорт `@voice-notes/core`); решта шляхів нижче — всередині `apps/notes/`. У тестах мок внутрішнього модуля core (напр. `safeEqual`) робиться за шляхом файлу в `packages/core/src`. Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../../application/tasks`; в межах шару — `../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`. Ядро (domain, application, interface) нічого не знає про Telegram і Todoist: воно працює з портами `Channel`, `TaskTracker`, `NoteRepository`, `TaskLedger`, `Llm` (у `domain`), адаптери — `infrastructure/{todoist,r2}` тут і `telegram`, `llm` у `packages/core`, складання — у `src/index.ts`. Службові дані каналу (`fileId`, `deleteChatId` тощо) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
 
 ```
+packages/core/src/      спільне: domain/{channel,llm,json}, infrastructure/{telegram,llm,steps,security}; публічний вхід — index.ts
 apps/notes/src/index.ts  entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
 src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
   interface/           точки входу
@@ -37,20 +38,13 @@ src/<шар>/<модуль>/    шари: interface → application → domain, 
     setup/             команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»), runSetup
     tasks/             задачі нотатки в трекері: syncTasks (ops → actionId → tasksApplied), planOps, applyOps, стан TrackedTasks (порт TaskLedger)
   domain/              правила й дані предметної області
-    channel/           порт каналу (Channel): як записи приходять і нотатки публікуються; Telegram — лише адаптер
     tracker/           порт трекера задач (TaskTracker) і нейтральні типи (TriageItem, TaskOp, SetupPlan…); Todoist — лише адаптер
     note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
     published/         опублікована нотатка: Note і порт NoteRepository
-    llm/               порт Llm: askJson (structured output) і transcribe (голос → текст)
-    json/              Json, JsonObject, parseJsonObject — спільні для всіх шарів
     recording/         ключі запису в R2, ліміти розміру, час запису
   infrastructure/      зовнішні сервіси й сховище
     env/               Env і Job
-    steps/             openSteps: крок = поле стану, результат у R2, onFinalFailure для деградації на lastAttempt
-    llm/               адаптер Llm: gpt-6-luna → fallback Gemma 4 (Workers AI), Whisper
     r2/                адаптери NoteRepository і TaskLedger (нотатки та задачі нотаток у R2)
-    telegram/          адаптер Channel для Telegram: Bot API, вебхук, прийом голосових / тексту / фото, реакції, сутності тексту
-    security/          safeEqual (порівняння секретів)
     todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
 ```
 

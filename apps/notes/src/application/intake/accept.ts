@@ -1,4 +1,4 @@
-import type { Incoming } from "../../domain/channel";
+import type { Incoming } from "@voice-notes/core";
 import { captionKey } from "../../domain/recording";
 import type { Env } from "../../infrastructure/env";
 import type { Ports } from "../pipeline";

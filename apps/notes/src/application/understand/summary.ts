@@ -1,4 +1,4 @@
-import type { Llm } from "../../domain/llm";
+import type { Llm } from "@voice-notes/core";
 import { parseMeta, type Meta } from "../../domain/note";
 
 export const SYSTEM_PROMPT = `You write a title, a summary, key ideas and tasks for a voice note transcript.
