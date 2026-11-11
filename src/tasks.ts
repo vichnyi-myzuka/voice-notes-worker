@@ -1,4 +1,4 @@
-import type { Env } from "./index";
+import type { Env } from "./env";
 import type { Steps } from "./steps";
 import { fetchSnapshot, sync, type TodoistSnapshot, type TriageItem } from "./todoist";
 
@@ -209,13 +209,11 @@ export async function applyOps(env: Env, { noteId, runId: id, ops: planned, desc
 // Повертає undefined, якщо змін немає; false — не вдалося навіть на останній спробі (нотатка все одно дійде).
 export type SyncState = { ops?: TodoistOp[]; actionId?: string; todoistApplied?: boolean };
 
-export async function syncTasks<S extends SyncState>(
+export async function syncTasks(
 	env: Env,
-	steps: Steps<S>,
+	run: Steps<SyncState>,
 	{ noteId, items, description, messageUrl }: { noteId: string; items: TriageItem[] | null; description: string; messageUrl?: string | null },
 ): Promise<boolean | undefined> {
-	// Steps<S> типізовано під конкретний стан: тут потрібні лише поля SyncState.
-	const run = steps as unknown as Steps<SyncState>;
 	const ops = await run.step("ops", async () => (items ? planOps(items, await getInTodoist(env, noteId)) : []));
 	if (!ops.length) return undefined;
 	const runId = await run.step("actionId", async () => crypto.randomUUID());

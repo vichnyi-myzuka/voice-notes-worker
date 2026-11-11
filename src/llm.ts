@@ -1,4 +1,4 @@
-import type { Env } from "./index";
+import type { Env } from "./env";
 
 // Один запит зі structured output: спершу gpt-6-luna, при будь-якій помилці
 // (API, немає кредитів/ключа, невалідна відповідь) — Gemma 4 у Workers AI.

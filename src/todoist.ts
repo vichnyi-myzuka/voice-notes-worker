@@ -1,4 +1,4 @@
-import type { Env } from "./index";
+import type { Env } from "./env";
 import { askJson, parseJsonObject } from "./llm";
 
 // ---------- Типи ----------
@@ -288,4 +288,15 @@ export function formatTriage(items: TriageItem[]): string {
 			return `• ${i.title} ${extra.join(" ")}`;
 		})
 		.join("\n");
+}
+
+// Знімок Todoist для тріажу; без токена або при збої — null (нотатка прийде без тріажу).
+export async function trySnapshot(env: Env): Promise<TodoistSnapshot | null> {
+	if (!env.TODOIST_TOKEN) return null;
+	try {
+		return await fetchSnapshot(env);
+	} catch (err) {
+		console.error("todoist snapshot failed:", err);
+		return null;
+	}
 }

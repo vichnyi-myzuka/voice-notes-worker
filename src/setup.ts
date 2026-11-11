@@ -1,5 +1,6 @@
-import type { Env } from "./index";
+import type { Env } from "./env";
 import { askJson, parseJsonObject } from "./llm";
+import type { Steps } from "./steps";
 import { findRulesProject, RULES_PROJECT, sync } from "./todoist";
 
 // Голосові команди налаштування Todoist: створити, перейменувати, видалити проєкт чи мітку або змінити опис.
@@ -241,4 +242,32 @@ export function setupReport(plan: SetupPlan): string[] {
 		if (c.openTasks) return `🗄 Проєкт «${c.name}» в архіві (відкритих задач у ньому: ${c.openTasks})`;
 		return `🗑 ${what} «${c.name}» видалено`;
 	});
+}
+
+// ---------- Виконання в конвеєрі ----------
+export type SetupState = {
+	setup?: { id: string; plan: SetupPlan } | null; // команди налаштування Todoist (null — немає)
+	setupApplied?: boolean; // команди виконано (false — не вдалося навіть на останній спробі)
+};
+
+const SETUP_FAILED = "⚠️ Не вдалося змінити проєкти чи мітки";
+
+// Команди налаштування з тексту: план зберігається в стані, виконання ідемпотентне (сталі uuid).
+// Повертає рядки звіту для підпису ([] — команд не було).
+export async function runSetup(env: Env, text: string, run: Steps<SetupState>): Promise<string[]> {
+	const s = await run.step("setup", async () => {
+		const plan = await planSetup(env, text, run.lastAttempt);
+		return plan.changes.length ? { id: crypto.randomUUID(), plan } : null;
+	});
+	if (!s) return [];
+	const ok = await run.step(
+		"setupApplied",
+		async () => {
+			await applySetup(env, s.id, s.plan);
+			console.log(`todoist setup ${s.id}: ${s.plan.changes.length} changes, applied`);
+			return true;
+		},
+		{ onFinalFailure: () => false },
+	);
+	return ok ? setupReport(s.plan) : [SETUP_FAILED];
 }

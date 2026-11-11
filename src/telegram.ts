@@ -1,4 +1,4 @@
-import type { Env } from "./index";
+import type { Env } from "./env";
 
 // ---------- Bot API ----------
 export async function tg(env: Env, method: string, body: FormData | object): Promise<unknown> {
@@ -185,4 +185,21 @@ export async function receiveTelegramVoice(
 		console.error("telegram voice failed:", err);
 		await tgSendMessage(env, msg.chat.id, "⚠️ Не вдалося прийняти запис, спробуй ще раз.");
 	}
+}
+
+// Поки нотатка редагується, на ній стоїть 👨‍💻 (✏ серед реакцій для ботів немає).
+export const markEditing = (env: Env, messageId: number, on: boolean) =>
+	tg(env, "setMessageReaction", {
+		chat_id: env.CHAT_ID,
+		message_id: messageId,
+		reaction: on ? [{ type: "emoji", emoji: "👨‍💻" }] : [],
+	}).catch((err) => console.error("reaction failed:", err));
+
+// Видаляє оригінальне голосове з каналу (якщо запис прийшов звідти). Збій не критичний.
+export async function deleteOriginal(env: Env, meta: Record<string, string> | undefined): Promise<void> {
+	const { deleteChatId, deleteMessageId } = meta ?? {};
+	if (!deleteChatId || !deleteMessageId) return;
+	await tg(env, "deleteMessage", { chat_id: deleteChatId, message_id: Number(deleteMessageId) }).catch((err) =>
+		console.error("delete original message failed:", err),
+	);
 }
