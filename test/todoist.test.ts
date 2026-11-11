@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyOps, attachFile, buildCommands, deleteOpenTasks, getInTodoist, planOps, withAppliedRecurrence, type ApplyParams, type InTodoist, type TodoistOp } from "../src/tasks";
+import { applyOps, attachFile, buildCommands, deleteOpenTasks, getInTodoist, planOps, withAppliedRecurrence, type ApplyParams, type InTodoist, type TodoistOp } from "../src/application/tasks";
 import {
 	fetchSnapshot,
 	findRulesProject,
@@ -9,7 +9,7 @@ import {
 	taskValidator,
 	type TodoistSnapshot,
 	type TriageItem,
-} from "../src/todoist";
+} from "../src/infrastructure/todoist";
 import { fakeEnv } from "./fake-env";
 
 // Параметри запуску, які в тестах задаються до виклику applyPrepared (id запуску — з префіксом команд).

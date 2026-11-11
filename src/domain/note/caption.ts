@@ -1,5 +1,5 @@
-import type { TgEntity, TgTextLink } from "../telegram";
-import { formatTriage, taskUrl, type TriageItem } from "../todoist";
+import type { TgEntity, TgTextLink } from "../../infrastructure/telegram";
+import { formatTriage, taskUrl, type TriageItem } from "../../infrastructure/todoist";
 import type { Meta } from "./types";
 
 // Підпис до аудіо: назва, summary і (якщо є) списки думок і задач.

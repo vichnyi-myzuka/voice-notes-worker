@@ -1,5 +1,5 @@
-import type { Env } from "../env";
-import { askJson, parseJsonObject, toBase64 } from "../llm";
+import type { Env } from "../../infrastructure/env";
+import { askJson, parseJsonObject, toBase64 } from "../../infrastructure/llm";
 
 export async function transcribe(env: Env, audio: ArrayBuffer, contentType: string): Promise<string> {
 	// Аудіо передаємо потоком (без base64): m4a з шорткату або ogg/opus з Telegram.

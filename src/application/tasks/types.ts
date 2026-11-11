@@ -1,4 +1,4 @@
-import type { TriageItem } from "../todoist";
+import type { TriageItem } from "../../infrastructure/todoist";
 
 // Що з нотатки вже є в Todoist (за ключем задачі).
 export type InTodoist = Record<string, { id: string; item: TriageItem; reminderIds?: string[] }>;

@@ -1,7 +1,7 @@
-import type { Env } from "../env";
-import { noteIdByMessage } from "../published";
-import { captionKey } from "../recording";
-import { deleteOriginal, markEditing, receiveTelegramVoice, type TgUpdate } from "../telegram";
+import type { Env } from "../../infrastructure/env";
+import { noteIdByMessage } from "../../domain/published";
+import { captionKey } from "../../domain/recording";
+import { deleteOriginal, markEditing, receiveTelegramVoice, type TgUpdate } from "../../infrastructure/telegram";
 
 export async function handleFetch(req: Request, env: Env): Promise<Response> {
 	const url = new URL(req.url);

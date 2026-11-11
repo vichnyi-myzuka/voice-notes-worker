@@ -15,21 +15,25 @@ Telegram ──відповідь (голос/текст) на нотатку─
 ```
 wrangler.toml          bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE
 src/index.ts           entrypoint: лише підключає fetch (inbox) і queue (queue)
-src/<модуль>/          кожен модуль — папка: index.ts (публічний інтерфейс), types.ts за потреби і кілька змістовних файлів з логікою (без файлів на одну константу чи функцію)
-  env/                 Env і Job
-  inbox/               прийом записів: вебхук Telegram і завантаження з шорткату → R2 + черга
-  queue/               споживачі черги й DLQ
-  pipeline/            processNote / processEdit — кроки обробки запису; State зі слайсів модулів
-  steps/               openSteps: крок = поле стану, результат у R2, onFinalFailure для деградації на lastAttempt
-  recording/           ключі запису в R2, ліміти розміру, час запису
-  understand/          transcribe (Whisper), readImage (vision), summarize, editNote — промпти й схеми
-  llm/                 askJson: structured output gpt-6-luna → fallback Gemma 4 (Workers AI)
-  note/                чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
-  published/           опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / showNote / removeNote
-  todoist/             знімок Todoist, валідація полів задач, тріаж
-  tasks/               задачі нотатки в Todoist: syncTasks (ops → actionId → todoistApplied), planOps / buildCommands / applyOps, стан InTodoist, вкладення
-  setup/               команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»), runSetup
-  telegram/            Bot API, прийом голосових / тексту / фото з вебхука, реакції
+src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
+  interface/           точки входу
+    inbox/             прийом записів: вебхук Telegram і завантаження з шорткату → R2 + черга
+    queue/             споживачі черги й DLQ
+  application/         сценарії
+    pipeline/          processNote / processEdit — кроки обробки запису; State зі слайсів модулів
+    understand/        transcribe (Whisper), readImage (vision), summarize, editNote — промпти й схеми
+    setup/             команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»), runSetup
+    tasks/             задачі нотатки в Todoist: syncTasks (ops → actionId → todoistApplied), planOps / buildCommands / applyOps, стан InTodoist, вкладення
+  domain/              правила й дані предметної області
+    note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
+    published/         опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / showNote / removeNote
+    recording/         ключі запису в R2, ліміти розміру, час запису
+  infrastructure/      зовнішні сервіси й сховище
+    env/               Env і Job
+    steps/             openSteps: крок = поле стану, результат у R2, onFinalFailure для деградації на lastAttempt
+    llm/               askJson: structured output gpt-6-luna → fallback Gemma 4 (Workers AI)
+    telegram/          Bot API, прийом голосових / тексту / фото з вебхука, реакції
+    todoist/           знімок Todoist, валідація полів задач, тріаж
 AGENTS.md              правила роботи з репозиторієм для агентів
 .dev.vars.example      шаблон секретів для локального запуску
 ```

@@ -1,6 +1,6 @@
-import type { Env } from "../env";
-import { askJson } from "../llm";
-import { parseMeta, type Meta } from "../note";
+import type { Env } from "../../infrastructure/env";
+import { askJson } from "../../infrastructure/llm";
+import { parseMeta, type Meta } from "../../domain/note";
 
 export const SYSTEM_PROMPT = `You write a title, a summary, key ideas and tasks for a voice note transcript.
 The author always speaks Ukrainian.

@@ -1,6 +1,6 @@
-import type { Env } from "../env";
-import { askJson, parseJsonObject } from "../llm";
-import { RULES_PROJECT, findRulesProject, sync } from "../todoist";
+import type { Env } from "../../infrastructure/env";
+import { askJson, parseJsonObject } from "../../infrastructure/llm";
+import { RULES_PROJECT, findRulesProject, sync } from "../../infrastructure/todoist";
 import { labelRule, setLabelRule } from "./rules";
 import type { SetupChange, SetupPlan, SetupWorld } from "./types";
 

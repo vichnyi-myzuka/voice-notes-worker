@@ -1,5 +1,5 @@
-import type { Env } from "../env";
-import { fetchSnapshot, sync, type TodoistSnapshot, type TriageItem } from "../todoist";
+import type { Env } from "../../infrastructure/env";
+import { fetchSnapshot, sync, type TodoistSnapshot, type TriageItem } from "../../infrastructure/todoist";
 import { getInTodoist, inTodoistKey } from "./plan";
 import type { ApplyParams, TodoistOp } from "./types";
 

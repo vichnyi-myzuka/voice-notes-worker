@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { labelRule, planSetup, setLabelRule, setupCommands, setupReport, validateSetup, type SetupPlan, type SetupWorld } from "../src/setup";
-import { RULES_PROJECT } from "../src/todoist";
+import { labelRule, planSetup, setLabelRule, setupCommands, setupReport, validateSetup, type SetupPlan, type SetupWorld } from "../src/application/setup";
+import { RULES_PROJECT } from "../src/infrastructure/todoist";
 import { fakeEnv } from "./fake-env";
 
 afterEach(() => vi.unstubAllGlobals());

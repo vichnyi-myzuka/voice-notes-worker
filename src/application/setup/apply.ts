@@ -1,6 +1,6 @@
-import type { Env } from "../env";
-import type { Steps } from "../steps";
-import { sync } from "../todoist";
+import type { Env } from "../../infrastructure/env";
+import type { Steps } from "../../infrastructure/steps";
+import { sync } from "../../infrastructure/todoist";
 import { planSetup } from "./plan";
 import type { SetupPlan, SetupState } from "./types";
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildCaption, formatCaption, TEXT_CAPTION_MAX, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote } from "../src/note";
-import { taskValidator, type TodoistSnapshot, type TriageItem } from "../src/todoist";
+import { buildCaption, formatCaption, TEXT_CAPTION_MAX, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote } from "../src/domain/note";
+import { taskValidator, type TodoistSnapshot, type TriageItem } from "../src/infrastructure/todoist";
 
 const snap: TodoistSnapshot = {
 	projects: [

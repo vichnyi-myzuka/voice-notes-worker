@@ -1,5 +1,5 @@
-import type { Env } from "../env";
-import type { TriageItem } from "../todoist";
+import type { Env } from "../../infrastructure/env";
+import type { TriageItem } from "../../infrastructure/todoist";
 import type { InTodoist, TodoistOp } from "./types";
 
 export const sameItem = (a: TriageItem, b: TriageItem) =>

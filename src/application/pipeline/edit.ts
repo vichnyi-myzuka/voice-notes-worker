@@ -1,11 +1,11 @@
-import type { Env } from "../env";
-import { captionNotice, loadNote, removeNote, saveNote, showNote, type Note } from "../published";
-import { formatRecordedAt } from "../recording";
+import type { Env } from "../../infrastructure/env";
+import { captionNotice, loadNote, removeNote, saveNote, showNote, type Note } from "../../domain/published";
+import { formatRecordedAt } from "../../domain/recording";
 import { runSetup } from "../setup";
-import { openSteps } from "../steps";
+import { openSteps } from "../../infrastructure/steps";
 import { deleteOpenTasks, getInTodoist, syncTasks } from "../tasks";
-import { deleteOriginal, markEditing, telegramMessageUrl, tg, tgSendMessage } from "../telegram";
-import { trySnapshot } from "../todoist";
+import { deleteOriginal, markEditing, telegramMessageUrl, tg, tgSendMessage } from "../../infrastructure/telegram";
+import { trySnapshot } from "../../infrastructure/todoist";
 import { editNote, transcribe } from "../understand";
 import type { State } from "./types";
 

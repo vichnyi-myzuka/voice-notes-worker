@@ -1,8 +1,8 @@
-import type { Env } from "../env";
+import type { Env } from "../../infrastructure/env";
 import { CAPTION_MAX, TEXT_CAPTION_MAX, buildCaption, taskLinks, textNote, type Meta } from "../note";
-import { getInTodoist, withAppliedRecurrence } from "../tasks";
-import { NO_PREVIEW, tg } from "../telegram";
-import type { TriageItem } from "../todoist";
+import { getInTodoist, withAppliedRecurrence } from "../../application/tasks";
+import { NO_PREVIEW, tg } from "../../infrastructure/telegram";
+import type { TriageItem } from "../../infrastructure/todoist";
 import type { Note } from "./types";
 
 export const noteKey = (id: string) => `notes/${id}.json`;

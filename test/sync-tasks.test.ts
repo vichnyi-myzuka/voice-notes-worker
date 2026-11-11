@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openSteps } from "../src/steps";
-import { getInTodoist, syncTasks, type SyncState } from "../src/tasks";
-import { RULES_PROJECT, type TriageItem } from "../src/todoist";
+import { openSteps } from "../src/infrastructure/steps";
+import { getInTodoist, syncTasks, type SyncState } from "../src/application/tasks";
+import { RULES_PROJECT, type TriageItem } from "../src/infrastructure/todoist";
 import { fakeEnv } from "./fake-env";
 
 const item = (title: string, key: string, extra: Partial<TriageItem> = {}): TriageItem => ({
