@@ -411,7 +411,7 @@ describe("AgentSession", () => {
 			opencode.busy.clear();
 			opencode.info[ocId] = { outcome: "succeeded" };
 			await session.alarm();
-			expect(sent).toEqual([{ chat_id: 5, text: `✅ Готово\n\nЗробив PR: https://github.com/me/app/pull/7\n\n🔗 ${TARGET.url}`, link_preview_options: { is_disabled: true } }]);
+			expect(sent).toEqual([{ chat_id: 5, text: `✅ Готово\n\nЗробив PR: <a href="https://github.com/me/app/pull/7">me/app#7</a>\n\n🔗 <a href="${TARGET.url}">Відкрити сесію</a>`, parse_mode: "HTML", link_preview_options: { is_disabled: true } }]);
 			await session.alarm();
 			expect(sent).toHaveLength(1); // спостереження знято
 		});
@@ -448,7 +448,7 @@ describe("AgentSession", () => {
 			opencode.info[ocId] = { outcome: "failed" };
 			opencode.lastError = "Model unavailable";
 			await session.alarm();
-			expect(sent[0].text).toBe(`❌ Помилка: Model unavailable\n\n🔗 ${TARGET.url}`);
+			expect(sent[0].text).toBe(`❌ Помилка: Model unavailable\n\n🔗 <a href="${TARGET.url}">Відкрити сесію</a>`);
 		});
 
 		it("сесія, яку зупинили вручну, мовчить (про зупинку вже сказано)", async () => {
@@ -610,6 +610,29 @@ describe("AgentSession", () => {
 			expect(container.starts[1]).toMatchObject({ image: "image2" });
 			expect(container.starts[1]).not.toHaveProperty("containerSnapshot");
 			expect(opencode.seq).toBe(2); // стару історію втрачено, сесія нова
+		});
+
+		it("після деплою контейнер зі старого образу перезапускається сам, коли агенти вільні; знімок зі старого образу не робиться", async () => {
+			const { session, container, store, opencode } = await finishedTask();
+			container.images.base = "image2"; // деплой: контейнер ще працює зі старим образом
+			await session.alarm();
+			expect(store.has("snapshot")).toBe(false); // знімок із застарілого контейнера не підписуємо новим образом
+			await expect(session.snapshot()).rejects.toThrow(/older image/);
+			opencode.busy.add("ses_oc1");
+			await session.followUp(ID, "Ще");
+			expect(container.starts).toHaveLength(1); // агент зайнятий: не чіпаємо
+			opencode.busy.clear();
+			await session.followUp(ID, "Продовжуй");
+			expect(container.starts).toHaveLength(2);
+			expect(container.starts[1]).toMatchObject({ image: "image2" });
+			expect(store.get("launchedImage")).toBe("image2");
+		});
+
+		it("контейнер, запущений до появи запису про образ, вважається застарілим", async () => {
+			const { session, container, store } = await finishedTask();
+			store.delete("launchedImage");
+			await session.followUp(ID, "Продовжуй");
+			expect(container.starts).toHaveLength(2);
 		});
 
 		it("якщо знімок не відновився, видаляє його й стартує з чистого образу", async () => {

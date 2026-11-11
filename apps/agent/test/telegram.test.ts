@@ -61,7 +61,7 @@ describe("вебхук Telegram", () => {
 		const { send, sessions, replies, calls } = setup();
 		expect((await send(msg({ text: "Поправ README" }))).status).toBe(200);
 		expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Поправ README" }]);
-		expect(replies()).toEqual([`🔗 https://agent.example/s/tg-${OWNER}-7`]);
+		expect(replies()).toEqual([`🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
 		expect(calls.find((c) => c.method === "setMessageReaction")?.body).toMatchObject({ message_id: 7 });
 	});
 
@@ -70,7 +70,7 @@ describe("вебхук Telegram", () => {
 		await send(msg({ voice: { file_id: "f1", file_size: 1000, mime_type: "audio/ogg" } }));
 		expect(llm.transcribe).toHaveBeenCalledWith(expect.any(ArrayBuffer), "audio/ogg");
 		expect([...sessions.values()][0].input.prompt).toBe("Додай CHANGELOG");
-		expect(replies()).toEqual([`🗣 Додай CHANGELOG\n\n🔗 https://agent.example/s/tg-${OWNER}-7`]);
+		expect(replies()).toEqual([`🗣 Додай CHANGELOG\n\n🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
 	});
 
 	it("повторна доставка того самого повідомлення не створює другу сесію", async () => {
@@ -93,7 +93,7 @@ describe("вебхук Telegram", () => {
 		expect((await send(post({ text: "Поправ README" }))).status).toBe(200);
 		expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Поправ README" }]);
 		const sent = calls.find((c) => c.method === "sendMessage")!.body;
-		expect(sent).toMatchObject({ chat_id: CHANNEL, text: `Поправ README\n\n🔗 https://agent.example/s/tg-${CHANNEL}-9` });
+		expect(sent).toMatchObject({ chat_id: CHANNEL, text: `Поправ README\n\n🔗 <a href="https://agent.example/s/tg-${CHANNEL}-9">Відкрити сесію</a>`, parse_mode: "HTML" });
 		expect(calls.find((c) => c.method === "deleteMessage")?.body).toEqual({ chat_id: CHANNEL, message_id: 9 });
 		// порядок: спершу нова відповідь, потім видалення оригіналу
 		expect(calls.map((c) => c.method).filter((m) => ["sendMessage", "deleteMessage"].includes(m))).toEqual(["sendMessage", "deleteMessage"]);
@@ -182,6 +182,14 @@ describe("вебхук Telegram", () => {
 			const { send, sessions } = await withSession("Додай тести");
 			await send(msg({ voice: { file_id: "f1", file_size: 10 }, reply_to_message: botPost() }, 8));
 			expect(sessions.get(SID)?.messages.at(-1)).toBe("Додай тести");
+		});
+
+		it("посилання сховане під «Відкрити сесію» (text_link): відповідь однаково знаходить сесію", async () => {
+			const { send, sessions } = await withSession();
+			const hidden = { message_id: 100, text: "задача\n\n🔗 Відкрити сесію", entities: [{ type: "text_link", offset: 10, length: 14, url: `https://agent.example/s/${SID}` }] };
+			await send(msg({ text: "Ще й CHANGELOG", reply_to_message: hidden }, 8));
+			expect(sessions.size).toBe(1);
+			expect(sessions.get(SID)?.messages).toEqual(["Поправ README", "Ще й CHANGELOG"]);
 		});
 
 		it("відповідь на повідомлення без посилання на сесію — звичайна нова задача", async () => {
