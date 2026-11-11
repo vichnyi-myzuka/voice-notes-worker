@@ -4,10 +4,10 @@ import type { AgentStatus, StartInput } from "../../domain/agent";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, createSession, hasModel, interrupt, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
-const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
+const DEFAULT_INACTIVITY_MS = 60 * 60 * 1000;
 const READY_ATTEMPTS = 150;
 // Знімок диска робимо не частіше й лише коли була активність; поки контейнер працює, alarm перевіряє це.
-const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 
 // Знімок прив'язаний до образу, з якого створений: після зміни образу його відновити не можна.
 type SavedSnapshot = { id: string; image: string; at: number };
@@ -20,8 +20,17 @@ export class AgentSession extends DurableObject<Env> {
 		super(ctx, env);
 		const container = ctx.container;
 		if (container?.running) {
-			void ctx.blockConcurrencyWhile(() => container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS));
+			void ctx.blockConcurrencyWhile(() => container.setInactivityTimeout(this.inactivityMs()));
 		}
+	}
+
+	// Тривалості з необов'язкових змінних воркера (для коротких перевірок); некоректні значення ігноруються.
+	private inactivityMs(): number {
+		return positiveInt(this.env.AGENT_INACTIVITY_MS) ?? DEFAULT_INACTIVITY_MS;
+	}
+
+	private snapshotIntervalMs(): number {
+		return positiveInt(this.env.AGENT_SNAPSHOT_INTERVAL_MS) ?? DEFAULT_SNAPSHOT_INTERVAL_MS;
 	}
 
 	private opencode(): Opencode {
@@ -61,7 +70,7 @@ export class AgentSession extends DurableObject<Env> {
 			restored = !!saved && saved.image === container.images.base;
 			await this.launch(restored ? saved : undefined);
 		}
-		await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
+		await container.setInactivityTimeout(this.inactivityMs());
 		try {
 			await this.waitReady(started && !restored);
 		} catch (err) {
@@ -71,7 +80,7 @@ export class AgentSession extends DurableObject<Env> {
 			await container.destroy();
 			await this.ctx.storage.delete("snapshot");
 			await this.launch(undefined);
-			await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
+			await container.setInactivityTimeout(this.inactivityMs());
 			await this.waitReady(true);
 		}
 	}
@@ -115,7 +124,7 @@ export class AgentSession extends DurableObject<Env> {
 	// Позначає активність і, якщо alarm ще не заплановано, планує перевірку знімка.
 	private async markActive(): Promise<void> {
 		await this.ctx.storage.put("activeAt", Date.now());
-		if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + SNAPSHOT_INTERVAL_MS);
+		if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + this.snapshotIntervalMs());
 	}
 
 	// Alarm зберігає диск контейнера, коли агент вільний і з минулого знімка щось змінилось. Перепланує себе лише поки
@@ -137,7 +146,7 @@ export class AgentSession extends DurableObject<Env> {
 		} catch (err) {
 			// Зайнятий агент або тимчасова помилка: повторимо наступного разу.
 			console.error("snapshot skipped:", err);
-			await this.ctx.storage.setAlarm(Date.now() + SNAPSHOT_INTERVAL_MS);
+			await this.ctx.storage.setAlarm(Date.now() + this.snapshotIntervalMs());
 		}
 	}
 
@@ -191,6 +200,11 @@ export class AgentSession extends DurableObject<Env> {
 		headers.delete("cookie"); // cookie вибору сесії контейнеру не потрібна
 		return this.ctx.container!.getTcpPort(OPENCODE_PORT).fetch(new Request(`http://container${url.pathname}${url.search}`, new Request(request, { headers })));
 	}
+}
+
+function positiveInt(value: string | undefined): number | undefined {
+	const n = Number(value);
+	return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
 function containerEnv(env: Env, repo: string | undefined): Record<string, string> {
