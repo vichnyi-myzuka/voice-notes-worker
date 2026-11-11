@@ -332,10 +332,14 @@ describe("AgentSession", () => {
 			TODOIST_TOKEN: "todoist",
 			CLAUDE_CODE_OAUTH_TOKEN: "claude",
 			GITHUB_TOKEN: "gh",
+			R2_ACCESS_KEY_ID: "k",
+			R2_SECRET_ACCESS_KEY: "s",
+			R2_ENDPOINT: "https://acc.r2.cloudflarestorage.com",
+			SITES_BASE_URL: "https://sites.example",
 		});
 		await session.start(ID, { prompt: "Задача" });
 		const env = container.starts[0].env as Record<string, string>;
-		expect(Object.keys(env).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "OPENCODE_PASSWORD"]);
+		expect(Object.keys(env).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "OPENCODE_PASSWORD", "R2_ACCESS_KEY_ID", "R2_ENDPOINT", "R2_SECRET_ACCESS_KEY", "SITES_BASE_URL"]);
 	});
 
 	describe("відстеження сесій: підсумок у чаті й ліміти", () => {

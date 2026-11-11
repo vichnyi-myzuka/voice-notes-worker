@@ -1,6 +1,6 @@
 import type { Agent } from "../../domain/agent";
 import type { Env } from "../../env";
-import { verifyAccess } from "../../infrastructure/access";
+import { verifyAccess } from "@voice-notes/core";
 
 const ID = /^[a-z0-9-]{8,64}$/;
 const REPO = /^[\w-][\w.-]*\/[\w-][\w.-]*$/;

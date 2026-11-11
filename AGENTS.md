@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Правила роботи з репозиторієм для агентів. Репозиторій — моно-репо на npm workspaces: `apps/*` (воркери: `apps/notes` — нотатки, `apps/agent` — спільний контейнер з OpenCode і сесії агента в ньому), `packages/*` (спільний код). Застосунки залежать від пакетів, але не один від одного; пакет імпортується лише через свій `index.ts`. Як працює бот, описано в `README.md`; тут лише те, чого з README не видно.
+Правила роботи з репозиторієм для агентів. Репозиторій — моно-репо на npm workspaces: `apps/*` (воркери: `apps/notes` — нотатки, `apps/agent` — спільний контейнер з OpenCode і сесії агента в ньому, `apps/sites` — віддача статичних сайтів агента з R2), `packages/*` (спільний код). Застосунки залежать від пакетів, але не один від одного; пакет імпортується лише через свій `index.ts`. Як працює бот, описано в `README.md`; тут лише те, чого з README не видно.
 
 ## Робочий цикл
 
@@ -25,8 +25,9 @@
 Порти `Channel` і `Llm`, їхні адаптери (`telegram`, `llm`), `openSteps`, `safeEqual` і JSON-типи живуть у `packages/core` (імпорт `@voice-notes/core`); решта шляхів нижче — всередині `apps/notes/`. У тестах мок внутрішнього модуля core (напр. `safeEqual`) робиться за шляхом файлу в `packages/core/src`. Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../../application/tasks`; в межах шару — `../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`. Ядро (domain, application, interface) нічого не знає про Telegram і Todoist: воно працює з портами `Channel`, `TaskTracker`, `NoteRepository`, `TaskLedger`, `Llm` (у `domain`), адаптери — `infrastructure/{todoist,r2}` тут і `telegram`, `llm` у `packages/core`, складання — у `src/index.ts`. Службові дані каналу (`fileId`, `deleteChatId` тощо) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
 
 ```
-apps/agent/src/        domain/agent (порт Agent), infrastructure/{container (AgentSession — один Durable Object `main` з єдиним контейнером і всіма сесіями, durableAgent — адаптер порту), access (JWT Cloudflare Access)}, interface/http; тести з фейком `test/fake-agent.ts`
-packages/core/src/      спільне: domain/{channel,llm,json}, infrastructure/{telegram,llm,steps,security}; публічний вхід — index.ts
+apps/agent/src/        domain/agent (порт Agent), infrastructure/{container (AgentSession — один Durable Object `main` з єдиним контейнером і всіма сесіями, durableAgent — адаптер порту)}, interface/{http, telegram (вебхук чату з агентом повз Access)}; container/ — образ (AGENTS.md агента, publish, git-хуки); тести з фейком `test/fake-agent.ts`
+packages/core/src/      спільне: domain/{channel,llm,json}, infrastructure/{telegram,llm,steps,security,access}; публічний вхід — index.ts
+apps/sites/src/        serve (шлях → ключ R2, віддача), index (перевірка Access); тести з R2 у пам'яті
 apps/notes/src/index.ts  entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
 src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
   interface/           точки входу

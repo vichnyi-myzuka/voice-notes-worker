@@ -28,5 +28,11 @@ export interface Env {
 	TG_OWNER_ID?: string;
 	CHAT_ID?: string; // канал, у який публікуєш задачі (бот адмін): працює так само, як канал бота нотаток
 	AI: Ai;
+	// Публікація статичних сайтів (команда `publish` у контейнері): ключ R2 лише на бакет `agent-sites`, endpoint акаунта
+	// (`https://<account>.r2.cloudflarestorage.com`) і адреса воркера сайтів. Усе йде в контейнер.
+	R2_ACCESS_KEY_ID?: string;
+	R2_SECRET_ACCESS_KEY?: string;
+	R2_ENDPOINT?: string;
+	SITES_BASE_URL?: string;
 	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access
 }
