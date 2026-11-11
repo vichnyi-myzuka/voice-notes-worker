@@ -9,6 +9,7 @@ export function fakeAgent(origin = "https://agent.example") {
 	const sessions = new Map<string, FakeSession>();
 	const served: string[] = [];
 	const snapshots: string[] = [];
+	const resets: string[] = [];
 	const watches: { id: string; target: WatchTarget }[] = [];
 	let snapshotError = "";
 	const get = (id: string) => {
@@ -56,11 +57,14 @@ export function fakeAgent(origin = "https://agent.example") {
 		async info() {
 			return { running: true, activeAt: 1, alarmAt: null, snapshot: null, streams: [] };
 		},
+		async resetComputer() {
+			resets.push("reset");
+		},
 		async snapshot() {
 			if (snapshotError) throw new Error(snapshotError);
 			snapshots.push("snap");
 			return { id: `snap${snapshots.length}`, bytes: 1, ms: 2 };
 		},
 	};
-	return { agent, sessions, served, snapshots, watches, failSnapshot: (message: string) => void (snapshotError = message) };
+	return { agent, sessions, served, snapshots, resets, watches, failSnapshot: (message: string) => void (snapshotError = message) };
 }
