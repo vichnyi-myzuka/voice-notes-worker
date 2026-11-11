@@ -1,7 +1,8 @@
 // Порт агента: сесія з автономним агентом, якій можна поставити задачу, дописати уточнення, спитати статус і яку можна зупинити.
 // Реалізація — infrastructure/container (Durable Object + контейнер з OpenCode).
 
-export type StartInput = { prompt: string; repo?: string };
+// name: коротка назва за змістом задачі (kebab-case); з неї складаються тека й гілка сесії, без неї — технічний id
+export type StartInput = { prompt: string; repo?: string; name?: string };
 
 // working — агент виконує задачу; idle — завершив або чекає на відповідь; stopped — контейнер не працює (заснув або зупинений).
 export type AgentStatus = "working" | "idle" | "stopped";
@@ -50,7 +51,7 @@ export type Agent = {
 	watch(id: string, target: WatchTarget): Promise<void>;
 	// Перериває поточну роботу агента; сесія лишається, їй можна дописати далі.
 	abort(id: string): Promise<void>;
-	// Видаляє сесію: історію в OpenCode і теку (worktree) в контейнері; гілка agent/<id> з комітами лишається в клоні
+	// Видаляє сесію: історію в OpenCode і теку (worktree) в контейнері; гілка agent/<назва> з комітами лишається в клоні
 	remove(id: string): Promise<void>;
 	// Веб-інтерфейс: проксі запиту в спільний контейнер (усі сесії в одному інтерфейсі).
 	serve(req: Request): Promise<Response>;

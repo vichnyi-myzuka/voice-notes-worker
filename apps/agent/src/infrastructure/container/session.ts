@@ -31,11 +31,14 @@ type Watch = { ocId: string; chatId: number; url: string; since: number; seenBus
 type SavedSnapshot = { id: string; image: string; at: number };
 
 // Сесія агента в спільному контейнері: id сесії (наш ключ ідемпотентності) → сесія OpenCode і репозиторій.
-type Tracked = { ocId: string; repo?: string };
+// folder: назва теки (і гілки agent/<folder>); у старих записів немає, тоді це сам id.
+type Tracked = { ocId: string; repo?: string; folder?: string };
 
 const sessionKey = (id: string) => `session:${id}`;
 const watchKey = (id: string) => `watch:${id}`;
-const sessionDir = (id: string) => `/workspace/sessions/${id}`;
+const sessionDir = (folder: string) => `/workspace/sessions/${folder}`;
+// Тека й гілка за змістом задачі: `<назва>-<останній сегмент id>` (номер повідомлення робить її унікальною); без назви — id.
+const folderFor = (id: string, name?: string) => (name ? `${name}-${id.split("-").at(-1)}` : id);
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -259,14 +262,14 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Готує теку сесії в контейнері (клон + worktree або порожня тека) і повертає її шлях. exec не успадковує env контейнера,
 	// тому токен передаємо явно. Викликається лише всередині serial().
-	private async prepare(id: string, repo: string | undefined): Promise<string> {
-		const proc = await this.ctx.container!.exec(["session-prep", id, ...(repo ? [repo] : [])], {
+	private async prepare(folder: string, repo: string | undefined): Promise<string> {
+		const proc = await this.ctx.container!.exec(["session-prep", folder, ...(repo ? [repo] : [])], {
 			cwd: "/workspace",
 			env: { HOME: "/root", ...(this.env.GITHUB_TOKEN && { GITHUB_TOKEN: this.env.GITHUB_TOKEN }) },
 		});
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`session-prep failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
-		return new TextDecoder().decode(out.stdout).trim() || sessionDir(id);
+		return new TextDecoder().decode(out.stdout).trim() || sessionDir(folder);
 	}
 
 	// Ідемпотентно за id: повторний виклик не створює другу сесію OpenCode й не готує теку вдруге.
@@ -277,9 +280,10 @@ export class AgentSession extends DurableObject<Env> {
 		return this.serial(async () => {
 			const again = await this.ctx.storage.get<Tracked>(sessionKey(id));
 			if (again) return { sessionId: again.ocId };
-			const directory = await this.prepare(id, input.repo);
+			const folder = folderFor(id, input.name);
+			const directory = await this.prepare(folder, input.repo);
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.model());
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo } satisfies Tracked);
+			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder } satisfies Tracked);
 			await prompt(this.opencode(), ocId, input.prompt);
 			await this.markActive();
 			return { sessionId: ocId };
@@ -301,7 +305,7 @@ export class AgentSession extends DurableObject<Env> {
 		let ocId = tracked.ocId;
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.serial(async () => {
-				const directory = await this.prepare(id, tracked.repo);
+				const directory = await this.prepare(tracked.folder ?? id, tracked.repo);
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.model());
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
@@ -351,7 +355,7 @@ export class AgentSession extends DurableObject<Env> {
 		await interrupt(this.opencode(), tracked.ocId);
 	}
 
-	// Видалення сесії: історія в OpenCode, worktree (або порожня тека) і записи в сховищі. Гілка agent/<id> лишається в спільному
+	// Видалення сесії: історія в OpenCode, worktree (або порожня тека) і записи в сховищі. Гілка agent/<назва> лишається в спільному
 	// клоні, щоб не втратити закомічену роботу; незакомічене зникає. Невідома сесія: нічого не робимо.
 	async remove(id: string): Promise<void> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
@@ -361,7 +365,7 @@ export class AgentSession extends DurableObject<Env> {
 		await deleteSession(this.opencode(), tracked.ocId);
 		await this.serial(async () => {
 			const proc = await this.ctx.container!.exec(
-				["sh", "-c", 'dir=/workspace/sessions/"$1"; if [ -e "$dir/.git" ]; then common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir) && git -C "$common/.." worktree remove --force "$dir"; fi; rm -rf "$dir"', "sh", id],
+				["sh", "-c", 'dir=/workspace/sessions/"$1"; if [ -e "$dir/.git" ]; then common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir) && git -C "$common/.." worktree remove --force "$dir"; fi; rm -rf "$dir"', "sh", tracked.folder ?? id],
 				{ cwd: "/workspace", env: { HOME: "/root" } },
 			);
 			const out = await proc.output();
