@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Llm } from "@voice-notes/core";
 import type { Env } from "../src/env";
 import { handleTelegram } from "../src/interface/telegram";
+import { describe as describeReport } from "../src/interface/telegram/handle";
 import { fakeAgent } from "./fake-agent";
 
 // timingSafeEqual є лише в workerd: у Node мокаємо порівняння (мок за шляхом файлу в core).
@@ -137,6 +138,85 @@ describe("вебхук Telegram", () => {
 		await send(msg({ text: "/help" }, 8));
 		expect(sessions.size).toBe(0);
 		expect(replies()).toHaveLength(1);
+	});
+
+	describe("керування сесією з чату", () => {
+		const SID = `tg-${OWNER}-7`;
+		const botPost = (text = `задача\n\n🔗 https://agent.example/s/${SID}`) => ({ message_id: 100, text });
+		// Сесія вже створена першим повідомленням, далі користувач відповідає на пост бота.
+		const withSession = async (transcript?: string) => {
+			const t = setup(transcript);
+			await t.send(msg({ text: "Поправ README" }));
+			t.calls.length = 0;
+			return t;
+		};
+
+		it("нова сесія береться під спостереження: після завершення підсумок прийде в той самий чат", async () => {
+			const { send, watches } = setup();
+			await send(msg({ text: "Поправ README" }));
+			expect(watches).toEqual([{ id: SID, target: { chatId: OWNER, url: `https://agent.example/s/${SID}` } }]);
+		});
+
+		it("відповідь текстом на пост із сесією — уточнення в ту саму сесію, нової сесії немає", async () => {
+			const { send, sessions, watches, replies } = await withSession();
+			await send(msg({ text: "Ще й CHANGELOG", reply_to_message: botPost() }, 8));
+			expect(sessions.size).toBe(1);
+			expect(sessions.get(SID)?.messages).toEqual(["Поправ README", "Ще й CHANGELOG"]);
+			expect(watches).toHaveLength(2); // стежимо за новою роботою
+			expect(replies()).toEqual([]);
+		});
+
+		it("відповідь голосом: розпізнається й іде в ту саму сесію", async () => {
+			const { send, sessions } = await withSession("Додай тести");
+			await send(msg({ voice: { file_id: "f1", file_size: 10 }, reply_to_message: botPost() }, 8));
+			expect(sessions.get(SID)?.messages.at(-1)).toBe("Додай тести");
+		});
+
+		it("відповідь на повідомлення без посилання на сесію — звичайна нова задача", async () => {
+			const { send, sessions } = await withSession();
+			await send(msg({ text: "Нова задача", reply_to_message: botPost("просто текст") }, 8));
+			expect(sessions.size).toBe(2);
+		});
+
+		it("відповідь на пост чужої сесії — підказка, а не помилка чи нова сесія", async () => {
+			const { send, sessions, replies } = await withSession();
+			await send(msg({ text: "Продовж", reply_to_message: botPost("🔗 https://agent.example/s/tg-1-1") }, 8));
+			expect(sessions.size).toBe(1);
+			expect(replies()[0]).toContain("Сесію не знайдено");
+		});
+
+		it("/status показує стан, /stop зупиняє роботу, повторний /stop нічого не робить", async () => {
+			const { send, sessions, replies } = await withSession();
+			await send(msg({ text: "/status", reply_to_message: botPost() }, 8));
+			await send(msg({ text: "/stop", reply_to_message: botPost() }, 9));
+			expect(sessions.get(SID)?.status).toBe("idle");
+			await send(msg({ text: "/stop", reply_to_message: botPost() }, 10));
+			await send(msg({ text: "/status", reply_to_message: botPost() }, 11));
+			expect(replies()).toEqual(["⏳ Працює", "⏹ Зупинено. Відповідь на пост із сесією продовжить роботу.", "Нічого зупиняти: ⏹ Зупинена", "⏹ Зупинена"]);
+		});
+
+		it("команда без відповіді на пост просить відповісти на пост із сесією", async () => {
+			const { send, replies } = setup();
+			await send(msg({ text: "/status" }));
+			expect(replies()).toEqual(["Надішли /status відповіддю на пост із сесією."]);
+		});
+
+		it("«owner/name: задача» задає репозиторій, решта тексту — задача", async () => {
+			const { send, sessions, replies } = setup();
+			await send(msg({ text: "vichnyi-myzuka/voice-notes-worker: Поправ README" }));
+			expect([...sessions.values()][0].input).toEqual({ prompt: "Поправ README", repo: "vichnyi-myzuka/voice-notes-worker" });
+			expect(replies()[0]).toContain("📦 vichnyi-myzuka/voice-notes-worker");
+			await send(msg({ text: "Подивись https://example.com: що там" }, 8)); // посилання — не репозиторій
+			expect([...sessions.values()][1].input).toEqual({ prompt: "Подивись https://example.com: що там" });
+		});
+
+		it("describe: працює / чекає / завершила / помилка / зупинена / сплячий контейнер, з вартістю", () => {
+			expect(describeReport({ status: "working" })).toBe("⏳ Працює");
+			expect(describeReport({ status: "idle" })).toBe("💤 Чекає на відповідь");
+			expect(describeReport({ status: "idle", outcome: "succeeded", cost: 0.4, tokens: 12_400 })).toBe("✅ Завершила ($0.40 · 12k токенів)");
+			expect(describeReport({ status: "idle", outcome: "failed" })).toBe("❌ Завершилась помилкою");
+			expect(describeReport({ status: "stopped" })).toContain("Контейнер спить");
+		});
 	});
 
 	it("збій агента — повідомлення про помилку, а Telegram усе одно отримує 200", async () => {

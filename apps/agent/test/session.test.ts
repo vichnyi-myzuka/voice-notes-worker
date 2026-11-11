@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // У Node немає модуля cloudflare:workers: підставляємо мінімальний DurableObject.
 vi.mock("cloudflare:workers", () => ({
@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], execFails: false, procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -104,7 +104,8 @@ function fakeContainer() {
 					opencode.busy.delete(m[1]);
 					return Response.json({ interrupted: true });
 				}
-				if (m) return ok({ id: m[1] });
+				if (path.match(/^\/api\/session\/[^/]+\/message$/)) return ok([{ content: [{ type: "text", text: opencode.lastText }], ...(opencode.lastError && { error: { message: opencode.lastError } }) }]);
+				if (m) return ok({ id: m[1], ...opencode.info[m[1]] });
 				return new Response(`ui ${path}`);
 			},
 		}),
@@ -124,6 +125,7 @@ function setup(extraEnv: Record<string, string> = {}) {
 			delete: async (k: string) => void store.delete(k),
 			getAlarm: async () => alarm.at,
 			setAlarm: async (at: number) => void (alarm.at = at),
+			list: async ({ prefix }: { prefix: string }) => new Map([...store].filter(([k]) => k.startsWith(prefix))),
 		},
 		blockConcurrencyWhile: (fn: () => Promise<void>) => fn(),
 		waitUntil: () => {},
@@ -317,6 +319,135 @@ describe("AgentSession", () => {
 		expect(await session.connections(false)).toEqual({ running: true });
 		expect(opencode.execs).toEqual([]); // без detail exec не викликається
 		expect(await session.connections(true)).toEqual({ running: true, ssh: { listening: true, connections: 2 }, opencode: { listening: true, connections: 1 } });
+	});
+
+	it("у контейнер не потрапляють секрети чату, Access і чужих сервісів: лише дозволений набір", async () => {
+		const { session, container } = setup({
+			BOT_TOKEN: "bot",
+			TG_WEBHOOK_SECRET: "w",
+			TG_OWNER_ID: "1",
+			CHAT_ID: "-100",
+			ACCESS_AUD: "aud",
+			ACCESS_TEAM_DOMAIN: "t",
+			TODOIST_TOKEN: "todoist",
+			CLAUDE_CODE_OAUTH_TOKEN: "claude",
+			GITHUB_TOKEN: "gh",
+		});
+		await session.start(ID, { prompt: "Задача" });
+		const env = container.starts[0].env as Record<string, string>;
+		expect(Object.keys(env).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "OPENCODE_PASSWORD"]);
+	});
+
+	describe("відстеження сесій: підсумок у чаті й ліміти", () => {
+		const TARGET = { chatId: 5, url: "https://agent.example/s/session-0001" };
+		const sent: { chat_id: number; text: string }[] = [];
+		beforeEach(() => {
+			sent.length = 0;
+			vi.useFakeTimers({ toFake: ["Date"] });
+			vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+				sent.push(JSON.parse(init.body as string));
+				return Response.json({ ok: true, result: { message_id: 1 } });
+			});
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+			vi.stubGlobal("scheduler", { wait: async () => {} });
+		});
+
+		const watched = async (extraEnv: Record<string, string> = {}) => {
+			const t = setup({ BOT_TOKEN: "bot", ...extraEnv });
+			await t.session.start(ID, { prompt: "Задача" });
+			await t.session.watch(ID, TARGET);
+			return t;
+		};
+		const ocId = "ses_oc1";
+
+		it("поки сесія працює, повідомлення немає, alarm частий; по завершенню приходить підсумок один раз", async () => {
+			const { session, opencode, alarm } = await watched();
+			opencode.lastText = "Зробив PR: https://github.com/me/app/pull/7";
+			await session.alarm();
+			expect(sent).toEqual([]);
+			expect(alarm.at).toBeLessThanOrEqual(Date.now() + 15_000);
+
+			opencode.busy.clear();
+			opencode.info[ocId] = { outcome: "succeeded" };
+			await session.alarm();
+			expect(sent).toEqual([{ chat_id: 5, text: `✅ Готово\n\nЗробив PR: https://github.com/me/app/pull/7\n\n🔗 ${TARGET.url}`, link_preview_options: { is_disabled: true } }]);
+			await session.alarm();
+			expect(sent).toHaveLength(1); // спостереження знято
+		});
+
+		it("помилка сесії: у чат іде причина", async () => {
+			const { session, opencode } = await watched();
+			await session.alarm(); // бачимо, що працює
+			opencode.busy.clear();
+			opencode.info[ocId] = { outcome: "failed" };
+			opencode.lastError = "Model unavailable";
+			await session.alarm();
+			expect(sent[0].text).toBe(`❌ Помилка: Model unavailable\n\n🔗 ${TARGET.url}`);
+		});
+
+		it("сесія, яку зупинили вручну, мовчить (про зупинку вже сказано)", async () => {
+			const { session, opencode } = await watched();
+			await session.alarm();
+			opencode.busy.clear();
+			opencode.info[ocId] = { outcome: "interrupted" };
+			await session.alarm();
+			expect(sent).toEqual([]);
+		});
+
+		it("швидка сесія, якої ми не встигли побачити працюючою, теж отримує підсумок, але не одразу", async () => {
+			const { session, opencode } = await watched();
+			opencode.busy.clear();
+			opencode.info[ocId] = { outcome: "succeeded" };
+			opencode.lastText = "Готово швидко";
+			await session.alarm();
+			expect(sent).toEqual([]); // ще можливо, що вона не стартувала
+			vi.setSystemTime(Date.now() + 30_000);
+			await session.alarm();
+			expect(sent[0].text).toContain("Готово швидко");
+		});
+
+		it("перевищення вартості зупиняє сесію й повідомляє", async () => {
+			const { session, opencode } = await watched({ AGENT_MAX_COST_USD: "1" });
+			opencode.info[ocId] = { cost: 1.5 };
+			await session.alarm();
+			expect(opencode.aborted).toEqual([ocId]);
+			expect(sent[0].text).toContain("вартість $1.50 (ліміт $1)");
+			await session.alarm();
+			expect(sent).toHaveLength(1);
+		});
+
+		it("перевищення токенів зупиняє і сесію без спостереження (запущену з веб-інтерфейсу), без повідомлення", async () => {
+			const { session, opencode } = setup({ BOT_TOKEN: "bot", AGENT_MAX_TOKENS: "1000" });
+			await session.start(ID, { prompt: "Задача" }); // без watch
+			opencode.info[ocId] = { tokens: { input: 600, output: 500 } };
+			await session.alarm();
+			expect(opencode.aborted).toEqual([ocId]);
+			expect(sent).toEqual([]);
+		});
+
+		it("контейнер зупинився, не дочекавшись завершення: повідомлення й кінець спостереження", async () => {
+			const { session, container } = await watched();
+			container.running = false;
+			await session.alarm();
+			expect(sent[0].text).toContain("Контейнер зупинився");
+			await session.alarm();
+			expect(sent).toHaveLength(1);
+		});
+
+		it("report: статус, результат і вартість; сплячий контейнер не будить", async () => {
+			const { session, container, opencode } = setup();
+			await session.start(ID, { prompt: "Задача" });
+			expect(await session.report(ID)).toEqual({ status: "working" });
+			opencode.busy.clear();
+			opencode.info[ocId] = { outcome: "succeeded", cost: 0.42, tokens: { input: 100, output: 20 } };
+			expect(await session.report(ID)).toEqual({ status: "idle", outcome: "succeeded", cost: 0.42, tokens: 120 });
+			container.running = false;
+			expect(await session.report(ID)).toEqual({ status: "stopped" });
+			expect(await session.report("nope-0000")).toEqual({ status: "stopped" });
+		});
 	});
 
 	describe("знімки диска", () => {

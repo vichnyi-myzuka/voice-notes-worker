@@ -1,10 +1,12 @@
-import type { Agent, AgentStatus, ComputerInfo, ConnectionsInfo, SnapshotInfo, StartInput } from "../../domain/agent";
+import type { Agent, AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 
 // Що має вміти Durable Object, щоб за ним працював порт Agent: він володіє єдиним контейнером і всіма сесіями в ньому.
 export type SessionObject = {
 	start(id: string, input: StartInput): Promise<unknown>;
 	followUp(id: string, text: string): Promise<void>;
 	status(id: string): Promise<AgentStatus>;
+	report(id: string): Promise<SessionReport>;
+	watch(id: string, target: WatchTarget): Promise<void>;
 	abort(id: string): Promise<void>;
 	link(id: string): Promise<string | undefined>;
 	snapshot(): Promise<SnapshotInfo>;
@@ -26,6 +28,8 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		},
 		followUp: (id, text) => computer().followUp(id, text),
 		status: (id) => computer().status(id),
+		report: (id) => computer().report(id),
+		watch: (id, target) => computer().watch(id, target),
 		abort: (id) => computer().abort(id),
 		serve: (req) => computer().fetch(req),
 		link: (id) => computer().link(id),

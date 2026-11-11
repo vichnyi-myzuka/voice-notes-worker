@@ -1,1 +1,1 @@
-export type { Agent, AgentStatus, ComputerInfo, ConnectionsInfo, PortInfo, SessionRef, SnapshotInfo, StartInput } from "./types";
+export type { Agent, AgentStatus, ComputerInfo, ConnectionsInfo, PortInfo, SessionRef, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "./types";

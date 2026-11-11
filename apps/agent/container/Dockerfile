@@ -21,7 +21,10 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
 COPY entrypoint.sh /entrypoint.sh
 COPY git-auth.sh /usr/local/lib/git-auth.sh
 COPY session-prep /usr/local/bin/session-prep
-RUN chmod +x /entrypoint.sh /usr/local/bin/session-prep
+# Запобіжник: пуш у main/master відхиляється (див. git-hooks/pre-push).
+COPY git-hooks /usr/local/lib/git-hooks
+RUN chmod +x /entrypoint.sh /usr/local/bin/session-prep /usr/local/lib/git-hooks/pre-push \
+	&& git config --system core.hooksPath /usr/local/lib/git-hooks
 
 WORKDIR /workspace
 EXPOSE 4096

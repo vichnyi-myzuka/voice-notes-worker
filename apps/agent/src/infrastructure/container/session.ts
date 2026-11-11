@@ -1,8 +1,9 @@
+import { tg } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import type { AgentStatus, ComputerInfo, ConnectionsInfo, SnapshotInfo, StartInput } from "../../domain/agent";
+import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { parseConnections } from "./connections";
-import { OPENCODE_PORT, basicAuth, connectClaudeAgent, createSession, hasModel, interrupt, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
+import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const DEFAULT_INACTIVITY_MS = 60 * 60 * 1000;
@@ -13,6 +14,19 @@ const STREAM_MAX_MS = 10 * 60 * 1000;
 // Знімок диска робимо не частіше й лише коли була активність; поки контейнер працює, alarm перевіряє це.
 const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 
+// Поки сесія працює чи за нею стежать, alarm спрацьовує частіше: підсумок у чаті й ліміти витрат.
+const WATCH_INTERVAL_MS = 15 * 1000;
+// Сесія, що не повернулась у вільний стан за цей час, перестає відстежуватись (контейнер міг загинути).
+const WATCH_MAX_MS = 2 * 60 * 60 * 1000;
+// Запобіжники за замовчуванням: вартість однієї сесії (USD) і токени (вхід + вихід + reasoning, без кешу).
+const DEFAULT_MAX_COST_USD = 5;
+const DEFAULT_MAX_TOKENS = 3_000_000;
+const SUMMARY_MAX = 3000; // підсумок у чат: решта обрізається (ліміт повідомлення Telegram — 4096)
+
+// За сесією стежать, щоб повідомити в чат про завершення. seenBusy: чи бачили ми її працюючою (щойно запущена сесія ще може
+// не з'явитись серед активних, тому без цього «вільна» означало б «ще не почала»).
+type Watch = { ocId: string; chatId: number; url: string; since: number; seenBusy: boolean };
+
 // Знімок прив'язаний до образу, з якого створений: після зміни образу його відновити не можна.
 type SavedSnapshot = { id: string; image: string; at: number };
 
@@ -20,6 +34,7 @@ type SavedSnapshot = { id: string; image: string; at: number };
 type Tracked = { ocId: string; repo?: string };
 
 const sessionKey = (id: string) => `session:${id}`;
+const watchKey = (id: string) => `watch:${id}`;
 const sessionDir = (id: string) => `/workspace/sessions/${id}`;
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
@@ -143,6 +158,8 @@ export class AgentSession extends DurableObject<Env> {
 	// є що зберігати: постійний alarm не давав би контейнеру заснути.
 	async alarm(): Promise<void> {
 		const container = this.ctx.container;
+		// Поки хтось працює чи за кимось стежать, опитуємо часто (підсумки, ліміти) й знімок відкладаємо.
+		if (await this.tick()) return void (await this.ctx.storage.setAlarm(Date.now() + WATCH_INTERVAL_MS));
 		if (!container?.running) return; // контейнер уже спить: знімати нічого
 		const [activeAt = 0, saved] = await Promise.all([this.ctx.storage.get<number>("activeAt"), this.ctx.storage.get<SavedSnapshot>("snapshot")]);
 		if (saved && saved.image === container.images.base && saved.at >= activeAt) return; // нових змін немає
@@ -154,6 +171,66 @@ export class AgentSession extends DurableObject<Env> {
 			console.error("snapshot skipped:", err);
 			await this.ctx.storage.setAlarm(Date.now() + this.snapshotIntervalMs());
 		}
+	}
+
+	// Один оберт опитування: зупиняє сесії, що перевищили ліміти, і повідомляє в чат про завершені. Повертає true, поки є що
+	// відстежувати (працюють сесії чи лишились спостереження).
+	private async tick(): Promise<boolean> {
+		const watches = await this.ctx.storage.list<Watch>({ prefix: "watch:" });
+		const container = this.ctx.container;
+		if (!container?.running) {
+			// Контейнер зупинився, а робота не завершилась: сказати про це й більше не стежити.
+			for (const [key, w] of watches) await this.finishWatch(key, w, "⚠️ Контейнер зупинився, не дочекавшись завершення. Напиши уточнення, щоб продовжити.");
+			return false;
+		}
+		const oc = this.opencode();
+		const active = new Set(await activeSessions(oc));
+		const maxCost = positiveNumber(this.env.AGENT_MAX_COST_USD) ?? DEFAULT_MAX_COST_USD;
+		const maxTokens = positiveInt(this.env.AGENT_MAX_TOKENS) ?? DEFAULT_MAX_TOKENS;
+		const byOc = new Map([...watches].map(([key, w]) => [w.ocId, [key, w] as const]));
+
+		for (const ocId of active) {
+			const info = await getSession(oc, ocId);
+			const tokens = totalTokens(info);
+			const over = (info.cost ?? 0) > maxCost ? `вартість $${(info.cost ?? 0).toFixed(2)} (ліміт $${maxCost})` : tokens > maxTokens ? `${tokens} токенів (ліміт ${maxTokens})` : "";
+			const watched = byOc.get(ocId);
+			if (over) {
+				await interrupt(oc, ocId).catch((err) => console.error("limit interrupt failed:", err));
+				console.error(`session ${ocId} stopped: ${over}`);
+				if (watched) await this.finishWatch(watched[0], watched[1], `⛔ Сесію зупинено: ${over}. Напиши уточнення, щоб продовжити з новим лімітом.`);
+			} else if (watched && !watched[1].seenBusy) {
+				await this.ctx.storage.put(watched[0], { ...watched[1], seenBusy: true } satisfies Watch);
+				watched[1].seenBusy = true;
+			}
+		}
+
+		for (const [ocId, [key, w]] of byOc) {
+			if (active.has(ocId) && (await this.ctx.storage.get(key))) {
+				if (Date.now() - w.since > WATCH_MAX_MS) await this.ctx.storage.delete(key);
+				continue;
+			}
+			if (!(await this.ctx.storage.get(key))) continue; // уже оброблено вище (ліміт)
+			// Вільна: або вже відпрацювала, або ще не стартувала (дамо їй трохи часу).
+			if (!w.seenBusy && Date.now() - w.since < WATCH_INTERVAL_MS + 5000) continue;
+			await this.finishWatch(key, w, await this.summary(oc, w));
+		}
+		return (await this.ctx.storage.list({ prefix: "watch:" })).size > 0 || active.size > 0;
+	}
+
+	// Підсумок завершеної роботи: останнє повідомлення асистента, помилка чи нічого, якщо користувач сам зупинив.
+	private async summary(oc: Opencode, w: Watch): Promise<string> {
+		const [info, last] = await Promise.all([getSession(oc, w.ocId), lastAssistant(oc, w.ocId)]);
+		if (info.outcome === "interrupted") return "";
+		if (info.outcome === "failed") return `❌ Помилка: ${last.error ?? (last.text || "невідома")}`.slice(0, SUMMARY_MAX);
+		const text = last.text.length > SUMMARY_MAX ? `${last.text.slice(0, SUMMARY_MAX)}…` : last.text;
+		return `✅ Готово${text ? `\n\n${text}` : ""}`;
+	}
+
+	// Забирає спостереження (щоб не повідомити двічі) і шле текст у чат; порожній текст — мовчки.
+	private async finishWatch(key: string, w: Watch, text: string): Promise<void> {
+		await this.ctx.storage.delete(key);
+		if (!text || !this.env.BOT_TOKEN) return;
+		await tg({ BOT_TOKEN: this.env.BOT_TOKEN }, "sendMessage", { chat_id: w.chatId, text: `${text}\n\n🔗 ${w.url}`, link_preview_options: { is_disabled: true } }).catch((err) => console.error("notify failed:", err));
 	}
 
 	private async saveSnapshot(): Promise<SnapshotInfo> {
@@ -238,6 +315,29 @@ export class AgentSession extends DurableObject<Env> {
 		return (await isBusy(this.opencode(), tracked.ocId)) ? "working" : "idle";
 	}
 
+	async report(id: string): Promise<SessionReport> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		if (!tracked || !this.ctx.container?.running) return { status: "stopped" };
+		const [busy, info] = await Promise.all([isBusy(this.opencode(), tracked.ocId), getSession(this.opencode(), tracked.ocId)]);
+		const tokens = totalTokens(info);
+		return { status: busy ? "working" : "idle", outcome: info.outcome, ...(info.cost && { cost: info.cost }), ...(tokens && { tokens }) };
+	}
+
+	// Стежить за сесією до завершення (див. tick). Контейнер не будить: сесія вже має працювати.
+	async watch(id: string, target: WatchTarget): Promise<void> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		if (!tracked) throw new Error(`unknown session ${id}`);
+		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...target, since: Date.now(), seenBusy: false } satisfies Watch);
+		await this.scheduleSoon();
+	}
+
+	// Найближчий alarm: не пізніше за інтервал опитування.
+	private async scheduleSoon(): Promise<void> {
+		const at = Date.now() + WATCH_INTERVAL_MS;
+		const current = await this.ctx.storage.getAlarm();
+		if (current === null || current > at) await this.ctx.storage.setAlarm(at);
+	}
+
 	async abort(id: string): Promise<void> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked || !this.ctx.container?.running) return;
@@ -305,6 +405,11 @@ export class AgentSession extends DurableObject<Env> {
 		});
 		return port.fetch(new Request(upstream, { signal: stop.signal }) as unknown as Request<unknown, CfProperties>);
 	}
+}
+
+function positiveNumber(value: string | undefined): number | undefined {
+	const n = Number(value);
+	return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 function positiveInt(value: string | undefined): number | undefined {

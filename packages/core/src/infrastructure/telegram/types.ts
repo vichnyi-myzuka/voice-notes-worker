@@ -10,7 +10,8 @@ export type TgMessage = {
 	voice?: TgFile;
 	audio?: TgFile;
 	photo?: TgFile[]; // розміри від меншого до більшого
-	reply_to_message?: { message_id: number };
+	// Telegram віддає повідомлення, на яке відповіли, разом із текстом: так бот агента знаходить сесію за посиланням у пості.
+	reply_to_message?: { message_id: number; text?: string; caption?: string };
 };
 
 export type ReceivedMessage = {

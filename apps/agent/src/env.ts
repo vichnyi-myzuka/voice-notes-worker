@@ -19,6 +19,9 @@ export interface Env {
 	// Тривалості в мс (за замовчуванням 1 година простою і 5 хвилин між знімками); коротші значення — для перевірки на Cloudflare
 	AGENT_INACTIVITY_MS?: string;
 	AGENT_SNAPSHOT_INTERVAL_MS?: string;
+	// Запобіжники сесії: вартість у USD (за замовчуванням 5) і токени без кешу (за замовчуванням 3 млн); понад ліміт сесію зупиняє alarm
+	AGENT_MAX_COST_USD?: string;
+	AGENT_MAX_TOKENS?: string;
 	// Чат з агентом у Telegram (окремий бот): токен, секрет вебхука, єдиний дозволений користувач. Whisper — через Workers AI.
 	BOT_TOKEN?: string;
 	TG_WEBHOOK_SECRET?: string;
