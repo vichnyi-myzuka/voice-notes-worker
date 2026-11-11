@@ -10,6 +10,7 @@ describe("durableAgent", () => {
 			abort: vi.fn(async () => {}),
 			link: vi.fn(async () => "ses_oc1"),
 			snapshot: vi.fn(async () => ({ id: "snap1", bytes: 1, ms: 2 })),
+			info: vi.fn(async () => ({ running: true, activeAt: null, alarmAt: null, snapshot: null, streams: [] })),
 			fetch: vi.fn(async () => new Response("ui")),
 		};
 		const names: string[] = [];

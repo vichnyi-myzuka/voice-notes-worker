@@ -8,6 +8,15 @@ export type AgentStatus = "working" | "idle" | "stopped";
 
 export type SessionRef = { id: string; url: string };
 
+// Стан спільного контейнера для діагностики: що тримає його живим і коли був останній знімок.
+export type ComputerInfo = {
+	running: boolean;
+	activeAt: number | null;
+	alarmAt: number | null;
+	snapshot: { id: string; at: number } | null;
+	streams: { path: string; openedAt: number }[];
+};
+
 // Результат ручного знімка диска контейнера.
 export type SnapshotInfo = { id: string; bytes: number; ms: number };
 
@@ -23,6 +32,8 @@ export type Agent = {
 	serve(req: Request): Promise<Response>;
 	// Id сесії в OpenCode для прямого посилання на сесію; undefined, якщо такої сесії немає.
 	link(id: string): Promise<string | undefined>;
+	// Внутрішній стан контейнера для діагностики (наприклад, чому він не засинає).
+	info(): Promise<ComputerInfo>;
 	// Примусово зберігає диск контейнера (зміни, зроблені поза сесіями агента, наприклад через SSH).
 	snapshot(): Promise<SnapshotInfo>;
 };

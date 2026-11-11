@@ -16,6 +16,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   GET  /api/sessions/<id>                   → {status}: working | idle | stopped
 //   POST /api/sessions/<id>/messages {text}   → уточнення в ту саму сесію
 //   POST /api/sessions/<id>/abort             → зупиняє поточну роботу агента
+//   GET  /api/computer                        → стан контейнера для діагностики (чому не засинає, відкриті SSE-потоки)
 //   POST /api/computer/snapshot                      → примусово зберігає диск контейнера (після змін поза сесіями, наприклад через SSH)
 //   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
 //   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)

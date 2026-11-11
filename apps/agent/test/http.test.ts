@@ -120,6 +120,13 @@ describe("веб-інтерфейс", () => {
 });
 
 describe("ручний знімок", () => {
+	it("GET /api/computer повертає стан контейнера", async () => {
+		const { agent } = fakeAgent();
+		const res = await handleFetch(call("/api/computer", "GET"), env, agent);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toMatchObject({ running: true, streams: [] });
+	});
+
 	it("POST /api/computer/snapshot зберігає диск і повертає знімок", async () => {
 		const { agent, snapshots } = fakeAgent();
 		const res = await handleFetch(call("/api/computer/snapshot", "POST"), env, agent);
