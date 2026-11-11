@@ -1,4 +1,4 @@
-import type { Env } from "./index";
+import type { Env } from "./env";
 import { buildCaption, CAPTION_MAX, taskLinks, textNote, TEXT_CAPTION_MAX, type Meta } from "./note";
 import { NO_PREVIEW, tg } from "./telegram";
 import { getInTodoist, withAppliedRecurrence } from "./tasks";
@@ -16,6 +16,17 @@ export type Note = {
 	recordedTs: number;
 	text?: boolean; // текстова нотатка: повідомлення без аудіо, оригінал — у цитаті під підписом
 	setup?: string[]; // зміни налаштувань Todoist, зроблені цією нотаткою та її правками (для підпису)
+};
+
+// Слайс стану обробки: публікація в канал (див. state.ts).
+export type PublishState = {
+	noteId?: string; // id нотатки для редагування й задач Todoist, створюється до відправки
+	messageId?: number; // id повідомлення нотатки в Telegram
+	audioSent?: boolean; // (завеликий файл) оригінал відправлено без транскрипту
+	todoistMarked?: boolean; // підпис з посиланнями на задачі оновлено після виконання
+	photoAttached?: boolean; // (фото) фото додане коментарем до створених задач
+	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
+	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено
 };
 
 const noteKey = (id: string) => `notes/${id}.json`;

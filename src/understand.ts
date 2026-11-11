@@ -1,4 +1,4 @@
-import type { Env } from "./index";
+import type { Env } from "./env";
 import { askJson, parseJsonObject, toBase64 } from "./llm";
 import { parseEditedNote, parseMeta, plainTasks, type Meta } from "./note";
 import type { Note } from "./published";

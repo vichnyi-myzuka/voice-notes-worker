@@ -1,4 +1,4 @@
-import type { Env } from "../src/index";
+import type { Env } from "../src/env";
 
 // Мінімальний R2 у пам'яті: лише те, що використовує воркер (get/put/head/delete).
 export function fakeEnv(vars: Partial<Env> = {}): Env & { store: Map<string, string> } {
