@@ -327,6 +327,10 @@ Whisper (і резервна Gemma 4) працюють через binding `AI`. 
 
 Джерела: [Queues limits](https://developers.cloudflare.com/queues/platform/limits/), [Queues pricing](https://developers.cloudflare.com/queues/platform/pricing/), [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [Batching & retries](https://developers.cloudflare.com/queues/configuration/batching-retries/).
 
+## Витрати Cloudflare
+
+`npm run cost` (або `npm run cost -- 14`) друкує витрати по днях і продуктах за останні N днів (типово 7) з Billable Usage API (alpha). У `.env` потрібні `CLOUDFLARE_API_TOKEN` (токен із правом Billing Read: My Profile → API Tokens) і `CLOUDFLARE_ACCOUNT_ID`. API віддає поточний розрахунковий період, тож днів може бути менше за запит; дані оновлюються раз на день. Показується лише плата понад безкоштовні ліміти, фіксовані підписки (Workers Paid) не входять. Те саме без токена видно в дашборді Manage Account → Billing → Billable Usage.
+
 ## Агент (`apps/agent`, прототип)
 
 Окремий воркер із **одним спільним контейнером** Cloudflare (Durable Object `main`), у якому працює `opencode serve` (OpenCode V2: веб-інтерфейс + API `/api/...`). Сесії агентів живуть усередині нього: кожна у своїй теці `/workspace/sessions/<id>`, для репозиторію це окремий `git worktree` з гілкою `agent/<id>` від свіжої default-гілки (спільний клон у `/workspace/repos/<owner>/<name>`), без репозиторію порожня тека. Воркер створює сесію, ставить агенту задачу і повертає посилання на неї. Усі сесії видно в одному веб-інтерфейсі. Доступ — лише через Cloudflare Access.

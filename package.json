@@ -8,6 +8,7 @@
     "deploy": "npm run deploy -w apps/notes",
     "deploy:all": "npm run deploy --workspaces --if-present",
     "tail": "npm run tail -w apps/notes",
+    "cost": "node --env-file=.env scripts/cost.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
