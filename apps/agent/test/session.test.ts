@@ -732,7 +732,7 @@ describe("AgentSession", () => {
 						await flush();
 						const last = sent.filter((c) => "message_id" in c).at(-1)!;
 						expect(keyboard(last)).toEqual([["Мінімалізм=ans:tg-1-1:0"], ["Яскравий=ans:tg-1-1:1"], ["⏹ Стоп=stop:tg-1-1", "🗑 Видалити=del:tg-1-1"]]);
-						expect(await t.session.answer(SID, 1)).toBe("Яскравий");
+						expect(await t.session.answer(SID, 1)).toBe("Відповідь: Яскравий");
 						expect(t.opencode.formReplies).toEqual([{ path: `/api/session/${ocId}/form/form1/reply`, body: { answer: { style: "bold" } } }]);
 						expect(edits().at(-1)!.text).toContain("відповідь: Яскравий");
 						expect(await t.session.answer(SID, 1)).toBeUndefined(); // вже відповіли
@@ -760,6 +760,29 @@ describe("AgentSession", () => {
 						const last = sent.filter((c) => "message_id" in c).at(-1)!;
 						expect(keyboard(last)).toEqual([["⏹ Стоп=stop:tg-1-1", "🗑 Видалити=del:tg-1-1"]]);
 						expect(await t.session.answer(SID, 0)).toBeUndefined();
+					});
+
+					it("множинний вибір: кнопки перемикають варіанти з позначками, «Підтвердити» надсилає масив", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача" });
+						await t.session.watch(SID, POST_TG);
+						const many = { key: "ideas", type: "multiselect", title: "Покращення", options: [{ value: "book", label: "Бронювання" }, { value: "cart", label: "Кошик" }, { value: "gallery", label: "Галерея" }] };
+						t.opencode.emit(form([many]));
+						await flush();
+						const last = () => sent.filter((c) => "message_id" in c).at(-1)!;
+						expect(keyboard(last())).toEqual([["Бронювання=tog:tg-1-1:0"], ["Кошик=tog:tg-1-1:1"], ["Галерея=tog:tg-1-1:2"], ["✅ Підтвердити=ok:tg-1-1"], ["⏹ Стоп=stop:tg-1-1", "🗑 Видалити=del:tg-1-1"]]);
+						expect(await t.session.answer(SID, "ok")).toBe("Вибери хоча б один варіант."); // нічого не вибрано
+						expect(await t.session.answer(SID, 2)).toBe("Вибрано: Галерея");
+						expect(await t.session.answer(SID, 0)).toBe("Вибрано: Бронювання, Галерея");
+						expect(keyboard(last())[0]).toEqual(["☑ Бронювання=tog:tg-1-1:0"]);
+						expect(keyboard(last())[1]).toEqual(["☐ Кошик=tog:tg-1-1:1"]);
+						expect(await t.session.answer(SID, 2)).toBe("Вибрано: Бронювання"); // повторне натискання знімає вибір
+						expect(t.opencode.formReplies).toEqual([]); // поки не підтверджено, агентові нічого не йде
+						await t.session.answer(SID, 1);
+						expect(await t.session.answer(SID, "ok")).toBe("Відповідь: Бронювання, Кошик");
+						expect(t.opencode.formReplies).toEqual([{ path: `/api/session/${ocId}/form/form1/reply`, body: { answer: { ideas: ["book", "cart"] } } }]);
+						expect(edits().at(-1)!.text).toContain("відповідь: Бронювання, Кошик");
+						expect(await t.session.answer(SID, "ok")).toBeUndefined(); // питання закрите
 					});
 
 					it("після завершення сесії питання неактуальне", async () => {

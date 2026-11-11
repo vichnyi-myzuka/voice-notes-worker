@@ -5,7 +5,7 @@ export type SessionObject = {
 	start(id: string, input: StartInput): Promise<unknown>;
 	begin(id: string, input: StartInput, target: WatchTarget): Promise<void>;
 	resume(id: string, text: string, target: WatchTarget): Promise<void>;
-	answer(id: string, choice: number): Promise<string | undefined>;
+	answer(id: string, choice: number | "ok"): Promise<string | undefined>;
 	followUp(id: string, text: string): Promise<void>;
 	status(id: string): Promise<AgentStatus>;
 	report(id: string): Promise<SessionReport>;

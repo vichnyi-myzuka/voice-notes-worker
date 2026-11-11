@@ -2,7 +2,7 @@ import { tg } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { editChat, sendChat } from "../chat";
+import { editChat, sendChat, type Answers } from "../chat";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
@@ -33,7 +33,7 @@ const JOB_RETRY_MS = 15 * 1000;
 type Job = { id: string; target: WatchTarget; attempts: number } & ({ input: StartInput } | { text: string });
 const jobKey = (id: string) => `job:${id}`;
 // Питання агента, на яке можна відповісти кнопкою: форма й варіанти (callback_data несе лише номер варіанта).
-type PendingForm = { formId: string; ocId: string; key: string; choices: Choice[] };
+type PendingForm = { formId: string; ocId: string; key: string; choices: Choice[]; multiple?: boolean; selected: number[]; text: string };
 const formKey = (id: string) => `form:${id}`;
 const PROGRESS_INTERVAL_MS = 4000; // не частіше: ліміти Telegram на редагування одного повідомлення
 const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096
@@ -290,7 +290,7 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
-	private async show(w: WatchTarget, status: string, final = false, answers?: string[]): Promise<boolean> {
+	private async show(w: WatchTarget, status: string, final = false, answers?: Answers): Promise<boolean> {
 		if (!w.postId || !this.env.BOT_TOKEN) return false;
 		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, status, final), w.url, final ? "done" : "working", answers);
 	}
@@ -521,25 +521,43 @@ export class AgentSession extends DurableObject<Env> {
 		if (!entry) return;
 		const id = entry[0].slice("watch:".length);
 		const found = form.id ? formChoices(form) : undefined;
-		if (found && form.id) await this.ctx.storage.put(formKey(id), { formId: form.id, ocId: entry[1].ocId, key: found.key, choices: found.choices } satisfies PendingForm);
-		await this.progress(entry[1].ocId, "", undefined, describeForm(form), found?.choices.map((c) => c.label));
+		const text = describeForm(form);
+		if (found && form.id) await this.ctx.storage.put(formKey(id), { formId: form.id, ocId: entry[1].ocId, key: found.key, choices: found.choices, multiple: found.multiple, selected: [], text } satisfies PendingForm);
+		await this.progress(entry[1].ocId, "", undefined, text, found && { labels: found.choices.map((c) => c.label), multiple: found.multiple });
 	}
 
 	// Відповідь кнопкою: передає вибраний варіант агентові й показує його в пості. undefined — питання вже неактуальне.
-	async answer(id: string, choice: number): Promise<string | undefined> {
+	async answer(id: string, choice: number | "ok"): Promise<string | undefined> {
 		const form = await this.ctx.storage.get<PendingForm>(formKey(id));
-		const picked = form?.choices[choice];
-		if (!form || !picked) return undefined;
-		await replyForm(this.opencode(), form.ocId, form.formId, { [form.key]: picked.value });
-		await this.ctx.storage.delete(formKey(id));
+		if (!form) return undefined;
 		const w = await this.ctx.storage.get<Watch>(watchKey(id));
-		if (w) await this.show(w, `${WORKING} · відповідь: ${picked.label}`).catch(() => {});
-		return picked.label;
+		const sent = async (value: string | boolean | string[], label: string) => {
+			await replyForm(this.opencode(), form.ocId, form.formId, { [form.key]: value });
+			await this.ctx.storage.delete(formKey(id));
+			if (w) await this.show(w, `${WORKING} · відповідь: ${label}`).catch(() => {});
+			return `Відповідь: ${label}`;
+		};
+		if (!form.multiple) {
+			const picked = choice === "ok" ? undefined : form.choices[choice];
+			return picked && (await sent(picked.value, picked.label));
+		}
+		// Множинний вибір: кнопки перемикають варіанти (позначка в підписі), «Підтвердити» надсилає вибране.
+		if (choice === "ok") {
+			if (form.selected.length === 0) return "Вибери хоча б один варіант.";
+			const picked = form.selected.sort((a, b) => a - b).map((i) => form.choices[i]);
+			return sent(picked.map((c) => c.value as string), picked.map((c) => c.label).join(", "));
+		}
+		if (!form.choices[choice]) return undefined;
+		const selected = form.selected.includes(choice) ? form.selected.filter((i) => i !== choice) : [...form.selected, choice];
+		await this.ctx.storage.put(formKey(id), { ...form, selected } satisfies PendingForm);
+		const labels = form.choices.map((c, i) => `${selected.includes(i) ? "☑" : "☐"} ${c.label}`);
+		if (w) await this.show(w, form.text, false, { labels, multiple: true }).catch(() => {});
+		return selected.length ? `Вибрано: ${selected.sort((a, b) => a - b).map((i) => form.choices[i].label).join(", ")}` : "Нічого не вибрано";
 	}
 
 	// «⏳ Працює · редагує README.md»: пост оновлюється на місці, не частіше за PROGRESS_INTERVAL_MS (проміжні дії між оновленнями пропускаються).
 	// announcement: готовий текст (питання агента) замість підпису дії; показується завжди, навіть частіше за інтервал.
-	private async progress(ocId: string, tool: string, input: Record<string, unknown> | undefined, announcement?: string, answers?: string[]): Promise<void> {
+	private async progress(ocId: string, tool: string, input: Record<string, unknown> | undefined, announcement?: string, answers?: Answers): Promise<void> {
 		if ((!tool && !announcement) || !this.env.BOT_TOKEN) return;
 		const now = Date.now();
 		if (!announcement && now - (this.lastProgress.get(ocId) ?? 0) < (positiveInt(this.env.AGENT_PROGRESS_MS) ?? PROGRESS_INTERVAL_MS)) return;

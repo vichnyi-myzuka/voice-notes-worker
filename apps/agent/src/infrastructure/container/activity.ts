@@ -13,10 +13,10 @@ const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : unde
 const FORM_MAX = 1200; // пост разом із шапкою має вміститись у 4096
 export type ActivityForm = { title?: string; fields?: { key?: string; type?: string; hidden?: boolean; title?: string; description?: string; maxItems?: number; options?: { value?: string; label?: string; description?: string }[] }[] };
 
-// Кнопки-відповіді: лише для питань з одним видимим полем і одиночним вибором (варіанти або так/ні); складні форми відповідаються текстом.
+// Кнопки-відповіді: лише для питань з одним видимим полем (варіанти, так/ні або множинний вибір); складні форми відповідаються текстом.
 export type Choice = { label: string; value: string | boolean | string[] };
 const MAX_CHOICES = 8;
-export function formChoices(form: ActivityForm): { key: string; choices: Choice[] } | undefined {
+export function formChoices(form: ActivityForm): { key: string; choices: Choice[]; multiple?: boolean } | undefined {
 	const fields = (form.fields ?? []).filter((f) => !f.hidden);
 	const field = fields.length === 1 ? fields[0] : undefined;
 	if (!field?.key) return undefined;
@@ -24,6 +24,8 @@ export function formChoices(form: ActivityForm): { key: string; choices: Choice[
 	if (field.type === "boolean") return { key: field.key, choices: [{ label: "Так", value: true }, { label: "Ні", value: false }] };
 	if (field.type === "string" && options.length > 0) return { key: field.key, choices: options.map((o) => ({ label: o.label!, value: o.value! })) };
 	if (field.type === "multiselect" && field.maxItems === 1 && options.length > 0) return { key: field.key, choices: options.map((o) => ({ label: o.label!, value: [o.value!] })) };
+	// Множинний вибір: кнопки перемикають варіанти, «Підтвердити» надсилає масив вибраних значень.
+	if (field.type === "multiselect" && options.length > 0) return { key: field.key, multiple: true, choices: options.map((o) => ({ label: o.label!, value: o.value! })) };
 	return undefined;
 }
 
