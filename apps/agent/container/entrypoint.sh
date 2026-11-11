@@ -7,11 +7,12 @@ set -e
 git config --global user.name "${GIT_AUTHOR_NAME:-opencode-agent}"
 git config --global user.email "${GIT_AUTHOR_EMAIL:-agent@users.noreply.github.com}"
 
-# Токен лише в середовищі процесу (git читає GIT_CONFIG_*), а не в ~/.gitconfig: диск потрапляє в знімки.
+# Токен лише в середовищі процесу: credential helper віддає його git за запитом. На диск (знімки) він не потрапляє,
+# а в URL remote його немає, тому `git remote -v` його не друкує (на відміну від url.insteadOf).
 if [ -n "$GITHUB_TOKEN" ]; then
 	export GIT_CONFIG_COUNT=1
-	export GIT_CONFIG_KEY_0="url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf"
-	export GIT_CONFIG_VALUE_0="https://github.com/"
+	export GIT_CONFIG_KEY_0="credential.https://github.com.helper"
+	export GIT_CONFIG_VALUE_0='!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
 fi
 
 if [ -n "$REPO" ]; then
