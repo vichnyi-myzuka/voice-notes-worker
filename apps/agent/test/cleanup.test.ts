@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,9 +26,20 @@ function setup() {
 		return join(sessions, name);
 	};
 	// CLEANUP бере теку з /workspace/sessions/<назва>: підміняємо префікс на тимчасову теку
-	const cleanup = (name: string) => execFileSync("sh", ["-c", CLEANUP.replace("/workspace/sessions/", `${sessions}/`), "sh", name]);
+	// publish — заглушка, що лише записує, які сайти їй наказали видалити; список сайтів сесії лежить у published/<назва>
+	const bin = join(root, "bin");
+	const published = join(root, "published");
+	const deleted = join(root, "deleted.log");
+	mkdirSync(bin);
+	mkdirSync(published);
+	writeFileSync(join(bin, "publish"), `#!/bin/sh\n[ "$2" = broken ] && exit 1\necho "$@" >> "${deleted}"\n`);
+	chmodSync(join(bin, "publish"), 0o755);
+	const cleanup = (name: string) =>
+		execFileSync("sh", ["-c", CLEANUP.replace("/workspace/sessions/", `${sessions}/`).replace("/workspace/published/", `${published}/`), "sh", name], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+	const sitesOf = (name: string, sites: string[]) => writeFileSync(join(published, name), sites.join("\n") + "\n");
+	const deletedSites = () => (existsSync(deleted) ? readFileSync(deleted, "utf8").trim().split("\n") : []);
 	const branches = () => git(base, "branch", "--format=%(refname:short)").split("\n");
-	return { base, sessions, start, cleanup, branches, commit: (dir: string) => git(dir, "commit", "--allow-empty", "-m", "work") };
+	return { base, sessions, start, cleanup, branches, sitesOf, deletedSites, published, commit: (dir: string) => git(dir, "commit", "--allow-empty", "-m", "work") };
 }
 
 describe("прибирання сесії в контейнері", () => {
@@ -88,5 +99,34 @@ describe("прибирання сесії в контейнері", () => {
 		t.cleanup("odd-7");
 		expect(existsSync(dir)).toBe(false);
 		expect(t.branches()).toContain("feature/x");
+	});
+
+	it("сайти сесії видаляються (publish --delete), список прибирається; чужі сайти не чіпаються", () => {
+		const t = setup();
+		t.start("feat-s-7");
+		t.start("feat-t-8");
+		t.sitesOf("feat-s-7", ["demo", "report"]);
+		t.sitesOf("feat-t-8", ["other"]);
+		t.cleanup("feat-s-7");
+		expect(t.deletedSites()).toEqual(["--delete demo", "--delete report"]);
+		expect(existsSync(join(t.published, "feat-s-7"))).toBe(false);
+		expect(existsSync(join(t.published, "feat-t-8"))).toBe(true); // чужий список лишається
+	});
+
+	it("збій видалення одного сайту не зупиняє прибирання: решта сайтів, worktree і гілка", () => {
+		const t = setup();
+		const dir = t.start("feat-u-9");
+		t.sitesOf("feat-u-9", ["broken", "fine"]);
+		t.cleanup("feat-u-9");
+		expect(t.deletedSites()).toEqual(["--delete fine"]);
+		expect(existsSync(dir)).toBe(false);
+		expect(t.branches()).not.toContain("agent/feat-u-9");
+	});
+
+	it("сесія без опублікованих сайтів прибирається як раніше", () => {
+		const t = setup();
+		t.start("fix-v-10");
+		t.cleanup("fix-v-10");
+		expect(t.deletedSites()).toEqual([]);
 	});
 });

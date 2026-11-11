@@ -30,6 +30,7 @@ You can publish a small static project (an HTML page, a report, a prototype, a g
 - `<name>`: 2-40 chars, lowercase letters, digits and `-`, e.g. `sales-report`. Pick a descriptive name; do not overwrite a site that belongs to another task without being asked (check `publish --list`).
 - Limits: 50 MB and 1000 files per site, 20 MB per file. Hidden files (`.git`, `.env`) and `node_modules` are skipped.
 - Static files only: HTML, CSS, JS, images, JSON. There is no server, no database and no way to deploy a backend, and you have no Cloudflare credentials. If a page needs data, embed it or load it from a file next to it; use relative links (`./app.js`), because the site lives under `/<name>/`.
+- A site belongs to the session that published it: when the owner deletes the session (`/delete`), its sites are removed too. Re-publishing a name from another session moves the site to that session.
 - Sites are private: only the owner can open them, after logging in through Cloudflare Access. Still, never publish secrets, tokens or private repository contents that the owner did not ask to show.
 - Build the site in your session directory (for example `./site/`), open nothing in a browser (there is none), check the files with `ls`/`cat`, then publish and include the URL in your final message.
 
