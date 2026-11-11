@@ -260,9 +260,10 @@ export class AgentSession extends DurableObject<Env> {
 		};
 	}
 
-	// Скільки SSH-з'єднань відкрито (за /proc/net/tcp). Контейнер, що спить, не будимо й не продовжуємо його життя через ensureRunning.
-	async connections(): Promise<ConnectionsInfo> {
+	// Скільки SSH-з'єднань відкрито (за /proc/net/tcp). Сплячий контейнер не будимо; але exec продовжує життя працюючого.
+	async connections(detail: boolean): Promise<ConnectionsInfo> {
 		if (!this.ctx.container?.running) return { running: false };
+		if (!detail) return { running: true }; // exec продовжує життя контейнера, тож без detail його не викликаємо
 		const proc = await this.ctx.container.exec(["cat", "/proc/net/tcp", "/proc/net/tcp6"]);
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`cannot read /proc/net/tcp (${out.exitCode})`);

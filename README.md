@@ -337,7 +337,7 @@ GET  /api/sessions/<id>                                → {status}: working | i
 POST /api/sessions/<id>/messages {text}                → уточнення в ту саму сесію
 POST /api/sessions/<id>/abort                          → зупинити поточну роботу агента (сесія лишається)
 GET  /api/computer                                      → стан контейнера: running, час активності, alarm, знімок, відкриті SSE-потоки
-GET  /api/computer/connections                          → скільки SSH-з'єднань відкрито, чи слухає SSH (порт 22) і скільки з'єднань воркера з OpenCode; сплячий контейнер не будить
+GET  /api/computer/connections                          → running; з `?detail=1` ще й чи слухає SSH (порт 22), скільки SSH-з'єднань і скільки з'єднань воркера з OpenCode. Сплячий контейнер не будить, але `detail` читає `/proc` через `exec`, а `exec` продовжує життя контейнера (перевірено): не опитуй у циклі
 POST /api/computer/snapshot                            → примусово зберегти диск контейнера (після змін поза сесіями, наприклад SSH)
 GET  /s/<id>                                           → редірект на сторінку цієї сесії: /server/<base64url origin>/session/<id OpenCode>
 будь-який інший шлях                                   → проксі у веб-інтерфейс OpenCode

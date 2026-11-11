@@ -302,7 +302,7 @@ describe("AgentSession", () => {
 
 	it("connections: рахує SSH-з'єднання з /proc/net/tcp, сплячий контейнер не будить", async () => {
 		const { session, container, opencode } = setup();
-		expect(await session.connections()).toEqual({ running: false });
+		expect(await session.connections(true)).toEqual({ running: false });
 		expect(opencode.execs).toEqual([]);
 		container.running = true;
 		opencode.procNet = [
@@ -314,7 +314,9 @@ describe("AgentSession", () => {
 			"   4: 0100000A:0016 0000010A:8CE5 01 00000000:00000000 00:00000000 00000000",
 			"   5: 0100000A:C102 420A1268:01BB 01 00000000:00000000 02:0000012C 00000000",
 		].join("\n");
-		expect(await session.connections()).toEqual({ running: true, ssh: { listening: true, connections: 2 }, opencode: { listening: true, connections: 1 } });
+		expect(await session.connections(false)).toEqual({ running: true });
+		expect(opencode.execs).toEqual([]); // без detail exec не викликається
+		expect(await session.connections(true)).toEqual({ running: true, ssh: { listening: true, connections: 2 }, opencode: { listening: true, connections: 1 } });
 	});
 
 	describe("знімки диска", () => {
