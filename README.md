@@ -338,6 +338,8 @@ Whisper (і резервна Gemma 4) працюють через binding `AI`. 
 
 Агент не має доступу до Cloudflare: його токен GitHub пушить у гілки й відкриває PR, але не має права `workflows` (змінити workflow й дістати секрет не вийде).
 
+Домени воркерів у репозиторії не зберігаються: CI підставляє `--domain <застосунок>.$BASE_DOMAIN` (`notes.`, `agent.`, `sites.`). Базовий домен задає змінна `BASE_DOMAIN` (Variables, не Secrets) в обох environments. У прикладах цього README `example.com` замінюй на свій домен. Локальний аварійний деплой: `npm run deploy -w apps/<назва> -- --domain <назва>.<домен>`.
+
 ### Налаштування GitHub (робить власник)
 
 1. **Репозиторій публічний** (Settings → General → Danger Zone): тільки так на безкоштовному плані доступні rulesets і environment-схвалення.
@@ -400,7 +402,7 @@ GET  /s/<id>                                           → редірект на
 2. **Токен R2 лише на цей бакет**: Cloudflare → R2 → Manage API tokens → Create API token, права **Object Read & Write**, у Specify bucket обери `agent-sites`. З результату потрібні Access Key ID, Secret Access Key і endpoint (`https://<account-id>.r2.cloudflarestorage.com`).
 3. Секрети воркера агента (`cd apps/agent`): `npx wrangler secret put R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `SITES_BASE_URL` (значення `https://sites.example.com`). Вони потрапляють у контейнер, інших секретів там не додається.
 4. Access для сайтів: Zero Trust → Access → Applications → Self-hosted, hostname `sites.example.com`, політика **Allow** лише твоя пошта. Запиши AUD цього застосунку й виконай у `apps/sites`: `npx wrangler secret put ACCESS_AUD` і `ACCESS_TEAM_DOMAIN` (той самий team domain, що в агента). Без цього воркер відповідає `503`.
-5. Деплой: `npm run deploy -w apps/sites` (створює домен `sites.example.com`) і `npm run deploy -w apps/agent` (`publish` воркер сам розкладає в контейнер).
+5. Деплой (CI робить це сам; локально з доменом): `npm run deploy -w apps/sites -- --domain sites.<домен>` (домен підключає `--domain`, див. «CI/CD») і `npm run deploy -w apps/agent` (`publish` воркер сам розкладає в контейнер).
 
 ### Запобіжники агента
 

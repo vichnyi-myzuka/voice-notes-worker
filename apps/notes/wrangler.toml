@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2026-11-01"
 workers_dev = false
 preview_urls = false  # окремі публічні URL для кожної версії не потрібні
-routes = [{ pattern = "notes.example.com", custom_domain = true }]
+# Домен (notes.<BASE_DOMAIN>) підключає CI: wrangler deploy --domain (див. README, «CI/CD»)
 
 # Логи в дашборді (Workers Logs)
 [observability]
