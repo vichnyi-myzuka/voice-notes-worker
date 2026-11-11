@@ -21,9 +21,29 @@ function fakeContainer() {
 		running: false,
 		images: { base: "image" },
 		starts: [] as Record<string, unknown>[],
+		snapshots: new Map<string, { sessions: string[] }>(),
+		failRestore: false,
+		broken: false, // відновлення зі знімка не вдалося: OpenCode не відповідає
 		start(options: Record<string, unknown>) {
 			container.running = true;
 			container.starts.push(options);
+			const snapshot = options.containerSnapshot as { id: string } | undefined;
+			if (snapshot) {
+				if (container.failRestore) container.broken = true;
+				else for (const id of container.snapshots.get(snapshot.id)!.sessions) opencode.sessions.add(id);
+			}
+		},
+		async snapshotContainer(options: { name?: string }) {
+			if (!options) throw new TypeError("options required");
+			const id = `snap${container.snapshots.size + 1}`;
+			container.snapshots.set(id, { sessions: [...opencode.sessions] });
+			return { id, size: 1, name: options.name };
+		},
+		async destroy() {
+			container.running = false;
+			container.broken = false;
+			opencode.sessions.clear();
+			opencode.busy.clear();
 		},
 		monitor: () => new Promise<void>(() => {}),
 		setInactivityTimeout: async () => {},
@@ -35,6 +55,7 @@ function fakeContainer() {
 		},
 		getTcpPort: () => ({
 			fetch: async (input: string | Request, init?: RequestInit) => {
+				if (container.broken) throw new Error("connection refused");
 				const req = new Request(input, init);
 				const path = new URL(req.url).pathname;
 				opencode.requests.push(`${req.method} ${path}`);
@@ -78,15 +99,22 @@ function fakeContainer() {
 function setup(extraEnv: Record<string, string> = {}) {
 	const { container, opencode } = fakeContainer();
 	const store = new Map<string, unknown>();
+	const alarm = { at: null as number | null };
 	const ctx = {
 		container,
-		storage: { get: async (k: string) => store.get(k), put: async (k: string, v: unknown) => void store.set(k, v) },
+		storage: {
+			get: async (k: string) => store.get(k),
+			put: async (k: string, v: unknown) => void store.set(k, v),
+			delete: async (k: string) => void store.delete(k),
+			getAlarm: async () => alarm.at,
+			setAlarm: async (at: number) => void (alarm.at = at),
+		},
 		blockConcurrencyWhile: (fn: () => Promise<void>) => fn(),
 		waitUntil: () => {},
 	};
 	const env = { OPENCODE_PASSWORD: "pw", ANTHROPIC_API_KEY: "ak", GITHUB_TOKEN: undefined, ...extraEnv };
 	const session = new AgentSession(ctx as unknown as DurableObjectState, env as never);
-	return { session, container, opencode, store };
+	return { session, container, opencode, store, alarm };
 }
 
 beforeEach(() => vi.stubGlobal("scheduler", { wait: async () => {} }));
@@ -204,5 +232,85 @@ describe("AgentSession", () => {
 		const res = await session.fetch(new Request("https://agent.example/assets/app.js?v=1", { headers: { cookie: "agent_session=session-0001" } }));
 		expect(await res.text()).toBe("ui /assets/app.js");
 		expect(opencode.auths).toEqual(new Set([`Basic ${btoa("opencode:pw")}`]));
+	});
+
+	describe("знімки диска", () => {
+		// Агент відпрацював: активність була, зараз вільний.
+		async function finishedTask(extraEnv: Record<string, string> = {}) {
+			const t = setup(extraEnv);
+			await t.session.start({ prompt: "Задача" });
+			t.opencode.busy.clear();
+			return t;
+		}
+
+		it("alarm планується після активності, але не після знімка (інакше контейнер не засне)", async () => {
+			const { session, alarm } = await finishedTask();
+			expect(alarm.at).not.toBeNull();
+			alarm.at = null;
+			await session.alarm();
+			expect(alarm.at).toBeNull();
+		});
+
+		it("alarm знімає диск, коли агент вільний, і зберігає handle разом з образом", async () => {
+			const { session, container, store } = await finishedTask();
+			await session.alarm();
+			expect(container.snapshots.size).toBe(1);
+			expect(store.get("snapshot")).toMatchObject({ id: "snap1", image: "image" });
+		});
+
+		it("alarm нічого не знімає, поки агент працює, і чекає наступного разу", async () => {
+			const { session, container, opencode, alarm } = setup();
+			await session.start({ prompt: "Задача" });
+			expect(opencode.busy.size).toBe(1);
+			alarm.at = null;
+			await session.alarm();
+			expect(container.snapshots.size).toBe(0);
+			expect(alarm.at).not.toBeNull();
+		});
+
+		it("alarm не знімає вдруге, якщо змін після знімка не було, і не чіпає сплячий контейнер", async () => {
+			const { session, container } = await finishedTask();
+			await session.alarm();
+			await session.alarm();
+			expect(container.snapshots.size).toBe(1);
+			container.sleep();
+			await session.alarm();
+			expect(container.snapshots.size).toBe(1);
+		});
+
+		it("після сну followUp відновлює контейнер зі знімка: та сама сесія OpenCode, без повторного підключення Claude Agent", async () => {
+			const { session, container, opencode } = await finishedTask({ CLAUDE_CODE_OAUTH_TOKEN: "tok" });
+			await session.alarm();
+			container.sleep();
+			await session.followUp("Продовжуй");
+			expect(container.starts).toHaveLength(2);
+			expect(container.starts[1]).toMatchObject({ containerSnapshot: { id: "snap1" } });
+			expect(container.starts[1]).not.toHaveProperty("image");
+			expect(opencode.seq).toBe(1); // нової сесії OpenCode не створено
+			expect(opencode.prompts.at(-1)).toEqual({ id: "ses_oc1", text: "Продовжуй" });
+			expect(opencode.requests.filter((r) => r.includes("connect/external"))).toHaveLength(1);
+		});
+
+		it("знімок від іншого образу не відновлюється: старт з чистого образу", async () => {
+			const { session, container, opencode } = await finishedTask();
+			await session.alarm();
+			container.sleep();
+			container.images.base = "image2";
+			await session.followUp("Продовжуй");
+			expect(container.starts[1]).toMatchObject({ image: "image2" });
+			expect(container.starts[1]).not.toHaveProperty("containerSnapshot");
+			expect(opencode.seq).toBe(2); // стару історію втрачено, сесія нова
+		});
+
+		it("якщо знімок не відновився, видаляє його й стартує з чистого образу", async () => {
+			const { session, container, store } = await finishedTask();
+			await session.alarm();
+			container.sleep();
+			container.failRestore = true;
+			await session.followUp("Продовжуй");
+			expect(container.starts).toHaveLength(3); // знімок → збій → образ
+			expect(container.starts[2]).toMatchObject({ image: "image" });
+			expect(store.has("snapshot")).toBe(false);
+		});
 	});
 });
