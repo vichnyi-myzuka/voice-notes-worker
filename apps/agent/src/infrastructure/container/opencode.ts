@@ -46,6 +46,13 @@ export async function prompt(oc: Opencode, sessionId: string, text: string): Pro
 	await data(await oc.fetch(`/api/session/${sessionId}/prompt`, post({ text })));
 }
 
+// Відповідь на форму (питання агента): ключ поля → значення.
+export async function replyForm(oc: Opencode, sessionId: string, formId: string, answer: Record<string, string | boolean | string[]>): Promise<void> {
+	const res = await oc.fetch(`/api/session/${sessionId}/form/${formId}/reply`, post({ answer }));
+	if (!res.ok) throw new Error(`opencode form reply: ${res.status} ${await res.text()}`);
+	await res.body?.cancel();
+}
+
 export async function sessionExists(oc: Opencode, sessionId: string): Promise<boolean> {
 	const res = await oc.fetch(`/api/session/${sessionId}`);
 	await res.body?.cancel();
@@ -105,7 +112,9 @@ export async function lastAssistant(oc: Opencode, sessionId: string): Promise<{ 
 }
 
 // Подія сервера OpenCode (SSE `/api/event`): тип і, якщо стосується сесії, її id.
-export type OpencodeEvent = { type: string; data?: { sessionID?: string; id?: string; name?: string; input?: Record<string, unknown> } };
+export type FormField = { key?: string; type?: string; hidden?: boolean; title?: string; description?: string; maxItems?: number; options?: { value?: string; label?: string; description?: string }[] };
+export type OpencodeForm = { id?: string; sessionID?: string; title?: string; fields?: FormField[] };
+export type OpencodeEvent = { type: string; data?: { sessionID?: string; id?: string; name?: string; input?: Record<string, unknown>; form?: OpencodeForm } };
 
 // Читає потік подій, поки він не закінчиться чи не спрацює signal. Для кожної події викликає onEvent; для службового рядка
 // (heartbeat) викликає onEvent(undefined), щоб читач міг вирішити, чи потік ще потрібен.

@@ -50,9 +50,13 @@ async function handleButton(bot: BotEnv, query: NonNullable<TgUpdate["callback_q
 	const answer = (text: string) => tg(bot, "answerCallbackQuery", { callback_query_id: query.id, text }).catch((err) => console.error("answer failed:", err));
 	const chat = query.message?.chat;
 	const allowed = !!env.TG_OWNER_ID && String(query.from.id) === env.TG_OWNER_ID && !!chat && (String(chat.id) === env.CHAT_ID || (chat.type === "private" && String(chat.id) === env.TG_OWNER_ID));
-	const [, action, id] = /^(stop|del):(tg-[\w-]+)$/.exec(query.data ?? "") ?? [];
+	const [, action, id, choice] = /^(stop|del|ans):(tg-[\w-]+)(?::(\d+))?$/.exec(query.data ?? "") ?? [];
 	if (!allowed || !action || !query.message) return void (await answer(allowed ? "Невідома дія." : "Недоступно."));
 	if (!(await agent.link(id))) return void (await answer("Сесію не знайдено."));
+	if (action === "ans") {
+		const label = await agent.answer(id, Number(choice)).catch((err) => (console.error("answer failed:", err), null));
+		return void (await answer(label === null ? "Не вдалося відповісти." : label ? `Відповідь: ${label}` : "Питання вже неактуальне."));
+	}
 	if (action === "del") {
 		await agent.remove(id);
 		await removeMessage(bot, chat.id, query.message.message_id);
