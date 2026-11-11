@@ -48,7 +48,7 @@ export type TgMethods = {
 	sendVoice: { params: { chat_id: ChatId; voice: string; caption: string }; result: MessageRef };
 	sendPhoto: { params: { chat_id: ChatId; photo: string; caption: string }; result: MessageRef };
 	editMessageText: {
-		params: { chat_id: ChatId; message_id: number; text: string; entities: TgEntity[]; link_preview_options: { is_disabled: boolean } };
+		params: { chat_id: ChatId; message_id: number; text: string; parse_mode?: "HTML"; entities?: TgEntity[]; link_preview_options?: { is_disabled: boolean } };
 		result: MessageRef;
 	};
 	editMessageCaption: {

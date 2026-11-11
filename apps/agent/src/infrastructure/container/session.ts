@@ -2,7 +2,7 @@ import { tg } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { sendChat } from "../chat";
+import { editChat, sendChat } from "../chat";
 import { parseConnections } from "./connections";
 import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
@@ -22,6 +22,8 @@ const WATCH_MAX_MS = 2 * 60 * 60 * 1000;
 // Запобіжники за замовчуванням: вартість однієї сесії (USD) і токени (вхід + вихід + reasoning, без кешу).
 const DEFAULT_MAX_COST_USD = 5;
 const DEFAULT_MAX_TOKENS = 3_000_000;
+const WORKING = "⏳ Працює";
+const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096
 const SUMMARY_MAX = 3000; // підсумок у чат: решта обрізається (ліміт повідомлення Telegram — 4096)
 
 // За сесією стежать, щоб повідомити в чат про завершення. seenBusy: чи бачили ми її працюючою (щойно запущена сесія ще може
@@ -33,7 +35,8 @@ type SavedSnapshot = { id: string; image: string; at: number };
 
 // Сесія агента в спільному контейнері: id сесії (наш ключ ідемпотентності) → сесія OpenCode і репозиторій.
 // folder: назва теки (і гілки agent/<folder>); у старих записів немає, тоді це сам id.
-type Tracked = { ocId: string; repo?: string; folder?: string };
+// post: пост сесії в чаті, який агент оновлює на місці (стан, підсумок).
+type Tracked = { ocId: string; repo?: string; folder?: string; post?: { postId: number; header: string } };
 
 const sessionKey = (id: string) => `session:${id}`;
 const watchKey = (id: string) => `watch:${id}`;
@@ -235,7 +238,7 @@ export class AgentSession extends DurableObject<Env> {
 
 		for (const [ocId, [key, w]] of byOc) {
 			if (active.has(ocId) && (await this.ctx.storage.get(key))) {
-				if (Date.now() - w.since > WATCH_MAX_MS) await this.finishWatch(key, w, "");
+				if (Date.now() - w.since > WATCH_MAX_MS) await this.finishWatch(key, w, "⚠️ Сесія надто довго працює: перестав стежити. Напиши уточнення, щоб продовжити.");
 				continue;
 			}
 			if (!(await this.ctx.storage.get(key))) continue; // уже оброблено вище (ліміт)
@@ -249,7 +252,7 @@ export class AgentSession extends DurableObject<Env> {
 	// Підсумок завершеної роботи: останнє повідомлення асистента, помилка чи нічого, якщо користувач сам зупинив.
 	private async summary(oc: Opencode, w: Watch): Promise<string> {
 		const [info, last] = await Promise.all([getSession(oc, w.ocId), lastAssistant(oc, w.ocId)]);
-		if (info.outcome === "interrupted") return "";
+		if (info.outcome === "interrupted") return "⏹ Зупинено. Відповідь на цей пост продовжить роботу.";
 		if (info.outcome === "failed") return `❌ Помилка: ${last.error ?? (last.text || "невідома")}`.slice(0, SUMMARY_MAX);
 		const text = last.text.length > SUMMARY_MAX ? `${last.text.slice(0, SUMMARY_MAX)}…` : last.text;
 		return `✅ Готово${text ? `\n\n${text}` : ""}`;
@@ -261,11 +264,24 @@ export class AgentSession extends DurableObject<Env> {
 		await tg({ BOT_TOKEN: this.env.BOT_TOKEN }, "setMessageReaction", { chat_id: w.chatId, message_id: w.postId, reaction: on ? [{ type: "emoji", emoji: "👨‍💻" }] : [] }).catch((err) => console.error("reaction failed:", err));
 	}
 
-	// Забирає спостереження (щоб не повідомити двічі) і шле текст у чат; порожній текст — мовчки.
+	// Пост сесії: шапка (завдання) і поточний стан чи підсумок. З підсумком шапка скорочується, щоб усе влізло в 4096 символів.
+	private postText(w: WatchTarget, status: string, final: boolean): string {
+		const header = (w.header ?? "").trim();
+		return [final && header.length > HEADER_FINAL_MAX ? `${header.slice(0, HEADER_FINAL_MAX)}…` : header, status].filter(Boolean).join("\n\n");
+	}
+
+	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
+	private async show(w: WatchTarget, status: string, final = false): Promise<boolean> {
+		if (!w.postId || !this.env.BOT_TOKEN) return false;
+		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, status, final), w.url);
+	}
+
+	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
 	private async finishWatch(key: string, w: Watch, text: string): Promise<void> {
 		await this.ctx.storage.delete(key);
 		await this.mark(w, false);
-		if (!text || !this.env.BOT_TOKEN) return;
+		if (!this.env.BOT_TOKEN) return;
+		if (await this.show(w, text, true)) return;
 		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url).catch((err) => console.error("notify failed:", err));
 	}
 
@@ -372,10 +388,15 @@ export class AgentSession extends DurableObject<Env> {
 	async watch(id: string, target: WatchTarget): Promise<void> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked) throw new Error(`unknown session ${id}`);
+		// Пост сесії: новий (з першого виклику) запам'ятовується, у наступних (уточнення) береться зі сховища.
+		const post = target.postId ? { postId: target.postId, header: target.header ?? "" } : tracked.post;
+		if (target.postId) await this.ctx.storage.put(sessionKey(id), { ...tracked, post } satisfies Tracked);
+		const full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
-		if (previous?.postId && previous.postId !== target.postId) await this.mark(previous, false); // реакція не лишається на старому пості
-		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...target, since: Date.now(), seenBusy: false } satisfies Watch);
-		await this.mark(target, true);
+		if (previous?.postId && previous.postId !== full.postId) await this.mark(previous, false); // реакція не лишається на старому пості
+		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);
+		await this.mark(full, true);
+		if (!target.postId && post) await this.show(full, WORKING); // уточнення: пост знову показує «Працює»
 		await this.scheduleSoon();
 	}
 

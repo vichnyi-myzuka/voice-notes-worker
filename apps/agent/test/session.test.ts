@@ -451,13 +451,61 @@ describe("AgentSession", () => {
 			expect(sent[0].text).toBe(`❌ Помилка: Model unavailable\n\n🔗 <a href="${TARGET.url}">Відкрити сесію</a>`);
 		});
 
-		it("сесія, яку зупинили вручну, мовчить (про зупинку вже сказано)", async () => {
+		it("сесія, яку зупинили вручну, показує «Зупинено»", async () => {
 			const { session, opencode } = await watched();
 			await session.alarm();
 			opencode.busy.clear();
 			opencode.info[ocId] = { outcome: "interrupted" };
 			await session.alarm();
-			expect(sent).toEqual([]);
+			expect(sent[0].text).toContain("⏹ Зупинено");
+		});
+
+		describe("пост сесії оновлюється на місці", () => {
+			const HEADER = "🗣 Зроби візитку\n\n📦 me/app";
+			const POST = { ...TARGET, postId: 77, header: HEADER };
+			const edits = () => sent.filter((c) => "message_id" in c && "text" in c) as unknown as { message_id: number; text: string }[];
+			const link = `🔗 <a href="${TARGET.url}">Відкрити сесію</a>`;
+
+			it("підсумок редагує пост (шапка + підсумок), а не шле нове повідомлення; шапка з підсумком скорочується", async () => {
+				const t = setup({ BOT_TOKEN: "bot" });
+				await t.session.start(ID, { prompt: "Задача" });
+				await t.session.watch(ID, { ...POST, header: `🗣 ${"я".repeat(600)}` });
+				t.opencode.lastText = "Готово: **ok**";
+				await t.session.alarm();
+				t.opencode.busy.clear();
+				t.opencode.info[ocId] = { outcome: "succeeded" };
+				await t.session.alarm();
+				expect(sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c))).toEqual([]); // нових повідомлень немає
+				const [edit] = edits();
+				expect(edit.message_id).toBe(77);
+				expect(edit.text).toBe(`🗣 ${"я".repeat(397)}…\n\n✅ Готово\n\nГотово: <b>ok</b>\n\n${link}`);
+			});
+
+			it("уточнення: пост знову показує «Працює» (пост береться зі сховища), потім підсумок", async () => {
+				const t = setup({ BOT_TOKEN: "bot" });
+				await t.session.start(ID, { prompt: "Задача" });
+				await t.session.watch(ID, POST); // перше спостереження: пост уже показує «Працює», редагувати не треба
+				expect(edits()).toEqual([]);
+				await t.session.watch(ID, { chatId: 5, url: TARGET.url }); // уточнення
+				expect(edits().map((e) => [e.message_id, e.text])).toEqual([[77, `${HEADER}\n\n⏳ Працює\n\n${link}`]]);
+			});
+
+			it("пост видалили чи редагування не вдалось: підсумок іде новим повідомленням", async () => {
+				const t = setup({ BOT_TOKEN: "bot" });
+				await t.session.start(ID, { prompt: "Задача" });
+				await t.session.watch(ID, POST);
+				vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+					const body = JSON.parse(init.body as string);
+					sent.push(body);
+					return url.endsWith("/editMessageText") ? new Response("message to edit not found", { status: 400 }) : Response.json({ ok: true, result: { message_id: 2 } });
+				});
+				await t.session.alarm();
+				t.opencode.busy.clear();
+				t.opencode.info[ocId] = { outcome: "succeeded" };
+				t.opencode.lastText = "Готово";
+				await t.session.alarm();
+				expect(sent.filter((c) => !("message_id" in c) && "text" in c && String(c.text).includes("✅ Готово"))).toHaveLength(1);
+			});
 		});
 
 		it("швидка сесія, якої ми не встигли побачити працюючою, теж отримує підсумок, але не одразу", async () => {
