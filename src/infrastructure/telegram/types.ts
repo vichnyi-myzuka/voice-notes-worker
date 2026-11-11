@@ -25,6 +25,10 @@ export type ReceivedMessage = {
 	replyTo?: string;
 };
 
+// Куди передати прийняте повідомлення (кладе запис у R2 і чергу).
+// Повертає false, якщо повідомлення вже прибране (правка): тоді ✍ не ставимо.
+export type StoreMessage = (key: string, body: ArrayBuffer, message: ReceivedMessage) => Promise<boolean>;
+
 // Сутності тексту: посилання на задачі й розгортувана цитата оригіналу.
 export type TgTextLink = { type: "text_link"; offset: number; length: number; url: string };
 export type TgEntity = TgTextLink | { type: "expandable_blockquote"; offset: number; length: number };

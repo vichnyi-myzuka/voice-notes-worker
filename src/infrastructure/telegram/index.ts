@@ -2,5 +2,5 @@
 
 export { NO_PREVIEW, deleteOriginal, markEditing, tg, tgSendMessage, tgSendNote, tgSendText } from "./api";
 export { receiveTelegramMessage } from "./receive";
-export type { ReceivedMessage, TgEntity, TgTextLink, TgUpdate } from "./types";
+export type { ReceivedMessage, StoreMessage, TgEntity, TgTextLink, TgUpdate } from "./types";
 export { telegramMessageUrl } from "./api";

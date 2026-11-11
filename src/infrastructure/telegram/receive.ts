@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { tg, tgSendMessage } from "./api";
-import type { ReceivedMessage, TgMessage } from "./types";
+import type { StoreMessage, TgMessage } from "./types";
 
 export const DOWNLOAD_MAX_BYTES = 20_000_000; // ліміт Bot API на getFile
 
@@ -20,8 +20,7 @@ export async function react(env: Env, msg: TgMessage): Promise<void> {
 export async function receiveTelegramMessage(
 	env: Env,
 	msg: TgMessage,
-	// Повертає false, якщо повідомлення вже прибране (правка): тоді ✍ не ставимо.
-	store: (key: string, body: ArrayBuffer, meta: ReceivedMessage) => Promise<boolean>,
+	store: StoreMessage,
 ): Promise<void> {
 	// Фото приймаємо й з підписом: підпис — частина нотатки (власних дописів бот у вебхуку не отримує).
 	const inChannel = msg.chat.type === "channel" && String(msg.chat.id) === env.CHAT_ID && (!msg.caption || !!msg.photo);
