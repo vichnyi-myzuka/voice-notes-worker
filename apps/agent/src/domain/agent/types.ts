@@ -8,6 +8,18 @@ export type AgentStatus = "working" | "idle" | "stopped";
 
 export type SessionRef = { id: string; url: string };
 
+// Докладний стан сесії для чату: статус плюс чим закінчилась остання робота й скільки вона коштувала.
+// outcome з'являється, коли сесія вже щось виконала; без нього вільна сесія просто чекає на відповідь.
+export type SessionReport = {
+	status: AgentStatus;
+	outcome?: "succeeded" | "failed" | "interrupted";
+	cost?: number; // USD
+	tokens?: number; // вхідні + вихідні + reasoning
+};
+
+// Куди повідомити про завершення роботи сесії (чат і посилання на неї).
+export type WatchTarget = { chatId: number; url: string };
+
 // Стан спільного контейнера для діагностики: що тримає його живим і коли був останній знімок.
 export type ComputerInfo = {
 	running: boolean;
@@ -32,6 +44,10 @@ export type Agent = {
 	// Уточнення в ту саму сесію (голос чи текст після транскрипції).
 	followUp(id: string, text: string): Promise<void>;
 	status(id: string): Promise<AgentStatus>;
+	// Докладніше за status: результат останньої роботи, вартість. Контейнер, що спить, не будить.
+	report(id: string): Promise<SessionReport>;
+	// Стежить за сесією: коли робота закінчиться (чи впаде, чи впреться в ліміт), надсилає підсумок у чат. Контейнер не будить.
+	watch(id: string, target: WatchTarget): Promise<void>;
 	// Перериває поточну роботу агента; сесія лишається, їй можна дописати далі.
 	abort(id: string): Promise<void>;
 	// Веб-інтерфейс: проксі запиту в спільний контейнер (усі сесії в одному інтерфейсі).

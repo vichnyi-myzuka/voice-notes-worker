@@ -67,3 +67,32 @@ export async function interrupt(oc: Opencode, sessionId: string): Promise<void> 
 	if (!res.ok) throw new Error(`opencode interrupt: ${res.status} ${await res.text()}`);
 	await res.body?.cancel();
 }
+
+// Сесія з лічильниками: вартість, токени й чим закінчилась остання робота (outcome з'являється після першої).
+export type SessionInfo = {
+	cost?: number;
+	tokens?: { input?: number; output?: number; reasoning?: number };
+	outcome?: "succeeded" | "failed" | "interrupted";
+	time?: { idle?: number };
+};
+
+export async function getSession(oc: Opencode, sessionId: string): Promise<SessionInfo> {
+	return data<SessionInfo>(await oc.fetch(`/api/session/${sessionId}`));
+}
+
+// Токени без кешу: за ними видно, скільки сесія реально «прочитала й написала».
+export const totalTokens = (s: SessionInfo): number => (s.tokens?.input ?? 0) + (s.tokens?.output ?? 0) + (s.tokens?.reasoning ?? 0);
+
+// Ідентифікатори сесій, що виконуються зараз.
+export async function activeSessions(oc: Opencode): Promise<string[]> {
+	return Object.keys(await data<Record<string, unknown>>(await oc.fetch("/api/session/active")));
+}
+
+// Останнє повідомлення асистента: його текст (підсумок) і помилка, якщо робота впала.
+export async function lastAssistant(oc: Opencode, sessionId: string): Promise<{ text: string; error?: string }> {
+	const res = await oc.fetch(`/api/session/${sessionId}/message?type=assistant&order=desc&limit=1`);
+	if (!res.ok) return { text: "" };
+	const [msg] = (await res.json<{ data: { content?: { type: string; text?: string }[]; error?: { message?: string } }[] }>()).data;
+	const text = (msg?.content ?? []).filter((p) => p.type === "text" && p.text).map((p) => p.text).at(-1) ?? "";
+	return { text: text.trim(), error: msg?.error?.message };
+}
