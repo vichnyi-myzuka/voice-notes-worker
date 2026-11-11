@@ -52,6 +52,13 @@ describe("сесія від створення до зупинки", () => {
 		expect(sessions.get(ID)?.messages).toEqual(["Перша"]);
 	});
 
+	it("DELETE /api/sessions/<id> видаляє сесію", async () => {
+		const { agent, sessions } = fakeAgent();
+		await agent.start(ID, { prompt: "x" });
+		expect((await handleFetch(call(`/api/sessions/${ID}`, "DELETE"), env, agent)).status).toBe(200);
+		expect(sessions.has(ID)).toBe(false);
+	});
+
 	it("статус невідомої сесії — stopped", async () => {
 		const { agent } = fakeAgent();
 		expect(await (await handleFetch(call("/api/sessions/session-9999"), env, agent)).json()).toEqual({ status: "stopped" });

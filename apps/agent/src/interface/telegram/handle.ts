@@ -51,10 +51,10 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 
 	if (!file && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
-		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє.");
-		else if (command === "/status" || command === "/stop") {
+		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /delete видаляє сесію.");
+		else if (command === "/status" || command === "/stop" || command === "/delete") {
 			if (!replied) await say(`Надішли ${command} відповіддю на пост із сесією.`);
-			else await sessionCommand(env, chat, agent, replied[1], command);
+			else await sessionCommand(env, chat, agent, replied[1], command, msg.reply_to_message?.message_id);
 		}
 		return;
 	}
@@ -102,8 +102,13 @@ async function transcribe(env: BotEnv, llm: Llm, file: { file_id: string; mime_t
 	return llm.transcribe(await res.arrayBuffer(), file.mime_type ?? "audio/ogg");
 }
 
-async function sessionCommand(env: BotEnv, chat: number, agent: Agent, id: string, command: "/status" | "/stop"): Promise<void> {
+async function sessionCommand(env: BotEnv, chat: number, agent: Agent, id: string, command: "/status" | "/stop" | "/delete", postId?: number): Promise<void> {
 	if (!(await agent.link(id))) return void (await tgSendMessage(env, chat, "⚠️ Сесію не знайдено."));
+	if (command === "/delete") {
+		await agent.remove(id);
+		if (postId) await tg(env, "deleteMessage", { chat_id: chat, message_id: postId }).catch((err) => console.error("delete post failed:", err));
+		return void (await tgSendMessage(env, chat, "🗑 Сесію видалено (гілка agent/… у репозиторії, якщо була, лишилась)."));
+	}
 	const report = await agent.report(id);
 	if (command === "/stop") {
 		if (report.status !== "working") return void (await tgSendMessage(env, chat, `Нічого зупиняти: ${describe(report)}`));

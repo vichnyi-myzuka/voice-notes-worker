@@ -3,7 +3,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { parseConnections } from "./connections";
-import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
+import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const DEFAULT_INACTIVITY_MS = 60 * 60 * 1000;
@@ -349,6 +349,26 @@ export class AgentSession extends DurableObject<Env> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked || !this.ctx.container?.running) return;
 		await interrupt(this.opencode(), tracked.ocId);
+	}
+
+	// Видалення сесії: історія в OpenCode, worktree (або порожня тека) і записи в сховищі. Гілка agent/<id> лишається в спільному
+	// клоні, щоб не втратити закомічену роботу; незакомічене зникає. Невідома сесія: нічого не робимо.
+	async remove(id: string): Promise<void> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		if (!tracked) return;
+		await this.ensureRunning();
+		await interrupt(this.opencode(), tracked.ocId).catch(() => {});
+		await deleteSession(this.opencode(), tracked.ocId);
+		await this.serial(async () => {
+			const proc = await this.ctx.container!.exec(
+				["sh", "-c", 'dir=/workspace/sessions/"$1"; if [ -e "$dir/.git" ]; then common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir) && git -C "$common/.." worktree remove --force "$dir"; fi; rm -rf "$dir"', "sh", id],
+				{ cwd: "/workspace", env: { HOME: "/root" } },
+			);
+			const out = await proc.output();
+			if (out.exitCode !== 0) console.error(`remove ${id}: cleanup failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
+		});
+		await this.ctx.storage.delete(sessionKey(id));
+		await this.ctx.storage.delete(watchKey(id));
 	}
 
 	// Стан для діагностики: чому контейнер не засинає, коли був знімок.

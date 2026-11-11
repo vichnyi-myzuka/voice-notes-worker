@@ -15,6 +15,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   POST /api/sessions {prompt, repo?, id?}   → {id, url}: створює сесію (ідемпотентно за id) й повертає посилання
 //   GET  /api/sessions/<id>                   → {status}: working | idle | stopped
 //   POST /api/sessions/<id>/messages {text}   → уточнення в ту саму сесію
+//   DELETE /api/sessions/<id>                 → видаляє сесію: історію й теку (гілка agent/<id> лишається)
 //   POST /api/sessions/<id>/abort             → зупиняє поточну роботу агента
 //   GET  /api/computer                        → стан контейнера для діагностики (чому не засинає, відкриті SSE-потоки)
 //   GET  /api/computer/connections            → running; з ?detail=1 ще й SSH-з'єднання (exec продовжує життя контейнера)
@@ -36,6 +37,7 @@ export async function handleFetch(req: Request, env: Env, agent: Agent): Promise
 		const [, id, action] = api;
 		if (!ID.test(id)) return json({ error: "bad id" }, 400);
 		if (!action && req.method === "GET") return json({ status: await agent.status(id) });
+		if (!action && req.method === "DELETE") return agent.remove(id).then(() => json({ ok: true }));
 		if (action === "abort" && req.method === "POST") return agent.abort(id).then(() => json({ ok: true }));
 		if (action === "messages" && req.method === "POST") {
 			const body = await req.json<{ text?: string }>().catch(() => null);

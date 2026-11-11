@@ -50,6 +50,8 @@ export type Agent = {
 	watch(id: string, target: WatchTarget): Promise<void>;
 	// Перериває поточну роботу агента; сесія лишається, їй можна дописати далі.
 	abort(id: string): Promise<void>;
+	// Видаляє сесію: історію в OpenCode і теку (worktree) в контейнері; гілка agent/<id> з комітами лишається в клоні
+	remove(id: string): Promise<void>;
 	// Веб-інтерфейс: проксі запиту в спільний контейнер (усі сесії в одному інтерфейсі).
 	serve(req: Request): Promise<Response>;
 	// Id сесії в OpenCode для прямого посилання на сесію; undefined, якщо такої сесії немає.

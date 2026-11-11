@@ -44,6 +44,9 @@ export function fakeAgent(origin = "https://agent.example") {
 			s.status = "idle";
 			s.outcome = "interrupted";
 		},
+		async remove(id) {
+			sessions.delete(id);
+		},
 		async serve(req) {
 			served.push(new URL(req.url).pathname);
 			return new Response("ui");

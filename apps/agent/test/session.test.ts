@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -94,6 +94,11 @@ function fakeContainer() {
 				if (path === "/api/session/active") return ok(Object.fromEntries([...opencode.busy].map((id) => [id, { type: "running" }])));
 				const m = path.match(/^\/api\/session\/([^/]+)(?:\/(prompt|interrupt))?$/);
 				if (m && !opencode.sessions.has(m[1])) return new Response("not found", { status: 404 });
+				if (req.method === "DELETE" && m && !m[2]) {
+					opencode.sessions.delete(m[1]);
+					opencode.deleted.push(m[1]);
+					return new Response(null, { status: 204 });
+				}
 				if (m?.[2] === "prompt") {
 					opencode.prompts.push({ id: m[1], text: (await req.json<{ text: string }>()).text });
 					opencode.busy.add(m[1]);
@@ -270,6 +275,25 @@ describe("AgentSession", () => {
 		expect(opencode.prompts.at(-1)).toEqual({ id: "ses_oc2", text: "Продовжуй" });
 		expect(await session.link(ID)).toBe("ses_oc2");
 		expect(await session.status(ID)).toBe("working");
+	});
+
+	it("remove: видаляє сесію OpenCode, теку й записи; невідома сесія — нічого", async () => {
+		const { session, opencode, store } = setup();
+		await session.remove("nope-0000");
+		expect(opencode.deleted).toEqual([]);
+
+		await session.start(ID, { prompt: "Задача", repo: "me/app" });
+		await session.watch(ID, { chatId: 1, url: "u" });
+		await session.remove(ID);
+		expect(opencode.aborted).toEqual(["ses_oc1"]);
+		expect(opencode.deleted).toEqual(["ses_oc1"]);
+		const cleanup = opencode.execs.at(-1)!.cmd;
+		expect(cleanup.slice(0, 2)).toEqual(["sh", "-c"]);
+		expect(cleanup.at(-1)).toBe(ID); // id іде аргументом, а не в тексті скрипта
+		expect(cleanup[2]).toContain("worktree remove --force");
+		expect(cleanup[2]).not.toContain("branch -D"); // закомічена робота лишається
+		expect(await session.link(ID)).toBeUndefined();
+		expect([...store.keys()].filter((k) => k.startsWith("watch:") || k.startsWith("session:"))).toEqual([]);
 	});
 
 	it("abort: перериває роботу, сесія лишається; на сплячому контейнері нічого не робить", async () => {

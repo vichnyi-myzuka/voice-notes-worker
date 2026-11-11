@@ -8,6 +8,7 @@ export type SessionObject = {
 	report(id: string): Promise<SessionReport>;
 	watch(id: string, target: WatchTarget): Promise<void>;
 	abort(id: string): Promise<void>;
+	remove(id: string): Promise<void>;
 	link(id: string): Promise<string | undefined>;
 	snapshot(): Promise<SnapshotInfo>;
 	resetComputer(): Promise<void>;
@@ -32,6 +33,7 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		report: (id) => computer().report(id),
 		watch: (id, target) => computer().watch(id, target),
 		abort: (id) => computer().abort(id),
+		remove: (id) => computer().remove(id),
 		serve: (req) => computer().fetch(req),
 		link: (id) => computer().link(id),
 		snapshot: () => computer().snapshot(),
