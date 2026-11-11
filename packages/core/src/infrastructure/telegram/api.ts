@@ -1,8 +1,8 @@
-import type { TelegramEnv } from "./env";
+import type { BotEnv, TelegramEnv } from "./env";
 import type { TgEntity, TgMethods } from "./types";
 
 // Викликає метод Bot API і повертає його result. FormData — для завантаження файлів.
-export async function tg<M extends keyof TgMethods>(env: TelegramEnv, method: M, body: TgMethods[M]["params"] | FormData): Promise<TgMethods[M]["result"]> {
+export async function tg<M extends keyof TgMethods>(env: BotEnv, method: M, body: TgMethods[M]["params"] | FormData): Promise<TgMethods[M]["result"]> {
 	const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
 		method: "POST",
 		headers: body instanceof FormData ? undefined : { "content-type": "application/json" },
@@ -12,7 +12,7 @@ export async function tg<M extends keyof TgMethods>(env: TelegramEnv, method: M,
 	return (await res.json<{ result: TgMethods[M]["result"] }>()).result;
 }
 
-export async function tgSendMessage(env: TelegramEnv, chatId: string | number, text: string): Promise<void> {
+export async function tgSendMessage(env: BotEnv, chatId: string | number, text: string): Promise<void> {
 	await tg(env, "sendMessage", { chat_id: chatId, text });
 }
 

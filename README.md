@@ -349,6 +349,19 @@ GET  /s/<id>                                           → редірект на
 
 Усі сесії ділять ресурси `standard-1` (4 ГБ, 1 vCPU), контейнер не засинає, поки хоч одна працює.
 
+### Чат з агентом у Telegram
+
+Окремий бот (не бот нотаток) приймає задачі лише від `TG_OWNER_ID` в особистому чаті. Голосове чи аудіо розпізнає Whisper (Workers AI, мова українська), текст іде як є. Бот ставить ✍, створює сесію (id `tg-<chat>-<message_id>`) і відповідає посиланням `https://agent.valentyi.dev/s/<id>` (для голосового ще й показує, що розібрав). Повторна доставка того самого повідомлення дає ту саму сесію: `start` ідемпотентний. Чужі користувачі, канали й групи ігноруються мовчки; файл понад 20 МБ чи порожня транскрипція дають підказку без сесії. Telegram одразу отримує `200`, а Whisper і холодний старт контейнера йдуть у фоні (`waitUntil`).
+
+Поки це лише створення сесій: уточнення (`followUp`), зупинка й статус із чату не підключені, є лише HTTP API.
+
+Налаштування (разом з одним кроком у Cloudflare, бо вебхук має йти повз Access):
+
+1. У @BotFather створи **окремого** бота й візьми токен.
+2. Секрети воркера: `cd apps/agent && npx wrangler secret put BOT_TOKEN`, так само `TG_WEBHOOK_SECRET` (довільний довгий випадковий рядок) і `TG_OWNER_ID` (твій числовий id у Telegram).
+3. Cloudflare Zero Trust → Access → Applications → додай застосунок Self-hosted для `agent.valentyi.dev/telegram` з політикою **Bypass** (Everyone). Без цього Access відповідає Telegram логіном, і вебхук не доходить. Решта хоста лишається за Access; `/telegram` захищає секретний заголовок `x-telegram-bot-api-secret-token` і перевірка `TG_OWNER_ID`.
+4. Вебхук: `source .env && curl "https://api.telegram.org/bot$AGENT_BOT_TOKEN/setWebhook" -d url=https://agent.valentyi.dev/telegram -d secret_token=$AGENT_TG_WEBHOOK_SECRET --data-urlencode 'allowed_updates=["message"]'` (у `.env` ці значення під іншими іменами, ніж у бота нотаток, щоб вони не змішувались).
+
 ### SSH у контейнер
 
 `npm run ssh -w apps/agent` (сам знаходить інстанс `main`; зі своєю командою: `npm run ssh -w apps/agent -- ls /workspace`) або вручну `npx wrangler containers ssh <INSTANCE_ID>` (id: `npx wrangler containers instances`). Якщо ключ має пароль, додай його в агент: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` (інакше wrangler відповідає `Permission denied (publickey)`). Публічний ed25519-ключ лежить у `wrangler.toml` (`[[containers.authorized_keys]]`), порту назовні немає, вхід лише через твій акаунт Cloudflare. Контейнер має вже працювати: SSH його не будить і **не утримує від сну**. Зміни, зроблені через SSH, воркер не бачить, тож після роботи виконай `POST /api/computer/snapshot` (за Access), інакше вони зникнуть разом із диском при сні. Агент не має доступу до `wrangler` і акаунта Cloudflare.

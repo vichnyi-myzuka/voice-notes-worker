@@ -1,11 +1,11 @@
-import type { TelegramEnv } from "./env";
+import type { BotEnv, TelegramEnv } from "./env";
 import { tg, tgSendMessage } from "./api";
 import type { StoreMessage, TgMessage } from "./types";
 
 export const DOWNLOAD_MAX_BYTES = 20_000_000; // ліміт Bot API на getFile
 
 // ✍ (саме без U+FE0F, інакше REACTION_INVALID): запис прийнято. Не критично, якщо реакції вимкнені.
-export async function react(env: TelegramEnv, msg: TgMessage): Promise<void> {
+export async function react(env: BotEnv, msg: TgMessage): Promise<void> {
 	await tg(env, "setMessageReaction", {
 		chat_id: msg.chat.id,
 		message_id: msg.message_id,

@@ -19,5 +19,10 @@ export interface Env {
 	// Тривалості в мс (за замовчуванням 1 година простою і 5 хвилин між знімками); коротші значення — для перевірки на Cloudflare
 	AGENT_INACTIVITY_MS?: string;
 	AGENT_SNAPSHOT_INTERVAL_MS?: string;
+	// Чат з агентом у Telegram (окремий бот): токен, секрет вебхука, єдиний дозволений користувач. Whisper — через Workers AI.
+	BOT_TOKEN?: string;
+	TG_WEBHOOK_SECRET?: string;
+	TG_OWNER_ID?: string;
+	AI: Ai;
 	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access
 }
