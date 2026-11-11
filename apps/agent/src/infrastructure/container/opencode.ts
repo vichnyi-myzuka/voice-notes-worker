@@ -57,6 +57,11 @@ export async function isBusy(oc: Opencode, sessionId: string): Promise<boolean> 
 	return sessionId in (await data<Record<string, { type: string }>>(await oc.fetch("/api/session/active")));
 }
 
+// Чи працює зараз хоч одна сесія (сервер спільний для всіх сесій і тек).
+export async function isAnyBusy(oc: Opencode): Promise<boolean> {
+	return Object.keys(await data<Record<string, unknown>>(await oc.fetch("/api/session/active"))).length > 0;
+}
+
 export async function interrupt(oc: Opencode, sessionId: string): Promise<void> {
 	const res = await oc.fetch(`/api/session/${sessionId}/interrupt`, post());
 	if (!res.ok) throw new Error(`opencode interrupt: ${res.status} ${await res.text()}`);

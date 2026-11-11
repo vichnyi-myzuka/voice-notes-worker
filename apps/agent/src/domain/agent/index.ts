@@ -1,1 +1,1 @@
-export type { Agent, AgentStatus, SessionRef, StartInput } from "./types";
+export type { Agent, AgentStatus, SessionRef, SnapshotInfo, StartInput } from "./types";

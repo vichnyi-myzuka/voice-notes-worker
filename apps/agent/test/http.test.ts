@@ -83,27 +83,31 @@ describe("перевірка входу", () => {
 	});
 });
 
-describe("веб-інтерфейс сесії", () => {
-	it("/s/<id> ставить cookie й веде у веб-інтерфейс, а далі запити йдуть у ту саму сесію", async () => {
-		const { agent, served } = fakeAgent();
-		const link = await handleFetch(call(`/s/${ID}`), env, agent);
-		expect(link.status).toBe(200);
-		expect(await link.text()).toContain('location.replace("/")');
-		expect(link.headers.get("clear-site-data")).toBe('"storage"'); // нова сесія: стан браузера від попередньої застарів
-		const cookie = link.headers.get("set-cookie") ?? "";
-		expect(cookie).toContain(`agent_session=${ID}`);
-		expect(cookie).toMatch(/HttpOnly/);
-		expect(cookie).toMatch(/Secure/);
+describe("веб-інтерфейс", () => {
+	// Ключ сервера в маршруті інтерфейсу: base64url адреси сервера без «=».
+	const key = btoa("https://agent.example").replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 
-		const page = await handleFetch(call("/", "GET", undefined, { cookie: `x=1; agent_session=${ID}` }), env, agent);
-		expect(await page.text()).toBe(`ui:${ID}`);
-		expect(served).toEqual([ID]);
+	it("/s/<id> веде прямо на сторінку цієї сесії в інтерфейсі, без cookie й очищення браузера", async () => {
+		const { agent } = fakeAgent();
+		await agent.start(ID, { prompt: "Задача" });
+		const link = await handleFetch(call(`/s/${ID}`), env, agent);
+		expect(link.status).toBe(302);
+		expect(link.headers.get("location")).toBe(`/server/${key}/session/ses_${ID}`);
+		expect(link.headers.get("set-cookie")).toBeNull();
+		expect(link.headers.get("clear-site-data")).toBeNull();
 	});
 
-	it("/s/<id> тієї самої сесії не чистить стан браузера", async () => {
+	it("/s/<id> невідомої сесії — 404, поганого id — 400", async () => {
 		const { agent } = fakeAgent();
-		const link = await handleFetch(call(`/s/${ID}`, "GET", undefined, { cookie: `agent_session=${ID}` }), env, agent);
-		expect(link.headers.get("clear-site-data")).toBeNull();
+		expect((await handleFetch(call(`/s/${ID}`), env, agent)).status).toBe(404);
+		expect((await handleFetch(call("/s/BAD"), env, agent)).status).toBe(400);
+	});
+
+	it("решту запитів проксує в спільний інтерфейс без жодної cookie вибору сесії", async () => {
+		const { agent, served } = fakeAgent();
+		expect(await (await handleFetch(call("/"), env, agent)).text()).toBe("ui");
+		expect(await (await handleFetch(call("/api/session?limit=10"), env, agent)).text()).toBe("ui");
+		expect(served).toEqual(["/", "/api/session"]);
 	});
 
 	it("/sw.js віддає нейтральний service worker без кешування (не з контейнера)", async () => {
@@ -113,11 +117,28 @@ describe("веб-інтерфейс сесії", () => {
 		expect(await res.text()).not.toContain("fetch");
 		expect(served).toEqual([]);
 	});
+});
 
-	it("без cookie сесії або з поганою проксі не працює", async () => {
-		const { agent, served } = fakeAgent();
-		expect((await handleFetch(call("/"), env, agent)).status).toBe(404);
-		expect((await handleFetch(call("/", "GET", undefined, { cookie: "agent_session=../x" }), env, agent)).status).toBe(404);
-		expect(served).toEqual([]);
+describe("ручний знімок", () => {
+	it("POST /api/computer/snapshot зберігає диск і повертає знімок", async () => {
+		const { agent, snapshots } = fakeAgent();
+		const res = await handleFetch(call("/api/computer/snapshot", "POST"), env, agent);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ id: "snap1", bytes: 1, ms: 2 });
+		expect(snapshots).toHaveLength(1);
+	});
+
+	it("зайнятий агент чи сплячий контейнер — 409 з причиною", async () => {
+		const { agent, failSnapshot } = fakeAgent();
+		failSnapshot("an agent is busy");
+		const res = await handleFetch(call("/api/computer/snapshot", "POST"), env, agent);
+		expect(res.status).toBe(409);
+		expect(await res.json()).toEqual({ error: "an agent is busy" });
+	});
+
+	it("лише POST, інші методи йдуть у проксі й знімка не роблять", async () => {
+		const { agent, snapshots } = fakeAgent();
+		await handleFetch(call("/api/computer/snapshot", "GET"), env, agent);
+		expect(snapshots).toHaveLength(0);
 	});
 });

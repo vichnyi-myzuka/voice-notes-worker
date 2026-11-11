@@ -1,25 +1,32 @@
-import type { Agent, AgentStatus, StartInput } from "../../domain/agent";
+import type { Agent, AgentStatus, SnapshotInfo, StartInput } from "../../domain/agent";
 
-// Що має вміти Durable Object сесії, щоб за ним працював порт Agent (контейнерний AgentSession або WorkerdSession на SDK).
+// Що має вміти Durable Object, щоб за ним працював порт Agent: він володіє єдиним контейнером і всіма сесіями в ньому.
 export type SessionObject = {
-	start(input: StartInput): Promise<unknown>;
-	followUp(text: string): Promise<void>;
-	status(): Promise<AgentStatus>;
-	abort(): Promise<void>;
+	start(id: string, input: StartInput): Promise<unknown>;
+	followUp(id: string, text: string): Promise<void>;
+	status(id: string): Promise<AgentStatus>;
+	abort(id: string): Promise<void>;
+	link(id: string): Promise<string | undefined>;
+	snapshot(): Promise<SnapshotInfo>;
 	fetch(req: Request): Promise<Response>;
 };
 
-// Адаптер порту Agent: сесія = Durable Object з іменем id.
+// Усі сесії живуть в одному контейнері, яким володіє один Durable Object.
+export const COMPUTER = "main";
+
+// Адаптер порту Agent: один Durable Object на всі сесії, id сесії лише ключ усередині нього.
 export const durableAgent = (ns: { getByName(name: string): SessionObject }, origin: string): Agent => {
-	const session = (id: string) => ns.getByName(id);
+	const computer = () => ns.getByName(COMPUTER);
 	return {
 		async start(id, input) {
-			await session(id).start(input);
+			await computer().start(id, input);
 			return { id, url: `${origin}/s/${id}` };
 		},
-		followUp: (id, text) => session(id).followUp(text),
-		status: (id) => session(id).status(),
-		abort: (id) => session(id).abort(),
-		serve: (id, req) => session(id).fetch(req),
+		followUp: (id, text) => computer().followUp(id, text),
+		status: (id) => computer().status(id),
+		abort: (id) => computer().abort(id),
+		serve: (req) => computer().fetch(req),
+		link: (id) => computer().link(id),
+		snapshot: () => computer().snapshot(),
 	};
 };
