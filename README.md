@@ -8,17 +8,17 @@ Shortcut ──POST m4a──▶ fetch (producer) ──▶ R2 + Queue ──▶
                                         │  → Telegram sendAudio (підпис, без кнопок) → /sync batch у Todoist → підпис з посиланнями на задачі
                                         └─ після 4 невдалих повторів → DLQ → повідомлення про помилку в Telegram
 Telegram ──відповідь (голос/текст) на нотатку──▶ вебхук ──▶ черга ──▶ правка в Todoist + підпис на місці (з посиланнями)
-(callback «td:<id>» лишився лише для кнопок у нотатках, опублікованих до автододавання)
 ```
 
 ## Структура
 
 ```
 wrangler.toml          bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE
-src/index.ts           producer, consumer, DLQ consumer, summary, редагування, автододавання в Todoist, callback старих кнопок, тип Env
+src/index.ts           producer, consumer, DLQ consumer, summary, редагування, автододавання в Todoist, тип Env
 src/llm.ts             виклик зі structured output: gpt-6-luna, при збої Gemma 4
 src/todoist.ts         Todoist API (/sync), тріаж, операції create/update/delete, виконання збережених дій, вкладення
 src/steps.ts           контрольовані кроки обробки: результат кроку зберігається в R2, повтор пропускає виконане, на останній спробі крок деградує (onFinalFailure)
+src/published.ts       опублікована нотатка: запис у R2, ключі, оновлення повідомлення в каналі (saveNote / loadNote / showNote / removeNote)
 src/note.ts            підпис нотатки (fitCaption), хештеги, посилання на задачі, текстові нотатки
 src/setup.ts           команди налаштування Todoist (проєкти й мітки голосом)
 src/telegram.ts        Bot API і прийом голосових, тексту й фото з вебхука
@@ -144,10 +144,8 @@ source .env && curl -X POST https://voice-notes-worker.<subdomain>.workers.dev -
 source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
   -d url=https://voice-notes-worker.<subdomain>.workers.dev/telegram \
   -d secret_token=$TG_WEBHOOK_SECRET \
-  --data-urlencode 'allowed_updates=["message","channel_post","callback_query"]' -d drop_pending_updates=true
+  --data-urlencode 'allowed_updates=["message","channel_post"]' -d drop_pending_updates=true
 ```
-
-`callback_query` у `allowed_updates` потрібен лише для кнопок у старих нотатках.
 
 ## Текстові нотатки
 
@@ -249,7 +247,7 @@ source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
 - **Автододавання в Todoist.** Нотатка публікується без кнопок, одразу після цього воркер виконує дію одним batch-запитом `/sync` і редагує підпис: назви задач, що вже в Todoist, стають посиланнями на них (`https://app.todoist.com/app/task/<id>`, через `caption_entities`), маркери лишаються «•». Команди мають сталі uuid, тож повтори черги не дублюють задачі. Якщо на останній спробі Todoist усе ще недоступний, нотатка (або правка) все одно публікується з рядком «⚠️ Не вдалося оновити Todoist» у підписі. Дія (pending) лежить в R2 (`todoist/<id>.json`) до 7 днів (lifecycle). В описі кожної задачі спершу подробиці (`details`, якщо є), під ними `🎙 <назва нотатки> (дата)` і, якщо `CHAT_ID` — канал або супергрупа (`-100…`), посилання на повідомлення в Telegram (`https://t.me/c/…/<id>`). В особистому чаті з ботом посилань на повідомлення Telegram не має. Опис задачі переписується при правці, лише якщо змінились подробиці: те, що дописано в Todoist вручну, інакше не чіпається.
 - **Проєкти** (назви й **описи**) беруться з Todoist: що означає проєкт, пиши в його описі в Todoist (Edit project → Description) — модель бачить «Назва — опис», деплой не потрібен. Зараз: Work, Personal affairs, Home, Shopping, Gifts, Want.
 - **Мітки, пріоритети й загальні правила** — в описі службового проєкту «⚙️ Правила» в Todoist. Проєкт може лежати в архіві (так він не заважає); щоб змінити — розархівуй, відредагуй опис, заархівуй знову; деплой не потрібен. Формат: секція `[мітки]` (рядки «Мітка — коли ставити»; у міток Todoist немає опису) і `[правила]` (довільний текст: пріоритети p1–p4, «подарунок → Gifts», «незрозуміло → Inbox» тощо). Самі мітки беруться з Todoist. Воркер не кладе в цей проєкт задачі й не враховує його як проєкт для тріажу.
-- **Старі кнопки.** Обробник `callback_query` (`td:<id>`, лише для `TG_OWNER_ID`) лишено тільки для кнопок «Додати/Оновити в Todoist» у нотатках, опублікованих до автододавання.
+- **Старі кнопки.** Обробника `callback_query` більше немає: кнопки «Додати/Оновити в Todoist» у нотатках, опублікованих до автододавання, не працюють (Todoist-задачі додавай правкою нотатки).
 - Невдалий тріаж не блокує нотатку: вона прийде без задач у Todoist.
 
 ## Проєкти й мітки голосом

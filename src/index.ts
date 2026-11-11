@@ -1,8 +1,9 @@
 import { askJson, parseJsonObject, toBase64 } from "./llm";
-import { buildCaption, CAPTION_MAX, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote, TEXT_CAPTION_MAX, type Meta } from "./note";
+import { buildCaption, CAPTION_MAX, parseEditedNote, parseMeta, plainTasks, textNote, TEXT_CAPTION_MAX, type Meta } from "./note";
 import { applySetup, planSetup, setupReport, type SetupPlan } from "./setup";
+import { captionNotice, loadNote, noteIdByMessage, refreshNote, removeNote, saveNote, showNote, type Note } from "./published";
 import { openSteps, type Steps } from "./steps";
-import { NO_PREVIEW, receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
+import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
 import {
 	applyAction,
 	attachFile,
@@ -19,7 +20,6 @@ import {
 	taskRulesBlock,
 	taskValidator,
 	triage,
-	withAppliedRecurrence,
 	type TodoistOp,
 	type TodoistSnapshot,
 	type TriageItem,
@@ -66,21 +66,6 @@ type State = {
 	photoAttached?: boolean; // (фото) фото додане коментарем до створених задач
 };
 
-// Опублікована нотатка, зберігається для редагування (`notes/<id>.json`, 7 днів за lifecycle бакета).
-// `notes/msg-<message_id>` вказує на id нотатки: так відповідь у каналі знаходить, що редагувати.
-type Note = {
-	transcript: string;
-	edits: string[]; // інструкції попередніх редагувань
-	meta: Meta;
-	triage: TriageItem[] | null;
-	actionId?: string;
-	messageId: number;
-	recordedTs: number;
-	text?: boolean; // текстова нотатка: повідомлення без аудіо, оригінал — у цитаті під підписом
-	setup?: string[]; // зміни налаштувань Todoist, зроблені цією нотаткою та її правками (для підпису)
-};
-const noteKey = (id: string) => `notes/${id}.json`;
-const noteByMessageKey = (messageId: number | string) => `notes/msg-${messageId}`;
 // Підпис до фото — окремим об'єктом: у customMetadata R2 (2 КБ) 1024 символи кирилиці можуть не влізти.
 const captionKey = (key: string) => `${key}.caption`;
 
@@ -105,30 +90,24 @@ async function enqueueNote(
 	await env.QUEUE.send(edit ? { key, edit } : { key });
 }
 
-type TgCallback = { id: string; from: { id: number }; data?: string };
-
 export default {
 	async fetch(req, env): Promise<Response> {
 		const url = new URL(req.url);
 
-		// Вебхук Telegram: голосові (канал і приват) і натискання кнопки Todoist.
+		// Вебхук Telegram: голосові, текст і фото (канал і приват).
 		if (url.pathname === "/telegram" && req.method === "POST") {
 			const token = req.headers.get("x-telegram-bot-api-secret-token") ?? "";
 			if (!env.TG_WEBHOOK_SECRET || !(await safeEqual(token, env.TG_WEBHOOK_SECRET))) {
 				return new Response("unauthorized", { status: 401 });
 			}
 			type Msg = Parameters<typeof receiveTelegramVoice>[1];
-			const update = (await req.json()) as { message?: Msg; channel_post?: Msg; callback_query?: TgCallback };
-			if (update.callback_query) {
-				await handleCallback(env, update.callback_query);
-				return new Response("ok");
-			}
+			const update = (await req.json()) as { message?: Msg; channel_post?: Msg };
 			const msg = update.message ?? update.channel_post;
 			if (msg) {
 				await receiveTelegramVoice(env, msg, async (key, body, { contentType, replyTo, caption, ...meta }) => {
 					if (caption) await env.BUCKET.put(captionKey(key), caption);
 					// Відповідь на повідомлення в каналі = редагування; "missing", якщо це не наша нотатка або вона застаріла.
-					const edit = replyTo && ((await (await env.BUCKET.get(noteByMessageKey(replyTo)))?.text()) || "missing");
+					const edit = replyTo && ((await noteIdByMessage(env, replyTo)) || "missing");
 					if (!edit || edit === "missing") {
 						await enqueueNote(env, key, body, contentType, meta, edit || undefined);
 						return true;
@@ -173,7 +152,7 @@ export default {
 		if (batch.queue === DLQ_NAME) {
 			for (const msg of batch.messages) {
 				// Правка не вдалася: знімаємо з нотатки статус «редагується».
-				const note = msg.body.edit && (await (await env.BUCKET.get(noteKey(msg.body.edit)))?.json<Note>());
+				const note = msg.body.edit && (await loadNote(env, msg.body.edit));
 				if (note) await markEditing(env, note.messageId, false);
 				await tgSendMessage(
 					env,
@@ -327,15 +306,14 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		...(isText && { text: true }),
 		...(setup.length && { setup }),
 	};
-	await env.BUCKET.put(noteKey(noteId), JSON.stringify(note));
-	await env.BUCKET.put(noteByMessageKey(messageId), noteId);
+	await saveNote(env, noteId, note);
 	console.log(`note ${noteId} published as message ${messageId}`);
 
 	if (actionId) {
 		// Задачі одразу в Todoist (посилання на повідомлення вже в описі), потім назви задач у підписі стають посиланнями на них.
 		const applied = await step("todoistApplied", () => applyOnce(env, actionId), { onFinalFailure: () => false });
 		await step("todoistMarked", async () => {
-			await markInTodoist(env, noteId, !applied);
+			await refreshNote(env, noteId, !applied);
 			return true;
 		});
 		// Фото — коментарем-вкладенням до кожної створеної задачі. Збій на останній спробі не блокує нотатку.
@@ -383,7 +361,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	const run = await openSteps<State>(env, stateKey, lastAttempt);
 	const { state, step } = run;
 
-	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
+	const note = await loadNote(env, noteId);
 	if (!note) {
 		await tgSendMessage(env, env.CHAT_ID, "⚠️ Не вдалося відредагувати: нотатку не знайдено (редагувати можна протягом 7 днів).");
 		await cleanup();
@@ -418,7 +396,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 			console.error("delete note message failed:", err),
 		);
 		if (note.actionId) await deleteAction(env, note.actionId);
-		await env.BUCKET.delete([noteKey(noteId), noteByMessageKey(note.messageId), `notes/${noteId}.todoist.json`]);
+		await removeNote(env, noteId, note);
 		console.log(`note ${noteId} deleted by request: ${deleted} open tasks deleted in Todoist`);
 		await cleanup();
 		return;
@@ -448,7 +426,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	const allSetup = [...(note.setup ?? []), ...setup];
 	await step("captionEdited", async () => {
 		const notice = captionNotice(allSetup, applied === false);
-		await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, note, meta, triaged, notice)));
+		await showNote(env, noteId, note, { meta, triage: triaged, notice });
 		return true;
 	});
 
@@ -460,7 +438,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		actionId: actionId || undefined,
 		...(allSetup.length && { setup: allSetup }),
 	};
-	await env.BUCKET.put(noteKey(noteId), JSON.stringify(updated));
+	await saveNote(env, noteId, updated);
 	// Стара дія (з часів кнопки, якщо її не натиснули) більше не актуальна.
 	if (note.actionId && note.actionId !== actionId) await deleteAction(env, note.actionId);
 	console.log(`note ${noteId} edited`);
@@ -468,12 +446,7 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 }
 
 // ---------- Todoist ----------
-const TODOIST_FAILED = "⚠️ Не вдалося оновити Todoist";
 const SETUP_FAILED = "⚠️ Не вдалося змінити проєкти чи мітки";
-
-// Блок під нотаткою: зміни налаштувань Todoist і збій задач.
-const captionNotice = (setup: string[] | undefined, failed: boolean) =>
-	[setup?.length ? `⚙️ Todoist:\n${setup.join("\n")}` : "", failed ? TODOIST_FAILED : ""].filter(Boolean).join("\n\n");
 
 // Команди налаштування з тексту: план зберігається в стані, виконання ідемпотентне (сталі uuid).
 // Повертає рядки звіту для підпису ([] — команд не було).
@@ -494,74 +467,11 @@ async function runSetup(env: Env, text: string, run: Steps<State>): Promise<stri
 	);
 	return ok ? setupReport(s.plan) : [SETUP_FAILED];
 }
-const NO_BUTTONS = { inline_keyboard: [] }; // прибирає кнопку (у старих нотатках)
-
-// Виконує дію в Todoist одразу. Збій — ретрай черги (сталі uuid не дадуть дублів);
-// на останній спробі повертає false, щоб нотатка все одно дійшла.
+// Виконує дію в Todoist (повторний uuid Todoist ігнорує, тож ретраї не дублюють задачі).
 async function applyOnce(env: Env, actionId: string): Promise<true> {
 	const res = await applyAction(env, actionId);
 	if (res.status === "applied") console.log(`todoist action ${actionId} applied: ${res.count} ops`);
 	return true;
-}
-
-// Кнопка «Додати в Todoist» лишилась лише в нотатках, опублікованих до автододавання.
-async function handleCallback(env: Env, cb: TgCallback): Promise<void> {
-	const answer = (text: string, alert = false) =>
-		tg(env, "answerCallbackQuery", { callback_query_id: cb.id, text, show_alert: alert }).catch((err) =>
-			console.error("answerCallbackQuery failed:", err),
-		);
-	if (env.TG_OWNER_ID && String(cb.from.id) !== env.TG_OWNER_ID) return void (await answer("Немає доступу"));
-	const id = cb.data?.match(/^td:([0-9a-f-]{36})$/)?.[1];
-	if (!id) return void (await answer(""));
-	try {
-		const res = await applyAction(env, id);
-		if (res.status === "missing") return void (await answer("Дія застаріла (зберігається 7 днів)", true));
-		if (res.status === "already") return void (await answer("Вже виконано"));
-		console.log(`todoist action ${id} applied: ${res.count} ops`);
-		await answer(`✅ Todoist: ${res.count}`);
-		await markInTodoist(env, res.noteId).catch((err) => console.error("mark in todoist failed:", err));
-	} catch (err) {
-		console.error(`todoist action ${id} failed:`, err);
-		await answer("⚠️ Не вдалося оновити Todoist, спробуй ще раз", true);
-	}
-}
-
-// Після виконання дії: назви задач, що вже в Todoist, — посилання на них; кнопки прибираються.
-async function markInTodoist(env: Env, noteId: string, failed = false): Promise<void> {
-	const note = await (await env.BUCKET.get(noteKey(noteId)))?.json<Note>();
-	if (!note) return;
-	const notice = captionNotice(note.setup, failed);
-	await editNoteMessage(env, note, ...(await appliedCaption(env, noteId, note, note.meta, note.triage, notice)));
-}
-
-// Підпис після виконання в Todoist: назви задач — посилання, 🔁 лише в задач, де Todoist прийняв повтор.
-async function appliedCaption(
-	env: Env,
-	noteId: string,
-	note: Note,
-	meta: Meta,
-	triage: TriageItem[] | null,
-	notice: string,
-): Promise<[string, object[]]> {
-	const inTodoist = await getInTodoist(env, noteId);
-	const shown = withAppliedRecurrence(triage, inTodoist);
-	const caption = buildCaption(meta, shown, note.recordedTs, env.TIMEZONE, notice, note.text ? TEXT_CAPTION_MAX : CAPTION_MAX);
-	const ids = Object.fromEntries(Object.entries(inTodoist).map(([key, v]) => [key, v.id]));
-	return [caption, taskLinks(caption, shown, ids)];
-}
-
-// Оновлює підпис (з посиланнями на задачі) і прибирає кнопки. Текстова нотатка — це текст повідомлення з цитатою оригіналу.
-async function editNoteMessage(env: Env, note: Note, caption: string, entities: object[]): Promise<void> {
-	const common = { chat_id: env.CHAT_ID, message_id: note.messageId, reply_markup: NO_BUTTONS };
-	await (
-		note.text
-			? tg(env, "editMessageText", { ...common, ...textNote(caption, note.transcript, entities), link_preview_options: NO_PREVIEW })
-			: tg(env, "editMessageCaption", { ...common, caption, caption_entities: entities })
-	).catch(
-		(err) => {
-			if (!String(err).includes("message is not modified")) throw err;
-		},
-	);
 }
 
 // Видаляє оригінальне голосове з каналу (якщо запис прийшов звідти). Збій не критичний.
