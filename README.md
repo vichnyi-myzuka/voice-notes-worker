@@ -338,12 +338,12 @@ Whisper (і резервна Gemma 4) працюють через binding `AI`. 
 
 Агент не має доступу до Cloudflare: його токен GitHub пушить у гілки й відкриває PR, але не має права `workflows` (змінити workflow й дістати секрет не вийде).
 
-Домени воркерів у репозиторії не зберігаються: CI підставляє `--domain <застосунок>.$BASE_DOMAIN` (`notes.`, `agent.`, `sites.`). Базовий домен задає змінна `BASE_DOMAIN` (Variables, не Secrets) в обох environments. У прикладах цього README `example.com` замінюй на свій домен. Локальний аварійний деплой: `npm run deploy -w apps/<назва> -- --domain <назва>.<домен>`.
+Домени воркерів у репозиторії не зберігаються: CI підставляє `--domain <застосунок>.$BASE_DOMAIN` (`notes.`, `agent.`, `sites.`). Базовий домен задає секрет `BASE_DOMAIN` в обох environments (саме секрет, а не змінна: GitHub маскує його в публічних логах як `***`). У прикладах цього README `example.com` замінюй на свій домен. Локальний аварійний деплой: `npm run deploy -w apps/<назва> -- --domain <назва>.<домен>`.
 
 ### Налаштування GitHub (робить власник)
 
 1. **Репозиторій публічний** (Settings → General → Danger Zone): тільки так на безкоштовному плані доступні rulesets і environment-схвалення.
-2. **Environments** (Settings → Environments): `production` (без обмежень) і `production-agent` (Required reviewers: ти). У кожному секрети `CLOUDFLARE_API_TOKEN` та `CLOUDFLARE_ACCOUNT_ID`.
+2. **Environments** (Settings → Environments): `production` (без обмежень) і `production-agent` (Required reviewers: ти). У кожному секрети `CLOUDFLARE_API_TOKEN` , `CLOUDFLARE_ACCOUNT_ID` і `BASE_DOMAIN` (твій базовий домен).
 3. **Токен Cloudflare** (My Profile → API Tokens → Custom token) лише для одного акаунта: Account → Workers Scripts: Edit; Account → Cloudchamber (Containers): Edit; Zone → Workers Routes: Edit для `example.com`. Без DNS, Access і Billing. Якщо `wrangler deploy` скаже про нестачу права, додавай по одному.
 4. **Ruleset на `main`** (Settings → Rules → Rulesets): Require a pull request (0 схвалень: схвалити власний PR неможливо), Require status checks → `check`, Block force pushes, без bypass-списку (токен агента діє від твого імені, тож bypass для admin зняв би захист).
 5. **Токен агента**: fine-grained PAT на потрібні репозиторії: Contents, Pull requests: Read and write; без Workflows, Actions і Administration (`wrangler secret put GITHUB_TOKEN` в `apps/agent`).
