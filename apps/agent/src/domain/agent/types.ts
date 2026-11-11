@@ -68,5 +68,6 @@ export type Agent = {
 	// Примусово зберігає диск контейнера (зміни, зроблені поза сесіями агента, наприклад через SSH).
 	snapshot(): Promise<SnapshotInfo>;
 	// Викидає збережений знімок і зупиняє контейнер: наступний старт іде з чистого образу (сесії й клони зникають)
-	resetComputer(): Promise<void>;
+	// unlessBusy: не чіпати, поки хтось працює. Повертає true, якщо скинуто
+	resetComputer(unlessBusy?: boolean): Promise<boolean>;
 };

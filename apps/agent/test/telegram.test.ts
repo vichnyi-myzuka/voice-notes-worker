@@ -278,6 +278,21 @@ describe("вебхук Telegram", () => {
 			expect(deleted()).toEqual([8, 9, 100, 10]); // пост сесії й сама команда
 		});
 
+		it("/update: без працюючих агентів скидає контейнер; зайнятий — просить force; /update force перериває", async () => {
+			const { send, sessions, replies, resets, calls } = await withSession(); // сесія працює
+			await send(msg({ text: "/update" }, 8));
+			expect(resets).toHaveLength(0);
+			expect(replies().at(-1)).toContain("/update force");
+			sessions.get(SID)!.status = "idle";
+			await send(msg({ text: "/update" }, 9));
+			expect(resets).toHaveLength(1);
+			expect(replies().at(-1)).toContain("Контейнер зупинено");
+			sessions.get(SID)!.status = "working";
+			await send(msg({ text: "/update force" }, 10));
+			expect(resets).toHaveLength(2);
+			expect(calls.filter((c) => c.method === "deleteMessage").map((c) => c.body.message_id)).toEqual([8, 9, 10]); // команди прибрано
+		});
+
 		it("команда без відповіді на пост просить відповісти на пост із сесією", async () => {
 			const { send, replies } = setup();
 			await send(msg({ text: "/status" }));

@@ -60,8 +60,10 @@ export function fakeAgent(origin = "https://agent.example") {
 		async info() {
 			return { running: true, activeAt: 1, alarmAt: null, snapshot: null, streams: [] };
 		},
-		async resetComputer() {
+		async resetComputer(unlessBusy) {
+			if (unlessBusy && [...sessions.values()].some((s) => s.status === "working")) return false;
 			resets.push("reset");
+			return true;
 		},
 		async snapshot() {
 			if (snapshotError) throw new Error(snapshotError);

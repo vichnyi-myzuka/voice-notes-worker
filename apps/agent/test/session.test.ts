@@ -287,6 +287,20 @@ describe("AgentSession", () => {
 		expect(opencode.execs.at(-1)!.cmd.at(-1)).toBe("docs-add-18");
 	});
 
+	it("resetComputer: знімок викидається, контейнер зупиняється; з unlessBusy зайнятого не чіпає", async () => {
+		const { session, container, opencode, store } = setup();
+		await session.start(ID, { prompt: "Задача" }); // агент зайнятий
+		expect(await session.resetComputer(true)).toBe(false);
+		expect(container.running).toBe(true);
+		store.set("snapshot", { id: "s", image: "image", at: 1 });
+		expect(await session.resetComputer()).toBe(true);
+		expect(container.running).toBe(false);
+		expect(store.has("snapshot")).toBe(false);
+		opencode.busy.clear();
+		await session.followUp(ID, "Далі");
+		expect(container.starts.at(-1)).toMatchObject({ image: "image" }); // знімка немає: старт із образу
+	});
+
 	it("remove: видаляє сесію OpenCode, теку й записи; невідома сесія — нічого", async () => {
 		const { session, opencode, store } = setup();
 		await session.remove("nope-0000");
