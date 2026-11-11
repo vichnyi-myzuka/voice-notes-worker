@@ -3,6 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2026-11-01"
 workers_dev = true     # захищається Cloudflare Access (див. README, «Агент»)
 preview_urls = false
+# Основна адреса; workers.dev лишається до перевірки, потім workers_dev = false.
+routes = [{ pattern = "agent.valentyi.dev", custom_domain = true }]
 
 [observability]
 enabled = true

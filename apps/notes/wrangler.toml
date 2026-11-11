@@ -3,6 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2026-11-01"
 workers_dev = true     # URL для Shortcut
 preview_urls = false  # окремі публічні URL для кожної версії не потрібні
+# Основна адреса (Shortcut і вебхук); workers.dev лишається до перевірки, потім workers_dev = false.
+routes = [{ pattern = "notes.valentyi.dev", custom_domain = true }]
 
 # Логи в дашборді (Workers Logs)
 [observability]
