@@ -22,10 +22,10 @@
 
 ## Код
 
-Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../../application/tasks`; в межах шару — `../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`. Ядро (domain, application, interface) нічого не знає про Telegram: воно працює з портом `Channel` (`domain/channel`), адаптер — `infrastructure/telegram`, складання — у `src/index.ts`. Службові дані каналу (`fileId`, `deleteChatId` тощо) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
+Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../../application/tasks`; в межах шару — `../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`. Ядро (domain, application, interface) нічого не знає про Telegram і Todoist: воно працює з портами `Channel` (`domain/channel`) і `TaskTracker` (`domain/tracker`), адаптери — `infrastructure/telegram` і `infrastructure/todoist`, складання — у `src/index.ts`. Службові дані каналу (`fileId`, `deleteChatId` тощо) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
 
 ```
-src/index.ts           entrypoint: лише підключає fetch (inbox) і queue (queue)
+src/index.ts           entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
 src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
   interface/           точки входу
     inbox/             прийом записів: вебхук каналу (через Channel) і завантаження з шорткату → R2 + черга
@@ -34,9 +34,10 @@ src/<шар>/<модуль>/    шари: interface → application → domain, 
     pipeline/          processNote / processEdit — кроки обробки запису, showNote; State зі слайсів модулів
     understand/        transcribe (Whisper), readImage (vision), summarize, editNote — промпти й схеми
     setup/             команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»), runSetup
-    tasks/             задачі нотатки в Todoist: syncTasks (ops → actionId → todoistApplied), planOps / buildCommands / applyOps, стан InTodoist, вкладення
+    tasks/             задачі нотатки в трекері: syncTasks (ops → actionId → tasksApplied), planOps, applyOps, стан TrackedTasks
   domain/              правила й дані предметної області
     channel/           порт каналу (Channel): як записи приходять і нотатки публікуються; Telegram — лише адаптер
+    tracker/           порт трекера задач (TaskTracker) і нейтральні типи (TriageItem, TaskOp, SetupPlan…); Todoist — лише адаптер
     note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
     published/         опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / removeNote
     recording/         ключі запису в R2, ліміти розміру, час запису
@@ -46,7 +47,7 @@ src/<шар>/<модуль>/    шари: interface → application → domain, 
     llm/               askJson: structured output gpt-6-luna → fallback Gemma 4 (Workers AI)
     telegram/          адаптер Channel для Telegram: Bot API, вебхук, прийом голосових / тексту / фото, реакції, сутності тексту
     security/          safeEqual (порівняння секретів)
-    todoist/           знімок Todoist, валідація полів задач, тріаж
+    todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
 ```
 
 ## Локальний e2e (справжній канал і Todoist!)

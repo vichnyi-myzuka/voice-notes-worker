@@ -1,5 +1,5 @@
 import type { TextLink } from "../channel";
-import { formatTriage, taskUrl, type TriageItem } from "../../infrastructure/todoist";
+import type { TriageItem } from "../tracker";
 import type { Meta } from "./types";
 
 // Підпис до аудіо: назва, summary і (якщо є) списки думок і задач.
@@ -55,12 +55,12 @@ export function fitCaption(meta: Meta, triaged: TriageItem[] | null, room: numbe
 // Посилання в підписі: назви задач, що вже в Todoist, стають посиланнями на них.
 // Шукаємо рядки «• <назва> →» по черзі після заголовка задач; обрізане підписом — без посилання.
 // offset/length у UTF-16, як і довжина рядків у JS.
-export function taskLinks(caption: string, triaged: TriageItem[] | null, inTodoist: Record<string, string>): TextLink[] {
+export function taskLinks(caption: string, triaged: TriageItem[] | null, taskIds: Record<string, string>, taskUrl: (id: string) => string): TextLink[] {
 	const links: TextLink[] = [];
 	let from = caption.indexOf("✅ Задачі:");
 	if (from < 0) return links;
 	for (const i of triaged ?? []) {
-		const id = i.key && !i.duplicateOf ? inTodoist[i.key] : undefined;
+		const id = i.key && !i.duplicateOf ? taskIds[i.key] : undefined;
 		if (!id) continue;
 		const at = caption.indexOf(`\n• ${i.title} →`, from); // після назви завжди «→ проєкт»
 		if (at < 0) continue;
@@ -93,4 +93,23 @@ export function isoWeek(y: number, m: number, d: number): number {
 
 export function truncate(s: string, max: number): string {
 	return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+// Рядки задач для підпису. Задачі, що вже в трекері, стають посиланнями (taskLinks).
+export function formatTriage(items: TriageItem[]): string {
+	return items
+		.map((i) => {
+			if (i.duplicateOf) return `• ↩️ вже є: ${i.duplicateOf}`;
+			const extra = [
+				`→ ${i.project || "Inbox"}`,
+				i.priority < 4 && `p${i.priority}`,
+				...i.labels.map((l) => `@${l}`),
+				i.due && `📅 ${i.due.replace("T", " ")}`,
+				i.recurrence && `🔁 ${i.recurrenceLabel || i.recurrence}`,
+				i.deadline && `⏰ ${i.deadline}`,
+				...(i.reminders ?? []).map((r) => (r.startsWith("before:") ? `🔔 −${r.slice(7)} хв` : `🔔 ${r.replace("T", " ")}`)),
+			].filter(Boolean);
+			return `• ${i.title} ${extra.join(" ")}`;
+		})
+		.join("\n");
 }

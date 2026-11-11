@@ -1,9 +1,6 @@
-// Голосові команди налаштування Todoist: проєкти, мітки та їхні описи.
+// Голосові команди налаштування трекера: проєкти, мітки та їхні описи.
 
-export { setupCommands, setupReport } from "./apply";
-export { planSetup } from "./plan";
+export { runSetup, setupReport } from "./apply";
+export { clean, planSetup, validateSetup } from "./plan";
 export { labelRule, setLabelRule } from "./rules";
-export { runSetup } from "./apply";
-export type { SetupPlan, SetupState, SetupWorld } from "./types";
-export { clean } from "./plan";
-export { validateSetup } from "./plan";
+export type { SetupState } from "./types";

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { labelRule, planSetup, setLabelRule, setupCommands, setupReport, validateSetup, type SetupPlan, type SetupWorld } from "../src/application/setup";
-import { RULES_PROJECT } from "../src/infrastructure/todoist";
+import { labelRule, planSetup, setLabelRule, setupReport, validateSetup } from "../src/application/setup";
+import type { SetupPlan, SetupWorld } from "../src/domain/tracker";
+import { RULES_PROJECT, setupCommands, todoistTracker } from "../src/infrastructure/todoist";
 import { fakeEnv } from "./fake-env";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -56,6 +57,7 @@ describe("validateSetup", () => {
 			{ id: "l-wait", name: "Waiting" },
 		],
 		rules: { id: "p-rules", text: "[мітки]\nErrand — по дорозі" },
+		reserved: ["Inbox", "Вхідні", RULES_PROJECT],
 		...over,
 	});
 	const c = (kind: string, action: string, name: string, new_name = "", description = "") => ({ kind, action, name, new_name, description });
@@ -235,13 +237,13 @@ describe("planSetup", () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
-		expect(await planSetup(env, "Купити молоко і подзвонити Іллі", false)).toEqual({ changes: [] });
+		expect(await planSetup(env, todoistTracker(env), "Купити молоко і подзвонити Іллі", false)).toEqual({ changes: [] });
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 	it("без TODOIST_TOKEN — теж порожній план без fetch", async () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
-		expect(await planSetup(fakeEnv(), "створи проєкт Спорт", false)).toEqual({ changes: [] });
+		expect(await planSetup(fakeEnv(), todoistTracker(fakeEnv()), "створи проєкт Спорт", false)).toEqual({ changes: [] });
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

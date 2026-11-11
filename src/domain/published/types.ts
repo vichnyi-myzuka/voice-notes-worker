@@ -1,5 +1,5 @@
 import type { Meta } from "../note";
-import type { TriageItem } from "../../infrastructure/todoist";
+import type { TriageItem } from "../tracker";
 
 // Опублікована нотатка: запис у R2 для редагування (`notes/<id>.json`, 7 днів за lifecycle бакета)
 // і її повідомлення в каналі. Тут живуть ключі R2 і оновлення повідомлення; решта коду їх не знає.
@@ -20,7 +20,7 @@ export type PublishState = {
 	noteId?: string; // id нотатки для редагування й задач Todoist, створюється до відправки
 	messageId?: number; // id повідомлення нотатки в Telegram
 	audioSent?: boolean; // (завеликий файл) оригінал відправлено без транскрипту
-	todoistMarked?: boolean; // підпис з посиланнями на задачі оновлено після виконання
+	tasksMarked?: boolean; // підпис з посиланнями на задачі оновлено після виконання
 	photoAttached?: boolean; // (фото) фото додане коментарем до створених задач
 	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
 	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено

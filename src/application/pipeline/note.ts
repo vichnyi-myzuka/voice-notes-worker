@@ -1,17 +1,16 @@
 import type { Env } from "../../infrastructure/env";
-import type { Channel } from "../../domain/channel";
 import { buildCaption } from "../../domain/note";
 import { saveNote, type Note } from "../../domain/published";
 import { TELEGRAM_MAX_BYTES, TRANSCRIBE_MAX_BYTES, captionKey, formatRecordedAt, recordedTs } from "../../domain/recording";
 import { runSetup } from "../setup";
 import { openSteps } from "../../infrastructure/steps";
-import { attachFile, getInTodoist, syncTasks } from "../tasks";
-import { triage, trySnapshot } from "../../infrastructure/todoist";
+import { getTrackedTasks, syncTasks } from "../tasks";
 import { readImage, summarize, transcribe } from "../understand";
 import { captionNotice, refreshNote } from "./show";
-import type { State } from "./types";
+import type { Ports, State } from "./types";
 
-export async function processNote(env: Env, channel: Channel, key: string, lastAttempt: boolean): Promise<void> {
+export async function processNote(env: Env, ports: Ports, key: string, lastAttempt: boolean): Promise<void> {
+	const { channel, tracker } = ports;
 	const obj = await env.BUCKET.get(key);
 	if (!obj) {
 		// Аудіо видаляється лише після успішної відправки, тож це повторна доставка.
@@ -71,12 +70,12 @@ export async function processNote(env: Env, channel: Channel, key: string, lastA
 	}
 
 	// Команди налаштування Todoist («створи проєкт…») — до тріажу, щоб задачі вже бачили новий проєкт.
-	const setup = await runSetup(env, transcript, run);
+	const setup = await runSetup(env, tracker, transcript, run);
 
 	// Тріаж задач для Todoist. Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
 	const triaged = await step("triage", async () => {
-		const snap = meta.tasks.length ? await trySnapshot(env) : null;
-		return snap ? await triage(env, transcript, meta.tasks, snap, new Date(recordedTs(key)), env.TIMEZONE) : null;
+		const snap = meta.tasks.length ? await tracker.snapshot() : null;
+		return snap ? await tracker.triage(transcript, meta.tasks, snap, new Date(recordedTs(key))) : null;
 	});
 	const noteId = await step("noteId", async () => crypto.randomUUID());
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
@@ -101,15 +100,15 @@ export async function processNote(env: Env, channel: Channel, key: string, lastA
 	console.log(`note ${noteId} published as message ${messageId}`);
 
 	// Задачі одразу в Todoist (з посиланням на повідомлення в описі), потім назви задач у підписі стають посиланнями на них.
-	const applied = await syncTasks(env, run, {
+	const applied = await syncTasks(env, tracker, run, {
 		noteId,
 		items: triaged,
 		description: `🎙 ${meta.title} (${recordedAt})`,
 		messageUrl: channel.linkTo(messageId),
 	});
 	if (applied !== undefined) {
-		await step("todoistMarked", async () => {
-			await refreshNote(env, channel, noteId, !applied);
+		await step("tasksMarked", async () => {
+			await refreshNote(env, ports, noteId, !applied);
 			return true;
 		});
 		// Фото — коментарем-вкладенням до кожної створеної задачі. Збій на останній спробі не блокує нотатку.
@@ -117,8 +116,8 @@ export async function processNote(env: Env, channel: Channel, key: string, lastA
 			await step(
 				"photoAttached",
 				async () => {
-					const ids = Object.values(await getInTodoist(env, noteId)).map((t) => t.id);
-					await attachFile(env, run.state.actionId!, ids, await source.blob(), `${meta.title.slice(0, 60) || "photo"}.jpg`);
+					const ids = Object.values(await getTrackedTasks(env, noteId)).map((t) => t.id);
+					await tracker.attachFile(run.state.actionId!, ids, await source.blob(), `${meta.title.slice(0, 60) || "photo"}.jpg`);
 					console.log(`photo attached to ${ids.length} tasks`);
 					return true;
 				},

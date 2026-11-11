@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openSteps } from "../src/infrastructure/steps";
-import { getInTodoist, syncTasks, type SyncState } from "../src/application/tasks";
-import { RULES_PROJECT, type TriageItem } from "../src/infrastructure/todoist";
+import { getTrackedTasks, syncTasks, type SyncState } from "../src/application/tasks";
+import type { TriageItem } from "../src/domain/tracker";
+import { RULES_PROJECT, todoistTracker } from "../src/infrastructure/todoist";
 import { fakeEnv } from "./fake-env";
 
 const item = (title: string, key: string, extra: Partial<TriageItem> = {}): TriageItem => ({
@@ -46,8 +47,8 @@ describe("syncTasks", () => {
 		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
 		const calls = stubTodoist();
 		const steps = await openSteps<SyncState>(env, KEY, false);
-		expect(await syncTasks(env, steps, args(null))).toBeUndefined();
-		expect(await syncTasks(env, steps, args([item("Дубль", "t1", { duplicateOf: "Купити молоко" })]))).toBeUndefined();
+		expect(await syncTasks(env, todoistTracker(env), steps, args(null))).toBeUndefined();
+		expect(await syncTasks(env, todoistTracker(env), steps, args([item("Дубль", "t1", { duplicateOf: "Купити молоко" })]))).toBeUndefined();
 		expect(calls).toHaveLength(0);
 		expect(steps.state.actionId).toBeUndefined();
 	});
@@ -65,9 +66,9 @@ describe("syncTasks", () => {
 			return json({ sync_status: { [`${id}-0`]: "ok" }, temp_id_mapping: { [`tmp-${id}-0`]: "301" } });
 		});
 
-		expect(await syncTasks(env, steps, args([a]))).toBe(true);
-		expect(steps.state).toMatchObject({ ops: [{ key: "t1", item: a }], todoistApplied: true });
-		expect(await getInTodoist(env, "n1")).toEqual({ t1: { id: "301", item: a } });
+		expect(await syncTasks(env, todoistTracker(env), steps, args([a]))).toBe(true);
+		expect(steps.state).toMatchObject({ ops: [{ key: "t1", item: a }], tasksApplied: true });
+		expect(await getTrackedTasks(env, "n1")).toEqual({ t1: { id: "301", item: a } });
 	});
 
 	it("ретрай після збою пропускає виконане й шле ті самі uuid", async () => {
@@ -82,7 +83,7 @@ describe("syncTasks", () => {
 			id = first.state.actionId!;
 			return json({ sync_status: { [`${id}-0`]: "ok", [`${id}-1`]: { error_code: 15, error: "Fail" } }, temp_id_mapping: { [`tmp-${id}-0`]: "301" } });
 		});
-		await expect(syncTasks(env, first, args(items))).rejects.toThrow(/Todoist commands failed/);
+		await expect(syncTasks(env, todoistTracker(env), first, args(items))).rejects.toThrow(/Task tracker commands failed/);
 
 		// Нова спроба: у Todoist уже є перша задача, але ops і uuid лишаються тими самими.
 		const second = await openSteps<SyncState>(env, KEY, false);
@@ -93,7 +94,7 @@ describe("syncTasks", () => {
 			calls.push(JSON.parse(cmds));
 			return json({ sync_status: { [`${id}-0`]: "ok", [`${id}-1`]: "ok" }, temp_id_mapping: { [`tmp-${id}-1`]: "302" } });
 		});
-		expect(await syncTasks(env, second, args(items))).toBe(true);
+		expect(await syncTasks(env, todoistTracker(env), second, args(items))).toBe(true);
 		expect(second.state.actionId).toBe(id);
 		expect(calls[0].map((c) => c.uuid)).toEqual([`${id}-0`, `${id}-1`]);
 	});
@@ -103,7 +104,7 @@ describe("syncTasks", () => {
 		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
 		vi.stubGlobal("fetch", async () => ({ ok: false, status: 500, text: async () => "boom" }));
 		const steps = await openSteps<SyncState>(env, KEY, true);
-		expect(await syncTasks(env, steps, args([item("Перша", "t1")]))).toBe(false);
-		expect(steps.state.todoistApplied).toBe(false);
+		expect(await syncTasks(env, todoistTracker(env), steps, args([item("Перша", "t1")]))).toBe(false);
+		expect(steps.state.tasksApplied).toBe(false);
 	});
 });

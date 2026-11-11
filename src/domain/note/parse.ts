@@ -1,5 +1,5 @@
 import { parseJsonObject } from "../../infrastructure/llm";
-import type { TriageItem } from "../../infrastructure/todoist";
+import type { TriageItem } from "../tracker";
 import type { Meta } from "./types";
 
 export function parseMeta(text: string): Meta {
