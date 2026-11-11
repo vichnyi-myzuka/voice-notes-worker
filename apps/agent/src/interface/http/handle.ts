@@ -48,6 +48,8 @@ export async function handleFetch(req: Request, env: Env, agent: Agent): Promise
 	// до воркера («Unrecognised route»). Підміняємо його порожнім: без fetch-обробника все йде через мережу.
 	if (url.pathname === "/sw.js") return new Response(NEUTRAL_SW, { headers: { "content-type": "text/javascript", "cache-control": "no-store" } });
 
+	if (req.method === "GET" && url.pathname === "/api/computer") return json(await agent.info());
+
 	if (req.method === "POST" && url.pathname === "/api/computer/snapshot") {
 		return agent.snapshot().then(
 			(info) => json(info),
