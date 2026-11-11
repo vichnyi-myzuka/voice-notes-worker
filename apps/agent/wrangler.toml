@@ -7,6 +7,9 @@ preview_urls = false
 [observability]
 enabled = true
 
+[observability.logs]
+invocation_logs = false # інтерфейс OpenCode пінгує щосекунди, подій забагато; console.log лишається
+
 # Сесія агента = Durable Object, що керує власним контейнером з OpenCode.
 [[containers]]
 class_name = "AgentSession"

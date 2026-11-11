@@ -96,7 +96,7 @@ export class AgentSession extends DurableObject<Env> {
 			enableInternet: true, // моделі й git
 			env: containerEnv(this.env, repo),
 		});
-		this.ctx.waitUntil(container.monitor().catch((err: unknown) => console.error("container stopped:", err)));
+		// monitor() не викликаємо: очікуваний promise тримає Durable Object в пам'яті до 15 хв, і таймаут простою не стартує.
 	}
 
 	// Чекає, поки OpenCode відповість; для чистого диска ще підключає Claude Agent (після відновлення підключення вже в базі).
