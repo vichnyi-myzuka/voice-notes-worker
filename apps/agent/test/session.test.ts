@@ -579,6 +579,81 @@ describe("AgentSession", () => {
 			expect(sent[0].text).toContain("⏹ Зупинено");
 		});
 
+		describe("прийняті завдання (begin/resume) виконує alarm", () => {
+			const HEADER = "🗣 Зроби візитку";
+			const POST = { ...TARGET, postId: 77, header: HEADER };
+			const texts = () => sent.map((c) => String(c.text ?? "")).filter(Boolean);
+
+			it("begin лише приймає: контейнер не запускається, сесії немає, alarm негайно; повторна доставка не дублює", async () => {
+				const { session, container, alarm, store } = setup({ BOT_TOKEN: "bot" });
+				await session.begin(ID, { prompt: "Задача" }, POST);
+				expect(container.running).toBe(false);
+				expect(store.has(`session:${ID}`)).toBe(false);
+				expect(alarm.at).toBeLessThanOrEqual(Date.now());
+				expect(await session.link(ID)).toBe("pending"); // вебхук-повтор побачить, що завдання вже є
+				await session.begin(ID, { prompt: "Інше" }, POST);
+				expect([...store.keys()].filter((k) => k.startsWith("job:"))).toEqual([`job:${ID}`]);
+			});
+
+			it("alarm холодно запускає контейнер, створює сесію, стежить і змінює пост «Запускаю контейнер» → «Працює»", async () => {
+				const { session, container, opencode, store } = setup({ BOT_TOKEN: "bot" });
+				await session.begin(ID, { prompt: "Задача" }, POST);
+				await session.alarm();
+				expect(container.running).toBe(true);
+				expect(opencode.prompts).toEqual([{ id: ocId, text: "Задача" }]);
+				expect(store.has(`job:${ID}`)).toBe(false);
+				expect(store.has(`watch:${ID}`)).toBe(true);
+				const edits = sent.filter((c) => "message_id" in c).map((c) => String(c.text));
+				expect(edits[0]).toContain("⏳ Запускаю контейнер");
+				expect(edits.at(-1)).toContain("⏳ Працює");
+			});
+
+			it("збій запуску повторюється з наступним alarm; зрештою пост показує помилку, а не лишається «Запускаю»", async () => {
+				const { session, opencode, alarm, store } = setup({ BOT_TOKEN: "bot" });
+				vi.spyOn(console, "error").mockImplementation(() => {});
+				await session.begin(ID, { prompt: "Задача" }, POST);
+				opencode.execFails = true;
+				await session.alarm();
+				expect(store.has(`job:${ID}`)).toBe(true);
+				expect(alarm.at).toBeGreaterThan(Date.now()); // повтор пізніше
+				for (let i = 0; i < 6; i++) await session.alarm();
+				expect(store.has(`job:${ID}`)).toBe(false);
+				expect(texts().at(-1)).toContain("Не вдалося запустити агента");
+				expect(store.has(`watch:${ID}`)).toBe(false);
+			});
+
+			it("тимчасовий збій: наступний alarm усе ж запускає сесію", async () => {
+				const { session, opencode, store } = setup({ BOT_TOKEN: "bot" });
+				vi.spyOn(console, "error").mockImplementation(() => {});
+				await session.begin(ID, { prompt: "Задача" }, POST);
+				opencode.execFails = true;
+				await session.alarm();
+				opencode.execFails = false;
+				await session.alarm();
+				expect(store.has(`job:${ID}`)).toBe(false);
+				expect(store.has(`watch:${ID}`)).toBe(true);
+			});
+
+			it("resume: уточнення в сплячий контейнер іде через alarm, не блокуючи виклик", async () => {
+				const { session, container, opencode } = setup({ BOT_TOKEN: "bot" });
+				await session.start(ID, { prompt: "Задача" });
+				await session.resume(ID, "Ще", { chatId: 5, url: TARGET.url });
+				expect(opencode.prompts).toHaveLength(1); // дописане ще не надіслано
+				container.running = false;
+				await session.alarm();
+				expect(opencode.prompts.map((p) => p.text)).toEqual(["Задача", "Ще"]);
+			});
+
+			it("remove скасовує завдання, яке ще не запустилось", async () => {
+				const { session, store, container } = setup({ BOT_TOKEN: "bot" });
+				await session.begin(ID, { prompt: "Задача" }, POST);
+				await session.remove(ID);
+				expect(store.has(`job:${ID}`)).toBe(false);
+				await session.alarm();
+				expect(container.running).toBe(false);
+			});
+		});
+
 		describe("пост сесії оновлюється на місці", () => {
 			const HEADER = "🗣 Зроби візитку\n\n📦 me/app";
 			const POST = { ...TARGET, postId: 77, header: HEADER };

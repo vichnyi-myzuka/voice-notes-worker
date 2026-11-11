@@ -18,6 +18,15 @@ export function fakeAgent(origin = "https://agent.example") {
 		return s;
 	};
 	const agent: Agent = {
+		url: (id) => `${origin}/s/${id}`,
+		async begin(id, input, target) {
+			await agent.start(id, input);
+			await agent.watch(id, target);
+		},
+		async resume(id, text, target) {
+			await agent.followUp(id, text);
+			await agent.watch(id, target);
+		},
 		async start(id, input) {
 			if (!sessions.has(id)) sessions.set(id, { input, messages: [input.prompt], status: "working" });
 			return { id, url: `${origin}/s/${id}` };
