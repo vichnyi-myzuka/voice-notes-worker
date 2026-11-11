@@ -22,17 +22,25 @@
 
 ## Код
 
+Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`.
+
 ```
-src/index.ts      вебхук і producer, consumer (processNote / processEdit), DLQ, runSetup, підписи
-src/understand.ts розуміння запису: transcribe (Whisper), readImage (vision), summarize, editNote — промпти й схеми
-src/llm.ts        askJson: structured output gpt-6-luna → fallback Gemma 4 (Workers AI), зображення (vision)
-src/published.ts  опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / showNote / removeNote
-src/steps.ts      openSteps: крок = поле State, результат у R2, onFinalFailure для деградації на lastAttempt
-src/note.ts       Meta, підпис (buildCaption / fitCaption), хештеги, посилання на задачі, текстові нотатки
-src/todoist.ts    знімок Todoist, тріаж, валідація полів задач
-src/tasks.ts      задачі нотатки в Todoist: syncTasks (ops → actionId → todoistApplied), planOps / buildCommands / applyOps, стан InTodoist, вкладення
-src/setup.ts      команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»)
-src/telegram.ts   Bot API, прийом голосових / тексту / фото з вебхука
+src/index.ts           entrypoint: лише підключає fetch (inbox) і queue (queue)
+src/<модуль>/          кожен модуль — папка: index.ts (публічний інтерфейс), types.ts, логіка по файлах, utils.ts, constants.ts
+  env/                 Env і Job
+  inbox/               прийом записів: вебхук Telegram і завантаження з шорткату → R2 + черга
+  queue/               споживачі черги й DLQ
+  pipeline/            processNote / processEdit — кроки обробки запису; State зі слайсів модулів
+  steps/               openSteps: крок = поле стану, результат у R2, onFinalFailure для деградації на lastAttempt
+  recording/           ключі запису в R2, ліміти розміру, час запису
+  understand/          transcribe (Whisper), readImage (vision), summarize, editNote — промпти й схеми
+  llm/                 askJson: structured output gpt-6-luna → fallback Gemma 4 (Workers AI)
+  note/                чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
+  published/           опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / showNote / removeNote
+  todoist/             знімок Todoist, валідація полів задач, тріаж
+  tasks/               задачі нотатки в Todoist: syncTasks (ops → actionId → todoistApplied), planOps / buildCommands / applyOps, стан InTodoist, вкладення
+  setup/               команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»), runSetup
+  telegram/            Bot API, прийом голосових / тексту / фото з вебхука, реакції
 ```
 
 ## Локальний e2e (справжній канал і Todoist!)
