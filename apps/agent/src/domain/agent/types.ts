@@ -43,6 +43,13 @@ export type ConnectionsInfo = { running: boolean; ssh?: PortInfo; opencode?: Por
 export type SnapshotInfo = { id: string; bytes: number; ms: number };
 
 export type Agent = {
+	// Адреса сесії в веб-інтерфейсі (від id, без звернення до контейнера): потрібна для посилання в пості до старту.
+	url(id: string): string;
+	// Приймає завдання й одразу повертається: холодний старт контейнера й клонування займають хвилини, а відповідь вебхуку
+	// й waitUntil так довго не живуть. Запуск, стеження (target) і повтори ведe сам агент; збій він показує в пості (target.postId).
+	begin(id: string, input: StartInput, target: WatchTarget): Promise<void>;
+	// Те саме для уточнення в наявну сесію.
+	resume(id: string, text: string, target: WatchTarget): Promise<void>;
 	// Ідемпотентно за ключем: повторний виклик з тим самим id не створює другу сесію.
 	start(id: string, input: StartInput): Promise<SessionRef>;
 	// Уточнення в ту саму сесію (голос чи текст після транскрипції).

@@ -5,6 +5,8 @@ describe("durableAgent", () => {
 	function setup() {
 		const stub: SessionObject = {
 			start: vi.fn(async () => ({ sessionId: "oc1" })),
+			begin: vi.fn(async () => {}),
+			resume: vi.fn(async () => {}),
 			followUp: vi.fn(async () => {}),
 			status: vi.fn(async () => "working" as const),
 			abort: vi.fn(async () => {}),
@@ -28,6 +30,17 @@ describe("durableAgent", () => {
 		expect(await agent.start("session-0001", { prompt: "Задача", repo: "me/app" })).toEqual({ id: "session-0001", url: "https://agent.example/s/session-0001" });
 		expect(stub.start).toHaveBeenCalledWith("session-0001", { prompt: "Задача", repo: "me/app" });
 		await agent.start("session-0002", { prompt: "Інша" });
+		expect(names).toEqual(["main", "main"]);
+	});
+
+	it("url не звертається до Durable Object; begin і resume делегуються з ціллю стеження", async () => {
+		const { agent, stub, names } = setup();
+		expect(agent.url("session-0003")).toBe("https://agent.example/s/session-0003");
+		const target = { chatId: 5, url: agent.url("session-0003"), postId: 9, header: "h" };
+		await agent.begin("session-0003", { prompt: "Задача" }, target);
+		await agent.resume("session-0003", "Ще", target);
+		expect(stub.begin).toHaveBeenCalledWith("session-0003", { prompt: "Задача" }, target);
+		expect(stub.resume).toHaveBeenCalledWith("session-0003", "Ще", target);
 		expect(names).toEqual(["main", "main"]);
 	});
 

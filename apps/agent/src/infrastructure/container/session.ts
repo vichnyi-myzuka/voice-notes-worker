@@ -26,6 +26,12 @@ const WATCH_MAX_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_MAX_COST_USD = 5;
 const DEFAULT_MAX_TOKENS = 3_000_000;
 const WORKING = "⏳ Працює";
+// Прийняті завдання (begin/resume) виконує alarm: холодний старт і клон довші за життя запиту вебхука. Збій повторюється,
+// потім показується в пості.
+const JOB_ATTEMPTS = 6;
+const JOB_RETRY_MS = 15 * 1000;
+type Job = { id: string; target: WatchTarget; attempts: number } & ({ input: StartInput } | { text: string });
+const jobKey = (id: string) => `job:${id}`;
 const PROGRESS_INTERVAL_MS = 4000; // не частіше: ліміти Telegram на редагування одного повідомлення
 const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096
 const SUMMARY_MAX = 3000; // підсумок у чат: решта обрізається (ліміт повідомлення Telegram — 4096)
@@ -197,6 +203,7 @@ export class AgentSession extends DurableObject<Env> {
 	// є що зберігати: постійний alarm не давав би контейнеру заснути.
 	async alarm(): Promise<void> {
 		const container = this.ctx.container;
+		if (await this.runJobs()) return void (await this.ctx.storage.setAlarm(Date.now() + JOB_RETRY_MS));
 		// Поки хтось працює чи за кимось стежать, опитуємо часто (підсумки, ліміти) й знімок відкладаємо.
 		if (await this.tick()) return void (await this.ctx.storage.setAlarm(Date.now() + WATCH_INTERVAL_MS));
 		if (!container?.running) return; // контейнер уже спить: знімати нічого
@@ -377,9 +384,60 @@ export class AgentSession extends DurableObject<Env> {
 		await this.markActive();
 	}
 
-	// Id сесії OpenCode для прямого посилання (контейнер не будимо).
+	// Id сесії OpenCode для прямого посилання (контейнер не будимо). Прийняте, але ще не запущене завдання теж «є» (повторна
+	// доставка вебхука не створює другу сесію).
 	async link(id: string): Promise<string | undefined> {
-		return (await this.ctx.storage.get<Tracked>(sessionKey(id)))?.ocId;
+		return (await this.ctx.storage.get<Tracked>(sessionKey(id)))?.ocId ?? ((await this.ctx.storage.get(jobKey(id))) ? "pending" : undefined);
+	}
+
+	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
+	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
+		if (await this.link(id)) return;
+		await this.enqueue({ id, input, target, attempts: 0 });
+	}
+
+	// Те саме для уточнення; контейнер може спати.
+	async resume(id: string, text: string, target: WatchTarget): Promise<void> {
+		await this.enqueue({ id, text, target, attempts: 0 });
+	}
+
+	private async enqueue(job: Job): Promise<void> {
+		await this.ctx.storage.put(jobKey(job.id), job);
+		await this.ctx.storage.setAlarm(Date.now());
+	}
+
+	// Виконує прийняті завдання по одному. Повертає true, поки є що повторювати чи виконувати.
+	private async runJobs(): Promise<boolean> {
+		for (const [key, job] of await this.ctx.storage.list<Job>({ prefix: "job:" })) {
+			try {
+				if ("input" in job) {
+					if (!this.ctx.container?.running) await this.show(job.target, "⏳ Запускаю контейнер").catch(() => {});
+					await this.start(job.id, job.input);
+				} else {
+					await this.followUp(job.id, job.text);
+				}
+			} catch (err) {
+				console.error(`job ${job.id} failed (attempt ${job.attempts + 1}):`, err);
+				if (job.attempts + 1 < JOB_ATTEMPTS) {
+					await this.ctx.storage.put(key, { ...job, attempts: job.attempts + 1 } satisfies Job);
+					continue;
+				}
+				await this.ctx.storage.delete(key);
+				await this.reportFailure(job);
+				continue;
+			}
+			await this.ctx.storage.delete(key); // запущено: далі повтор уточнення чи старту не потрібен
+			await this.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
+			if ("input" in job) await this.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
+		}
+		return (await this.ctx.storage.list({ prefix: "job:" })).size > 0;
+	}
+
+	private async reportFailure(job: Job): Promise<void> {
+		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
+		if (!this.env.BOT_TOKEN) return;
+		if (job.target.postId && (await this.show(job.target, text, true))) return;
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url).catch((err) => console.error("notify failed:", err));
 	}
 
 	// Статус не будить контейнер, що спить.
@@ -484,6 +542,7 @@ export class AgentSession extends DurableObject<Env> {
 	// Видалення сесії: історія в OpenCode, worktree (або порожня тека) і записи в сховищі. Гілка agent/<назва> видаляється, якщо роботу не
 	// втрачено (див. CLEANUP); незакомічене зникає. Невідома сесія: нічого не робимо.
 	async remove(id: string): Promise<void> {
+		await this.ctx.storage.delete(jobKey(id)); // завдання, яке ще не запустилось, скасовується
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked) return;
 		await this.ensureRunning();
