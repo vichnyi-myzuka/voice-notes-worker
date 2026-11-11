@@ -4,5 +4,6 @@ export interface Env {
 	// Cloudflare Access: team domain (`<team>.cloudflareaccess.com`) і AUD застосунку для sites.example.com
 	ACCESS_TEAM_DOMAIN?: string;
 	ACCESS_AUD?: string;
+	PUBLIC?: string; // "1" лише в wrangler-середовищі public: відкритий хост без Access, без списку сайтів, із CSP і noindex
 	LOCAL_DEV?: string; // лише `wrangler dev`: вимикає перевірку Access
 }

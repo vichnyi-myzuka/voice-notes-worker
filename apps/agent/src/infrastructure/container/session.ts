@@ -592,6 +592,10 @@ function containerEnv(env: Env): Record<string, string> {
 		R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY,
 		R2_ENDPOINT: env.R2_ENDPOINT,
 		SITES_BASE_URL: env.SITES_BASE_URL,
+		// Публічні сайти: окремий ключ лише на публічний бакет (endpoint спільний)
+		PUBLIC_R2_ACCESS_KEY_ID: env.PUBLIC_R2_ACCESS_KEY_ID,
+		PUBLIC_R2_SECRET_ACCESS_KEY: env.PUBLIC_R2_SECRET_ACCESS_KEY,
+		PUBLIC_SITES_BASE_URL: env.PUBLIC_SITES_BASE_URL,
 	};
 	return Object.fromEntries(Object.entries(vars).filter((e): e is [string, string] => !!e[1]));
 }

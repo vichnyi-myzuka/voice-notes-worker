@@ -77,3 +77,31 @@ describe("захист", () => {
 		expect((await call({ ...env, LOCAL_DEV: "1" })).status).toBe(200);
 	});
 });
+
+describe("публічний хост (PUBLIC=1)", () => {
+	const env = { ...fakeSites({ "demo/index.html": "<h1>hi</h1>" }), PUBLIC: "1" } as Env;
+
+	it("відкривається без Access, з CSP і noindex", async () => {
+		const res = await worker.fetch(new Request("https://share.example/demo/"), env);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+		const csp = res.headers.get("content-security-policy")!;
+		expect(csp).toContain("form-action 'none'");
+		expect(csp).toContain("frame-ancestors 'none'");
+	});
+
+	it("список сайтів не показується; 404 теж із захисними заголовками", async () => {
+		const root = await get(env, "/");
+		expect(root.status).toBe(404);
+		expect(root.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+		expect((await get(env, "/nope/")).headers.get("x-robots-tag")).toBe("noindex, nofollow");
+	});
+
+	it("приватний хост не отримує публічних заголовків і лишається за Access", async () => {
+		const priv = fakeSites({ "demo/index.html": "x" });
+		expect((await get(priv, "/demo/")).headers.get("content-security-policy")).toBeNull();
+		expect((await worker.fetch(new Request("https://sites.example/demo/"), priv)).status).toBe(503);
+		// PUBLIC має бути рівно "1": інше значення Access не вимикає
+		expect((await worker.fetch(new Request("https://sites.example/demo/"), { ...priv, PUBLIC: "true" } as Env)).status).toBe(503);
+	});
+});
