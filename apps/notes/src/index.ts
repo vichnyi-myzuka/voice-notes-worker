@@ -1,3 +1,4 @@
+// Розгортається через GitHub Actions після мержу в main (див. README, «CI/CD»).
 import type { Env, Job } from "./infrastructure/env";
 import { telegramChannel, workersLlm } from "@voice-notes/core";
 import { r2Ledger, r2Notes } from "./infrastructure/r2";
