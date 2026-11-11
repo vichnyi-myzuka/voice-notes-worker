@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captionNotice, loadNote, noteIdByMessage, refreshNote, removeNote, saveNote, showNote, type Note } from "../src/published";
+import { captionNotice, loadNote, noteIdByMessage, refreshNote, removeNote, saveNote, showNote, type Note } from "../src/domain/published";
 import { fakeEnv } from "./fake-env";
 
 const meta = { title: "Назва", summary: "Коротко.", ideas: [], tasks: [] };

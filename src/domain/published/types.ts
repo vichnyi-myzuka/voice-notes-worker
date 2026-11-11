@@ -1,5 +1,5 @@
 import type { Meta } from "../note";
-import type { TriageItem } from "../todoist";
+import type { TriageItem } from "../../infrastructure/todoist";
 
 // Опублікована нотатка: запис у R2 для редагування (`notes/<id>.json`, 7 днів за lifecycle бакета)
 // і її повідомлення в каналі. Тут живуть ключі R2 і оновлення повідомлення; решта коду їх не знає.

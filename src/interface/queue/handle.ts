@@ -1,7 +1,7 @@
-import type { Env, Job } from "../env";
-import { processEdit, processNote } from "../pipeline";
-import { loadNote } from "../published";
-import { markEditing, tgSendMessage } from "../telegram";
+import type { Env, Job } from "../../infrastructure/env";
+import { processEdit, processNote } from "../../application/pipeline";
+import { loadNote } from "../../domain/published";
+import { markEditing, tgSendMessage } from "../../infrastructure/telegram";
 
 export async function handleQueue(batch: MessageBatch<Job>, env: Env): Promise<void> {
 	if (batch.queue === DLQ_NAME) {

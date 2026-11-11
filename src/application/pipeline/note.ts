@@ -1,12 +1,12 @@
-import type { Env } from "../env";
-import { CAPTION_MAX, TEXT_CAPTION_MAX, buildCaption, textNote } from "../note";
-import { captionNotice, refreshNote, saveNote, type Note } from "../published";
-import { TELEGRAM_MAX_BYTES, TRANSCRIBE_MAX_BYTES, captionKey, formatRecordedAt, recordedTs } from "../recording";
+import type { Env } from "../../infrastructure/env";
+import { CAPTION_MAX, TEXT_CAPTION_MAX, buildCaption, textNote } from "../../domain/note";
+import { captionNotice, refreshNote, saveNote, type Note } from "../../domain/published";
+import { TELEGRAM_MAX_BYTES, TRANSCRIBE_MAX_BYTES, captionKey, formatRecordedAt, recordedTs } from "../../domain/recording";
 import { runSetup } from "../setup";
-import { openSteps } from "../steps";
+import { openSteps } from "../../infrastructure/steps";
 import { attachFile, getInTodoist, syncTasks } from "../tasks";
-import { deleteOriginal, telegramMessageUrl, tgSendMessage, tgSendNote, tgSendText } from "../telegram";
-import { triage, trySnapshot } from "../todoist";
+import { deleteOriginal, telegramMessageUrl, tgSendMessage, tgSendNote, tgSendText } from "../../infrastructure/telegram";
+import { triage, trySnapshot } from "../../infrastructure/todoist";
 import { readImage, summarize, transcribe } from "../understand";
 import type { State } from "./types";
 

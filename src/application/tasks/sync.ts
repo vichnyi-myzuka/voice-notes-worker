@@ -1,6 +1,6 @@
-import type { Env } from "../env";
-import type { Steps } from "../steps";
-import type { TriageItem } from "../todoist";
+import type { Env } from "../../infrastructure/env";
+import type { Steps } from "../../infrastructure/steps";
+import type { TriageItem } from "../../infrastructure/todoist";
 import { applyOps } from "./apply";
 import { getInTodoist } from "./plan";
 import { planOps } from "./plan";

@@ -1,5 +1,5 @@
-import type { ContentState } from "../note";
-import type { PublishState } from "../published";
+import type { ContentState } from "../../domain/note";
+import type { PublishState } from "../../domain/published";
 import type { SetupState } from "../setup";
 import type { SyncState } from "../tasks";
 

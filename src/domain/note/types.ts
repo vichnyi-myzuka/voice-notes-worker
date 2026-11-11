@@ -1,4 +1,4 @@
-import type { TriageItem } from "../todoist";
+import type { TriageItem } from "../../infrastructure/todoist";
 
 // discard: "delete" — лише в режимі редагування («видали нотатку»).
 export type Meta = { title: string; summary: string; ideas: string[]; tasks: string[]; discard?: "empty" | "cancelled" | "delete" };

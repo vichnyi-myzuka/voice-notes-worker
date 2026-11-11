@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toBase64 } from "../src/llm";
+import { toBase64 } from "../src/infrastructure/llm";
 
 describe("toBase64", () => {
 	it("збігається з Buffer для буфера більшого за 0x8000 байтів", () => {

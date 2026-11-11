@@ -1,8 +1,8 @@
-import type { Env } from "../env";
-import { askJson } from "../llm";
-import { parseEditedNote, plainTasks, type Meta } from "../note";
-import type { Note } from "../published";
-import { EDIT_TASKS_HELP, promptDate, taskFieldsSchema, taskRulesBlock, taskValidator, type TodoistSnapshot, type TriageItem } from "../todoist";
+import type { Env } from "../../infrastructure/env";
+import { askJson } from "../../infrastructure/llm";
+import { parseEditedNote, plainTasks, type Meta } from "../../domain/note";
+import type { Note } from "../../domain/published";
+import { EDIT_TASKS_HELP, promptDate, taskFieldsSchema, taskRulesBlock, taskValidator, type TodoistSnapshot, type TriageItem } from "../../infrastructure/todoist";
 import { SUMMARY_SCHEMA, SYSTEM_PROMPT } from "./summary";
 
 export const EDIT_SYSTEM = `${SYSTEM_PROMPT}
