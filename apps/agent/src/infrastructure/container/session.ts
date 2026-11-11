@@ -6,7 +6,7 @@ import { editChat, sendChat } from "../chat";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
-import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
+import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, readEvents, type OpencodeEvent, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const DEFAULT_INACTIVITY_MS = 60 * 60 * 1000;
@@ -56,6 +56,8 @@ export class AgentSession extends DurableObject<Env> {
 	// Відкриті зараз SSE-потоки (лише для діагностики).
 	private streams = new Map<number, { path: string; openedAt: number }>();
 	private streamSeq = 0;
+	// Підписка на події OpenCode, поки за якоюсь сесією стежать (див. listen).
+	private events: AbortController | undefined;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -213,6 +215,7 @@ export class AgentSession extends DurableObject<Env> {
 			for (const [key, w] of watches) await this.finishWatch(key, w, "⚠️ Контейнер зупинився, не дочекавшись завершення. Напиши уточнення, щоб продовжити.");
 			return false;
 		}
+		if (watches.size > 0) this.listen(); // потік міг обірватись
 		const oc = this.opencode();
 		const active = new Set(await activeSessions(oc));
 		const maxCost = positiveNumber(this.env.AGENT_MAX_COST_USD) ?? DEFAULT_MAX_COST_USD;
@@ -225,9 +228,10 @@ export class AgentSession extends DurableObject<Env> {
 			const over = (info.cost ?? 0) > maxCost ? `вартість $${(info.cost ?? 0).toFixed(2)} (ліміт $${maxCost})` : tokens > maxTokens ? `${tokens} токенів (ліміт ${maxTokens})` : "";
 			const watched = byOc.get(ocId);
 			if (over) {
+				// Спостереження знімаємо до зупинки: інакше подія «зупинено» покаже в чаті «⏹» замість причини.
+				if (watched) await this.finishWatch(watched[0], watched[1], `⛔ Сесію зупинено: ${over}. Напиши уточнення, щоб продовжити з новим лімітом.`);
 				await interrupt(oc, ocId).catch((err) => console.error("limit interrupt failed:", err));
 				console.error(`session ${ocId} stopped: ${over}`);
-				if (watched) await this.finishWatch(watched[0], watched[1], `⛔ Сесію зупинено: ${over}. Напиши уточнення, щоб продовжити з новим лімітом.`);
 			} else if (watched && !watched[1].seenBusy) {
 				await this.ctx.storage.put(watched[0], { ...watched[1], seenBusy: true } satisfies Watch);
 				watched[1].seenBusy = true;
@@ -276,6 +280,7 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
 	private async finishWatch(key: string, w: Watch, text: string): Promise<void> {
+		if (!(await this.ctx.storage.get(key))) return; // уже показано (подія й опитування можуть збігтися)
 		await this.ctx.storage.delete(key);
 		await this.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
@@ -396,7 +401,39 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);
 		await this.mark(full, true);
 		if (!target.postId && post) await this.show(full, WORKING); // уточнення: пост знову показує «Працює»
+		this.listen();
 		await this.scheduleSoon();
+	}
+
+	// Підписка на події OpenCode (SSE): підсумок приходить у чат одразу, як сесія завершилась, а не за наступним опитуванням
+	// (опитування раз на WATCH_INTERVAL_MS лишається страховкою: збій потоку, подія до початку стеження, ліміти витрат).
+	// Потік живе, лише поки є що відстежувати: інакше він тримав би контейнер активним.
+	private listen(): void {
+		if (this.events || !this.ctx.container?.running) return;
+		const stop = new AbortController();
+		this.events = stop;
+		void readEvents(this.opencode(), stop.signal, async (event) => {
+			if (event) return this.onEvent(event);
+			if ((await this.ctx.storage.list({ prefix: "watch:" })).size === 0) stop.abort();
+		})
+			.catch((err) => {
+				if (!stop.signal.aborted) console.error("event stream failed:", err);
+			})
+			.finally(() => {
+				if (this.events === stop) this.events = undefined;
+			});
+	}
+
+	// Старт роботи відмічає сесію працюючою, кінець (успіх, помилка, зупинка) одразу показує підсумок у пості.
+	private async onEvent(event: OpencodeEvent): Promise<void> {
+		const ocId = event.data?.sessionID;
+		const kind = event.type.startsWith("session.execution.") ? event.type.slice("session.execution.".length) : "";
+		if (!ocId || !["started", "succeeded", "failed", "interrupted"].includes(kind)) return;
+		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: "watch:" }))].find(([, w]) => w.ocId === ocId);
+		if (!entry) return;
+		const [key, w] = entry;
+		if (kind === "started") return void (w.seenBusy || (await this.ctx.storage.put(key, { ...w, seenBusy: true } satisfies Watch)));
+		await this.finishWatch(key, w, await this.summary(this.opencode(), w));
 	}
 
 	// Найближчий alarm: не пізніше за інтервал опитування.
