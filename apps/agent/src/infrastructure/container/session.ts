@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import type { AgentStatus, StartInput } from "../../domain/agent";
-import { OPENCODE_PORT, basicAuth, connectClaudeAgent, createSession, interrupt, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
+import { OPENCODE_PORT, basicAuth, connectClaudeAgent, createSession, hasModel, interrupt, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
@@ -61,11 +61,18 @@ export class AgentSession extends DurableObject<Env> {
 			this.ctx.waitUntil(container.monitor().catch((err: unknown) => console.error("container stopped:", err)));
 		}
 		await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
+		let connected = false;
 		for (let attempt = 0; attempt < READY_ATTEMPTS; attempt++) {
 			try {
 				if (await isReady(this.opencode())) {
 					// Диск контейнера свіжий після кожного старту: підключаємо Claude Agent знову.
-					if (started && this.env.CLAUDE_CODE_OAUTH_TOKEN) await connectClaudeAgent(this.opencode());
+					const model = this.model();
+					if (started && model && !connected) {
+						await connectClaudeAgent(this.opencode());
+						connected = true;
+					}
+					// Моделі провайдера з'являються не одразу після підключення: без них сесія впаде з «Model unavailable».
+					if (model && !(await hasModel(this.opencode(), model))) throw new Error("model is not available yet");
 					return;
 				}
 			} catch {

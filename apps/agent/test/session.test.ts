@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], models: [] as unknown[] };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -49,7 +49,11 @@ function fakeContainer() {
 					opencode.directories.push(body.location.directory);
 					return ok({ id });
 				}
-				if (req.method === "POST" && path === "/api/integration/claude-agent/connect/external") return new Response(null, { status: 204 });
+				if (req.method === "POST" && path === "/api/integration/claude-agent/connect/external") {
+					opencode.connected = true;
+					return new Response(null, { status: 204 });
+				}
+				if (path === "/api/model") return ok(opencode.connected && ++opencode.modelChecks > opencode.modelsAfter ? [{ id: "sonnet", providerID: "claude-agent" }, { id: "opus", providerID: "claude-agent" }] : []);
 				if (path === "/api/session/active") return ok(Object.fromEntries([...opencode.busy].map((id) => [id, { type: "running" }])));
 				const m = path.match(/^\/api\/session\/([^/]+)(?:\/(prompt|interrupt))?$/);
 				if (m && !opencode.sessions.has(m[1])) return new Response("not found", { status: 404 });
@@ -110,6 +114,15 @@ describe("AgentSession", () => {
 		container.sleep();
 		await session.followUp("Ще раз"); // новий старт контейнера → підключення знову
 		expect(opencode.requests.filter((r) => r.includes("connect/external"))).toHaveLength(2);
+	});
+
+	it("з токеном: чекає, поки моделі Claude Agent з'являться, і підключає провайдера лише раз", async () => {
+		const { session, opencode } = setup({ CLAUDE_CODE_OAUTH_TOKEN: "tok" });
+		opencode.modelsAfter = 3; // перші перевірки моделей повертають порожній список
+		await session.start({ prompt: "Задача" });
+		expect(opencode.modelChecks).toBe(4);
+		expect(opencode.requests.filter((r) => r.includes("connect/external"))).toHaveLength(1);
+		expect(opencode.models).toEqual([{ providerID: "claude-agent", id: "sonnet" }]);
 	});
 
 	it("без токена підписки модель не задається й Claude Agent не підключається", async () => {

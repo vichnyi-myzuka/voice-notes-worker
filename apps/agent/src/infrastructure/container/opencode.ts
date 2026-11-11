@@ -27,6 +27,12 @@ export async function createSession(oc: Opencode, title: string, directory: stri
 	return (await data<{ id: string }>(await oc.fetch("/api/session", post({ title, location: { directory }, ...(model && { model }) })))).id;
 }
 
+// Чи є модель у списку доступних. Моделі провайдера з'являються з затримкою після підключення.
+export async function hasModel(oc: Opencode, model: ModelRef): Promise<boolean> {
+	const models = await data<{ id: string; providerID: string }[]>(await oc.fetch("/api/model"));
+	return models.some((m) => m.providerID === model.providerID && m.id === model.id);
+}
+
 // Провайдер «Claude Agent»: OpenCode запускає встановлений у контейнері `claude`, який бере токен підписки
 // зі змінної CLAUDE_CODE_OAUTH_TOKEN. Підключення лише фіксує вибір методу (відповідь 204).
 export async function connectClaudeAgent(oc: Opencode): Promise<void> {
