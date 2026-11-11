@@ -351,16 +351,19 @@ GET  /s/<id>                                           → редірект на
 
 ### Чат з агентом у Telegram
 
-Окремий бот (не бот нотаток) приймає задачі лише від `TG_OWNER_ID` в особистому чаті. Голосове чи аудіо розпізнає Whisper (Workers AI, мова українська), текст іде як є. Бот ставить ✍, створює сесію (id `tg-<chat>-<message_id>`) і відповідає посиланням `https://agent.example.com/s/<id>` (для голосового ще й показує, що розібрав). Повторна доставка того самого повідомлення дає ту саму сесію: `start` ідемпотентний. Чужі користувачі, канали й групи ігноруються мовчки; файл понад 20 МБ чи порожня транскрипція дають підказку без сесії. Telegram одразу отримує `200`, а Whisper і холодний старт контейнера йдуть у фоні (`waitUntil`).
+Окремий бот (не бот нотаток) працює так само, як бот нотаток: канал `CHAT_ID` (бот адмін з правом видаляти повідомлення) і особистий чат із ботом від `TG_OWNER_ID`. Голосове чи аудіо розпізнає Whisper (Workers AI, українська), текст іде як є. Бот ставить ✍ і створює сесію (id `tg-<chat>-<message_id>`):
 
-Поки це лише створення сесій: уточнення (`followUp`), зупинка й статус із чату не підключені, є лише HTTP API.
+- **У каналі** оригінал замінюється постом: текст задачі (для голосового `🗣` і розшифровка) та посилання `https://agent.example.com/s/<id>`; оригінал видаляється. У канал дописують лише адміни, тож окремої перевірки відправника немає.
+- **У приваті** бот відповідає посиланням (для голосового ще й показує, що розібрав), оригінал лишається.
 
-Налаштування (разом з одним кроком у Cloudflare, бо вебхук має йти повз Access):
+Повторна доставка того самого повідомлення не створює другу сесію й другу відповідь (`start` ідемпотентний, перевірка за `link`). Чужі користувачі, інші канали й групи ігноруються мовчки; файл понад 20 МБ чи порожня транскрипція дають підказку без сесії. Telegram одразу отримує `200`, а Whisper і холодний старт контейнера йдуть у фоні (`waitUntil`). Поки це лише створення сесій: уточнення (`followUp`), зупинка й статус із чату не підключені (є HTTP API), репозиторій указати не можна (порожня тека).
 
-1. У @BotFather створи **окремого** бота й візьми токен.
-2. Секрети воркера: `cd apps/agent && npx wrangler secret put BOT_TOKEN`, так само `TG_WEBHOOK_SECRET` (довільний довгий випадковий рядок) і `TG_OWNER_ID` (твій числовий id у Telegram).
-3. Cloudflare Zero Trust → Access → Applications → додай застосунок Self-hosted для `agent.example.com/telegram` з політикою **Bypass** (Everyone). Без цього Access відповідає Telegram логіном, і вебхук не доходить. Решта хоста лишається за Access; `/telegram` захищає секретний заголовок `x-telegram-bot-api-secret-token` і перевірка `TG_OWNER_ID`.
-4. Вебхук: `source .env && curl "https://api.telegram.org/bot$AGENT_BOT_TOKEN/setWebhook" -d url=https://agent.example.com/telegram -d secret_token=$AGENT_TG_WEBHOOK_SECRET --data-urlencode 'allowed_updates=["message"]'` (у `.env` ці значення під іншими іменами, ніж у бота нотаток, щоб вони не змішувались).
+Налаштування (один крок у Cloudflare, бо вебхук має йти повз Access):
+
+1. У @BotFather створи **окремого** бота й візьми токен. Створи канал (приватний), додай бота адміном із правом публікувати й видаляти повідомлення, `CHAT_ID` каналу має вигляд `-100…`.
+2. Секрети воркера: `cd apps/agent && npx wrangler secret put BOT_TOKEN`, так само `TG_WEBHOOK_SECRET` (довільний довгий випадковий рядок), `TG_OWNER_ID` (твій числовий id у Telegram) і `CHAT_ID`.
+3. Cloudflare Zero Trust → Access → Applications → додай застосунок Self-hosted для `agent.example.com` зі шляхом `telegram` і політикою **Bypass** (Everyone). Без цього Access відповідає Telegram логіном, і вебхук не доходить. Решта хоста лишається за Access; `/telegram` захищає секретний заголовок `x-telegram-bot-api-secret-token`.
+4. Вебхук: `source .env && curl "https://api.telegram.org/bot$AGENT_BOT_TOKEN/setWebhook" -d url=https://agent.example.com/telegram -d secret_token=$AGENT_TG_WEBHOOK_SECRET --data-urlencode 'allowed_updates=["message","channel_post"]'` (у `.env` значення агента під іншими іменами, ніж у бота нотаток).
 
 ### SSH у контейнер
 

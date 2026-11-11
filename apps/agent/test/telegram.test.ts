@@ -7,8 +7,9 @@ import { fakeAgent } from "./fake-agent";
 // timingSafeEqual є лише в workerd: у Node мокаємо порівняння (мок за шляхом файлу в core).
 vi.mock("../../../packages/core/src/infrastructure/security", () => ({ safeEqual: async (a: string, b: string) => a === b }));
 
-const env = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "secret", TG_OWNER_ID: "42" } as unknown as Env;
+const env = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "secret", TG_OWNER_ID: "42", CHAT_ID: "-1001" } as unknown as Env;
 const OWNER = 42;
+const CHANNEL = -1001;
 
 // Telegram Bot API на підміненому fetch: запам'ятовує виклики методів і віддає файл для getFile.
 function setup(transcript = "Поправ README") {
@@ -27,7 +28,8 @@ function setup(transcript = "Поправ README") {
 	const pending: Promise<unknown>[] = [];
 	const deps = { agent: agent.agent, llm, defer: (w: Promise<unknown>) => void pending.push(w) };
 	const send = async (message: unknown, headers: HeadersInit = { "x-telegram-bot-api-secret-token": "secret" }) => {
-		const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers, body: JSON.stringify({ update_id: 1, message }) }), env, deps);
+		const channel = (message as { chat: { type: string } }).chat.type === "channel";
+		const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers, body: JSON.stringify({ update_id: 1, ...(channel ? { channel_post: message } : { message }) }) }), env, deps);
 		await Promise.all(pending.splice(0)); // фонова робота до кінця
 		return res;
 	};
@@ -35,6 +37,7 @@ function setup(transcript = "Поправ README") {
 	return { ...agent, llm, send, calls, replies };
 }
 
+const post = (extra: Record<string, unknown>, id = 9) => ({ message_id: id, date: 1, chat: { id: CHANNEL, type: "channel" }, ...extra });
 const msg = (extra: Record<string, unknown>, id = 7) => ({ message_id: id, date: 1, chat: { id: OWNER, type: "private" }, from: { id: OWNER }, ...extra });
 
 afterEach(() => vi.unstubAllGlobals());
@@ -69,7 +72,7 @@ describe("вебхук Telegram", () => {
 		await send(msg({ text: "Поправ README" }));
 		await send(msg({ text: "Поправ README" }));
 		expect(sessions.size).toBe(1);
-		expect(new Set(replies()).size).toBe(1); // посилання те саме
+		expect(replies()).toHaveLength(1); // друга відповідь не публікується
 	});
 
 	it("інше повідомлення — інша сесія", async () => {
@@ -79,10 +82,37 @@ describe("вебхук Telegram", () => {
 		expect(sessions.size).toBe(2);
 	});
 
-	it("чужий користувач, канал і група ігноруються", async () => {
+	it("канал: пост із задачею замінюється постом із текстом і посиланням, оригінал видаляється", async () => {
+		const { send, sessions, calls } = setup();
+		expect((await send(post({ text: "Поправ README" }))).status).toBe(200);
+		expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Поправ README" }]);
+		const sent = calls.find((c) => c.method === "sendMessage")!.body;
+		expect(sent).toMatchObject({ chat_id: CHANNEL, text: `Поправ README\n\n🔗 https://agent.example/s/tg-${CHANNEL}-9` });
+		expect(calls.find((c) => c.method === "deleteMessage")?.body).toEqual({ chat_id: CHANNEL, message_id: 9 });
+		// порядок: спершу нова відповідь, потім видалення оригіналу
+		expect(calls.map((c) => c.method).filter((m) => ["sendMessage", "deleteMessage"].includes(m))).toEqual(["sendMessage", "deleteMessage"]);
+	});
+
+	it("канал: голосове розпізнається, у пості видно розшифровку; повтор не дублює пост", async () => {
+		const { send, sessions, calls } = setup("Додай CHANGELOG");
+		await send(post({ voice: { file_id: "f1", file_size: 10 } }));
+		await send(post({ voice: { file_id: "f1", file_size: 10 } }));
+		expect(sessions.size).toBe(1);
+		const posts = calls.filter((c) => c.method === "sendMessage");
+		expect(posts).toHaveLength(1);
+		expect(posts[0].body.text).toContain("🗣 Додай CHANGELOG");
+	});
+
+	it("у приваті оригінал лишається: нічого не видаляється", async () => {
+		const { send, calls } = setup();
+		await send(msg({ text: "Поправ README" }));
+		expect(calls.some((c) => c.method === "deleteMessage")).toBe(false);
+	});
+
+	it("чужий користувач, чужий канал і група ігноруються", async () => {
 		const { send, sessions, calls } = setup();
 		await send({ ...msg({ text: "задача" }), from: { id: 7 }, chat: { id: 7, type: "private" } });
-		await send({ ...msg({ text: "задача" }), chat: { id: -100, type: "channel" } });
+		await send({ ...msg({ text: "задача" }), chat: { id: -2002, type: "channel" } });
 		await send({ ...msg({ text: "задача" }), chat: { id: -5, type: "group" } });
 		expect(sessions.size).toBe(0);
 		expect(calls).toEqual([]);

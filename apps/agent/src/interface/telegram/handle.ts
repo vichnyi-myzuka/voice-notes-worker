@@ -7,9 +7,12 @@ export const TELEGRAM_PATH = "/telegram";
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
 export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void };
 
-// Вебхук чату з агентом. Це єдиний шлях повз Cloudflare Access (Telegram не пройде логін), тому захист тут свій:
-// секретний заголовок і лише власник (TG_OWNER_ID). Telegram завжди отримує 200 одразу, а робота (Whisper, холодний старт
-// контейнера) йде у фоні: інакше він би повторював запит. Повторна доставка не створює другу сесію: id сесії стабільний.
+const POST_MAX = 3500; // запас до ліміту повідомлення Telegram (4096): решта — посилання
+
+// Вебхук чату з агентом: канал CHAT_ID (бот адмін) і особистий чат власника, як у боті нотаток. Це єдиний шлях повз
+// Cloudflare Access (Telegram не пройде логін), тому захист тут свій: секретний заголовок, а далі лише канал CHAT_ID
+// (дописувати в нього можуть лише адміни) і особистий чат TG_OWNER_ID. Telegram завжди отримує 200 одразу, а робота
+// (Whisper, холодний старт контейнера) йде у фоні: інакше він би повторював запит.
 export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps): Promise<Response> {
 	const token = req.headers.get("x-telegram-bot-api-secret-token") ?? "";
 	if (req.method !== "POST" || !env.TG_WEBHOOK_SECRET || !(await safeEqual(token, env.TG_WEBHOOK_SECRET))) {
@@ -18,10 +21,14 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	if (!env.BOT_TOKEN) return new Response("bot is not configured", { status: 503 });
 	const bot = { BOT_TOKEN: env.BOT_TOKEN };
 	const update = await req.json<TgUpdate>().catch(() => null);
-	const msg = update?.message;
-	if (msg && msg.chat.type === "private" && !!env.TG_OWNER_ID && String(msg.from?.id) === env.TG_OWNER_ID) {
+	const msg = update?.message ?? update?.channel_post;
+	if (!msg) return new Response("ok");
+
+	const inChannel = msg.chat.type === "channel" && !!env.CHAT_ID && String(msg.chat.id) === env.CHAT_ID;
+	const inPrivate = msg.chat.type === "private" && !!env.TG_OWNER_ID && String(msg.from?.id) === env.TG_OWNER_ID;
+	if (inChannel || inPrivate) {
 		deps.defer(
-			handleMessage(bot, msg, deps).catch(async (err) => {
+			handleMessage(bot, msg, inChannel, deps).catch(async (err) => {
 				console.error("telegram message failed:", err);
 				await tgSendMessage(bot, msg.chat.id, "⚠️ Не вдалося створити сесію, спробуй ще раз.").catch(() => {});
 			}),
@@ -30,7 +37,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	return new Response("ok");
 }
 
-async function handleMessage(env: BotEnv, msg: TgMessage, { agent, llm }: TelegramDeps): Promise<void> {
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm }: TelegramDeps): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const text = msg.text?.trim();
@@ -45,6 +52,10 @@ async function handleMessage(env: BotEnv, msg: TgMessage, { agent, llm }: Telegr
 	}
 	await react(env, msg);
 
+	// Стабільний id: повторна доставка того самого повідомлення не створює другу сесію й другу відповідь.
+	const id = `tg-${chat}-${msg.message_id}`;
+	if (await agent.link(id)) return;
+
 	let prompt = text ?? "";
 	if (file) {
 		const info = await tg(env, "getFile", { file_id: file.file_id });
@@ -57,7 +68,10 @@ async function handleMessage(env: BotEnv, msg: TgMessage, { agent, llm }: Telegr
 		}
 	}
 
-	// Стабільний id: повторна доставка того самого повідомлення дає ту саму сесію (start ідемпотентний).
-	const { url } = await agent.start(`tg-${chat}-${msg.message_id}`, { prompt });
-	await tgSendMessage(env, chat, `${file ? `🗣 ${prompt}\n\n` : ""}🔗 ${url}`);
+	const { url } = await agent.start(id, { prompt });
+	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
+	const body = inChannel || file ? `${file ? "🗣 " : ""}${prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt}\n\n` : "";
+	// Без прев'ю: інакше Telegram показує картку сторінки за Access.
+	await tg(env, "sendMessage", { chat_id: chat, text: `${body}🔗 ${url}`, link_preview_options: { is_disabled: true } });
+	if (inChannel) await tg(env, "deleteMessage", { chat_id: chat, message_id: msg.message_id }).catch((err) => console.error("delete original failed:", err));
 }
