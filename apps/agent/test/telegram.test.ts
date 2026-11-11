@@ -39,8 +39,15 @@ function setup(transcript = "Поправ README", pick?: (user: string) => { re
 		await Promise.all(pending.splice(0)); // фонова робота до кінця
 		return res;
 	};
+	const press = async (data: string, from = OWNER, chat: { id: number; type: string } = { id: OWNER, type: "private" }) => {
+		const query = { id: "cb1", from: { id: from }, message: { message_id: 100, chat }, data };
+		const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret" }, body: JSON.stringify({ update_id: 2, callback_query: query }) }), env, deps);
+		await Promise.all(pending.splice(0));
+		return res;
+	};
+	const answers = () => calls.filter((c) => c.method === "answerCallbackQuery").map((c) => c.body.text);
 	const replies = () => calls.filter((c) => c.method === "sendMessage").map((c) => c.body.text as string);
-	return { ...agent, llm, send, calls, replies };
+	return { ...agent, llm, send, press, answers, calls, replies };
 }
 
 const post = (extra: Record<string, unknown>, id = 9) => ({ message_id: id, date: 1, chat: { id: CHANNEL, type: "channel" }, ...extra });
@@ -314,6 +321,59 @@ describe("вебхук Telegram", () => {
 			expect(describeReport({ status: "idle", outcome: "succeeded", cost: 0.4, tokens: 12_400 })).toBe("✅ Завершила ($0.40 · 12k токенів)");
 			expect(describeReport({ status: "idle", outcome: "failed" })).toBe("❌ Завершилась помилкою");
 			expect(describeReport({ status: "stopped" })).toContain("Контейнер спить");
+		});
+	});
+
+	describe("кнопки під постом сесії", () => {
+		const SESSION = `tg-${OWNER}-7`;
+		const started = async () => {
+			const t = setup();
+			await t.send(msg({ text: "Поправ README" }));
+			t.calls.length = 0;
+			return t;
+		};
+
+		it("пост сесії створюється з кнопками «Стоп» і «Видалити»", async () => {
+			const t = setup();
+			await t.send(msg({ text: "Поправ README" }));
+			const sent = t.calls.find((c) => c.method === "sendMessage")!.body as { reply_markup: unknown };
+			expect(sent.reply_markup).toEqual({ inline_keyboard: [[{ text: "⏹ Стоп", callback_data: `stop:${SESSION}` }, { text: "🗑 Видалити", callback_data: `del:${SESSION}` }]] });
+		});
+
+		it("«Стоп» зупиняє працюючу сесію, відповідає підказкою й нічого не пише в чат", async () => {
+			const t = await started();
+			await t.press(`stop:${SESSION}`);
+			expect(t.sessions.get(SESSION)?.status).toBe("idle");
+			expect(t.answers()).toEqual(["⏹ Зупинено."]);
+			expect(t.replies()).toEqual([]);
+			await t.press(`stop:${SESSION}`); // вже не працює
+			expect(t.answers().at(-1)).toBe("Нічого зупиняти.");
+		});
+
+		it("«Видалити» прибирає сесію й сам пост (з каналу теж)", async () => {
+			const t = await started();
+			await t.press(`del:${SESSION}`, OWNER, { id: CHANNEL, type: "channel" });
+			expect(t.sessions.has(SESSION)).toBe(false);
+			expect(t.calls.filter((c) => c.method === "deleteMessage").map((c) => c.body)).toEqual([{ chat_id: CHANNEL, message_id: 100 }]);
+			expect(t.answers()).toEqual(["Сесію видалено."]);
+		});
+
+		it("чужий користувач, чужий чат, невідома дія чи сесія — відмова без наслідків", async () => {
+			const t = await started();
+			await t.press(`del:${SESSION}`, 999);
+			await t.press(`del:${SESSION}`, OWNER, { id: -555, type: "channel" });
+			await t.press("rm:everything");
+			await t.press("del:tg-1-1");
+			expect(t.sessions.has(SESSION)).toBe(true);
+			expect(t.answers()).toEqual(["Недоступно.", "Недоступно.", "Невідома дія.", "Сесію не знайдено."]);
+			expect(t.calls.filter((c) => c.method === "deleteMessage")).toEqual([]);
+		});
+
+		it("без секрету вебхука натискання не обробляється", async () => {
+			const t = await started();
+			const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", body: JSON.stringify({ callback_query: { id: "x", from: { id: OWNER }, data: `del:${SESSION}` } }) }), env, { agent: t.agent, llm: t.llm, defer: () => {} });
+			expect(res.status).toBe(401);
+			expect(t.sessions.has(SESSION)).toBe(true);
 		});
 	});
 

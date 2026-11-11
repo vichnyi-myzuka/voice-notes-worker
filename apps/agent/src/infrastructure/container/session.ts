@@ -289,7 +289,7 @@ export class AgentSession extends DurableObject<Env> {
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
 	private async show(w: WatchTarget, status: string, final = false): Promise<boolean> {
 		if (!w.postId || !this.env.BOT_TOKEN) return false;
-		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, status, final), w.url);
+		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, status, final), w.url, final ? "done" : "working");
 	}
 
 	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
@@ -301,7 +301,7 @@ export class AgentSession extends DurableObject<Env> {
 		await this.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
 		if (await this.show(w, text, true)) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url).catch((err) => console.error("notify failed:", err));
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, "done").catch((err) => console.error("notify failed:", err));
 	}
 
 	private async saveSnapshot(): Promise<SnapshotInfo> {
@@ -437,7 +437,7 @@ export class AgentSession extends DurableObject<Env> {
 		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
 		if (!this.env.BOT_TOKEN) return;
 		if (job.target.postId && (await this.show(job.target, text, true))) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url).catch((err) => console.error("notify failed:", err));
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, "done").catch((err) => console.error("notify failed:", err));
 	}
 
 	// Статус не будить контейнер, що спить.
