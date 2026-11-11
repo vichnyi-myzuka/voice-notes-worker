@@ -293,10 +293,10 @@ describe("AgentSession", () => {
 		expect(opencode.auths).toEqual(new Set([`Basic ${btoa("opencode:pw")}`]));
 	});
 
-	it("fetch: Origin підміняється на адресу контейнера (OpenCode перевіряє збіг з Host для термінала)", async () => {
+	it("fetch: Origin прибирається (OpenCode перевіряє його збіг з Host контейнера для термінала)", async () => {
 		const { session, opencode } = setup();
 		await session.fetch(new Request("https://agent.example/api/experimental/persistent-pty/p1/connect-token", { method: "POST", headers: { origin: "https://agent.example", "x-opencode-ticket": "1" } }));
-		expect(opencode.origins).toEqual(["http://container"]);
+		expect(opencode.origins).toEqual([]);
 		expect(opencode.tickets).toEqual(["1"]); // решта заголовків лишається
 	});
 
