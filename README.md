@@ -332,12 +332,17 @@ Whisper (і резервна Gemma 4) працюють через binding `AI`. 
 Окремий воркер: кожна **сесія** агента — Durable Object з власним контейнером Cloudflare, у якому працює `opencode web` (веб-інтерфейс + API). Воркер створює сесію, ставить агенту задачу і повертає посилання на веб-інтерфейс. Доступ — лише через Cloudflare Access.
 
 ```
-POST /api/sessions {prompt, repo?: "owner/name", id?}  → {id, url}   створити сесію й одразу поставити задачу
+POST /api/sessions {prompt, repo?: "owner/name", id?}  → {id, url}   створити сесію й одразу поставити задачу (ідемпотентно за id)
+GET  /api/sessions/<id>                                → {status}: working | idle | stopped
+POST /api/sessions/<id>/messages {text}                → уточнення в ту саму сесію
+POST /api/sessions/<id>/abort                          → зупинити поточну роботу агента (сесія лишається)
 GET  /s/<id>                                           → cookie з id сесії + редирект у веб-інтерфейс OpenCode
 будь-який інший шлях                                   → проксі у веб-інтерфейс сесії з cookie
 ```
 
 Веб-інтерфейс OpenCode використовує абсолютні шляхи (`/assets/…`), тому сесію вибирає cookie, а не префікс шляху. Наслідок: у браузері одночасно відкрита одна сесія.
+
+Порт `Agent` (`domain/agent`: start, followUp, status, abort, serve) реалізує `infrastructure/container` (Durable Object `AgentSession` + контейнер); HTTP-шар знає лише порт. Статус не будить контейнер, що спить (`stopped`). Диск контейнера тимчасовий: після сну сесії OpenCode вже немає, тож `followUp` створює нову сесію в тій самій `AgentSession` (збереження файлів між снами через snapshots — окрема задача).
 
 Захист у два шари: Cloudflare Access перед воркером і перевірка його JWT (`Cf-Access-Jwt-Assertion`: підпис RS256 за ключами команди, `aud`, `iss`, `exp`) у самому воркері; без `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` воркер відповідає 503. Пароль OpenCode (basic auth) підставляє воркер, у браузері його вводити не треба.
 
@@ -364,4 +369,4 @@ npm run deploy
 
 ### Відкриті питання прототипу
 
-Не перевірені без розгорнутого контейнера: ціна й холодний старт `standard-1`; чи проходять WebSocket-запити (термінал у веб-інтерфейсі) через `getTcpPort().fetch`; чи достатньо cookie-маршрутизації для SSE (`/event`); точний URL, що відкриває саме сесію агента, а не головну сторінку. Результати записати в issue #3.
+Порт і Durable Object покриті тестами на фейках (`apps/agent/test`: `fake-agent.ts`, `session.test.ts` зі скриптованим OpenCode), але не перевірені без розгорнутого контейнера: ціна й холодний старт `standard-1`; чи проходять WebSocket-запити (термінал у веб-інтерфейсі) через `getTcpPort().fetch`; чи достатньо cookie-маршрутизації для SSE (`/event`); точний URL, що відкриває саме сесію агента, а не головну сторінку. Результати записати в issue #3.

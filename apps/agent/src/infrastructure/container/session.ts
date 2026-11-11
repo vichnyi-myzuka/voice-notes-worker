@@ -1,12 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { OPENCODE_PORT, basicAuth, createSession, promptAsync, type Opencode } from "./opencode";
+import type { AgentStatus, StartInput } from "../../domain/agent";
+import { OPENCODE_PORT, abortSession, basicAuth, createSession, isBusy, promptAsync, sessionExists, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
 const READY_ATTEMPTS = 150;
-
-export type StartInput = { prompt: string; repo?: string };
 
 // Сесія агента: один Durable Object = один контейнер з OpenCode і одна сесія OpenCode.
 export class AgentSession extends DurableObject<Env> {
@@ -74,6 +73,30 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ctx.storage.put("sessionId", sessionId);
 		await promptAsync(this.opencode(), sessionId, input.prompt);
 		return { sessionId };
+	}
+
+	// Уточнення в сесію. Після сну контейнера його диск порожній: якщо сесії OpenCode вже немає, створюємо нову.
+	async followUp(text: string): Promise<void> {
+		await this.ensureRunning();
+		let sessionId = await this.ctx.storage.get<string>("sessionId");
+		if (!sessionId || !(await sessionExists(this.opencode(), sessionId))) {
+			sessionId = await createSession(this.opencode(), text.slice(0, 80));
+			await this.ctx.storage.put("sessionId", sessionId);
+		}
+		await promptAsync(this.opencode(), sessionId, text);
+	}
+
+	// Статус не будить контейнер, що спить.
+	async status(): Promise<AgentStatus> {
+		const sessionId = await this.ctx.storage.get<string>("sessionId");
+		if (!sessionId || !this.ctx.container?.running) return "stopped";
+		return (await isBusy(this.opencode(), sessionId)) ? "working" : "idle";
+	}
+
+	async abort(): Promise<void> {
+		const sessionId = await this.ctx.storage.get<string>("sessionId");
+		if (!sessionId || !this.ctx.container?.running) return;
+		await abortSession(this.opencode(), sessionId);
 	}
 
 	// Веб-інтерфейс OpenCode: запити (разом із SSE) проксуються в контейнер.
