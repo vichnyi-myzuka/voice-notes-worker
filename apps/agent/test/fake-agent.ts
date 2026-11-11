@@ -38,6 +38,9 @@ export function fakeAgent(origin = "https://agent.example") {
 		async link(id) {
 			return sessions.has(id) ? `ses_${id}` : undefined;
 		},
+		async info() {
+			return { running: true, activeAt: 1, alarmAt: null, snapshot: null, streams: [] };
+		},
 		async snapshot() {
 			if (snapshotError) throw new Error(snapshotError);
 			snapshots.push("snap");

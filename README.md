@@ -349,7 +349,7 @@ GET  /s/<id>                                           → редірект на
 
 ### SSH у контейнер
 
-`npx wrangler containers ssh <INSTANCE_ID>` (id: `npx wrangler containers instances` чи дашборд Cloudflare). Публічний ed25519-ключ лежить у `wrangler.toml` (`[[containers.authorized_keys]]`), порту назовні немає, вхід лише через твій акаунт Cloudflare. Контейнер має вже працювати: SSH його не будить і **не утримує від сну**. Зміни, зроблені через SSH, воркер не бачить, тож після роботи виконай `POST /api/computer/snapshot` (за Access), інакше вони зникнуть разом із диском при сні. Агент не має доступу до `wrangler` і акаунта Cloudflare.
+`npm run ssh -w apps/agent` (сам знаходить інстанс `main`; зі своєю командою: `npm run ssh -w apps/agent -- ls /workspace`) або вручну `npx wrangler containers ssh <INSTANCE_ID>` (id: `npx wrangler containers instances`). Якщо ключ має пароль, додай його в агент: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` (інакше wrangler відповідає `Permission denied (publickey)`). Публічний ed25519-ключ лежить у `wrangler.toml` (`[[containers.authorized_keys]]`), порту назовні немає, вхід лише через твій акаунт Cloudflare. Контейнер має вже працювати: SSH його не будить і **не утримує від сну**. Зміни, зроблені через SSH, воркер не бачить, тож після роботи виконай `POST /api/computer/snapshot` (за Access), інакше вони зникнуть разом із диском при сні. Агент не має доступу до `wrangler` і акаунта Cloudflare.
 
 Захист у два шари: Cloudflare Access перед воркером і перевірка його JWT (`Cf-Access-Jwt-Assertion`: підпис RS256 за ключами команди, `aud`, `iss`, `exp`) у самому воркері; без `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` воркер відповідає 503. Пароль OpenCode (basic auth) підставляє воркер, у браузері його вводити не треба.
 

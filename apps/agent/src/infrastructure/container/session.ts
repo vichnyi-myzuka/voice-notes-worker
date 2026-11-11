@@ -1,11 +1,14 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import type { AgentStatus, SnapshotInfo, StartInput } from "../../domain/agent";
+import type { AgentStatus, ComputerInfo, SnapshotInfo, StartInput } from "../../domain/agent";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, createSession, hasModel, interrupt, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const DEFAULT_INACTIVITY_MS = 60 * 60 * 1000;
 const READY_ATTEMPTS = 150;
+// Потік подій (SSE) тримає Durable Object, а з ним і контейнер, активним: забута вкладка не давала б йому заснути. Тому потік
+// живе не довше цього часу; жива вкладка перепідключиться сама.
+const STREAM_MAX_MS = 10 * 60 * 1000;
 // Знімок диска робимо не частіше й лише коли була активність; поки контейнер працює, alarm перевіряє це.
 const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -25,6 +28,9 @@ export class AgentSession extends DurableObject<Env> {
 	private starting: Promise<void> | undefined;
 	// Підготовка тек і створення сесій виконуються по черзі (serial): паралельні `git clone` одного репозиторію псують один одного.
 	private queue: Promise<unknown> = Promise.resolve();
+	// Відкриті зараз SSE-потоки (лише для діагностики).
+	private streams = new Map<number, { path: string; openedAt: number }>();
+	private streamSeq = 0;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -237,6 +243,22 @@ export class AgentSession extends DurableObject<Env> {
 		await interrupt(this.opencode(), tracked.ocId);
 	}
 
+	// Стан для діагностики: чому контейнер не засинає, коли був знімок.
+	async info(): Promise<ComputerInfo> {
+		const [activeAt, alarmAt, snapshot] = await Promise.all([
+			this.ctx.storage.get<number>("activeAt"),
+			this.ctx.storage.getAlarm(),
+			this.ctx.storage.get<SavedSnapshot>("snapshot"),
+		]);
+		return {
+			running: !!this.ctx.container?.running,
+			activeAt: activeAt ?? null,
+			alarmAt,
+			snapshot: snapshot ? { id: snapshot.id, at: snapshot.at } : null,
+			streams: [...this.streams.values()],
+		};
+	}
+
 	// Веб-інтерфейс OpenCode: запити (разом із SSE) проксуються в контейнер.
 	async fetch(request: Request): Promise<Response> {
 		await this.ensureRunning();
@@ -250,7 +272,27 @@ export class AgentSession extends DurableObject<Env> {
 		// OpenCode відхиляє запити термінала (connect-token, WebSocket), якщо Origin не збігається з Host контейнера; без Origin
 		// (як у не-браузерних клієнтів) перевірка проходить. Доступ уже захищено Access і паролем.
 		headers.delete("origin");
-		return this.ctx.container!.getTcpPort(OPENCODE_PORT).fetch(new Request(`http://container${url.pathname}${url.search}`, new Request(request, { headers })));
+		const upstream = new Request(`http://container${url.pathname}${url.search}`, new Request(request, { headers })) as unknown as Request<unknown, CfProperties>;
+		const port = this.ctx.container!.getTcpPort(OPENCODE_PORT);
+		if (!(request.headers.get("accept") ?? "").includes("text/event-stream")) return port.fetch(upstream);
+
+		// SSE: обмежуємо час життя потоку й ведемо облік для діагностики.
+		const id = ++this.streamSeq;
+		this.streams.set(id, { path: url.pathname, openedAt: Date.now() });
+		const stop = new AbortController();
+		const done = () => {
+			clearTimeout(timer);
+			this.streams.delete(id);
+		};
+		const timer = setTimeout(() => {
+			stop.abort();
+			done();
+		}, STREAM_MAX_MS);
+		request.signal.addEventListener("abort", () => {
+			stop.abort();
+			done();
+		});
+		return port.fetch(new Request(upstream, { signal: stop.signal }) as unknown as Request<unknown, CfProperties>);
 	}
 }
 

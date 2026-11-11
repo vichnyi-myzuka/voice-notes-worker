@@ -8,7 +8,8 @@
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src test",
-    "test": "vitest run"
+    "test": "vitest run",
+    "ssh": "sh scripts/ssh.sh"
   },
   "dependencies": {
     "@voice-notes/core": "*"
