@@ -701,6 +701,18 @@ describe("AgentSession", () => {
 					expect(edits()).toHaveLength(2);
 				});
 
+				it("питання агента (form.created) показується одразу, навіть частіше за інтервал оновлень", async () => {
+					const t = setup({ BOT_TOKEN: "bot" });
+					await t.session.start(ID, { prompt: "Задача" });
+					await t.session.watch(ID, POST);
+					tool(t.opencode, "c1", "read", { filePath: "a" });
+					await flush();
+					t.opencode.emit({ type: "form.created", data: { form: { sessionID: ocId, title: "Який стиль?", fields: [{ title: "Стиль", options: [{ label: "Мінімалізм" }] }] } } });
+					await flush();
+					expect(edits()).toHaveLength(2); // дія й питання, без пропуску
+					expect(edits().at(-1)!.text).toContain("❓ Який стиль?\nСтиль\n• Мінімалізм");
+				});
+
 				it("чужа сесія, виклик без відомої назви і сесія без поста нічого не редагують", async () => {
 					const t = setup({ BOT_TOKEN: "bot" });
 					await t.session.start(ID, { prompt: "Задача" });

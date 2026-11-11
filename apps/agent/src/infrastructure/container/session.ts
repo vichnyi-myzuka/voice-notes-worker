@@ -6,7 +6,7 @@ import { editChat, sendChat } from "../chat";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
-import { describeActivity } from "./activity";
+import { describeActivity, describeForm } from "./activity";
 import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, readEvents, type OpencodeEvent, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
@@ -494,6 +494,8 @@ export class AgentSession extends DurableObject<Env> {
 	// Старт роботи відмічає сесію працюючою, кінець (успіх, помилка, зупинка) одразу показує підсумок у пості.
 	private async onEvent(event: OpencodeEvent): Promise<void> {
 		const ocId = event.data?.sessionID;
+		// Агент поставив питання й чекає відповіді: показуємо його одразу, без тротлінгу (далі оновлень не буде).
+		if (event.type === "form.created" && event.data?.form?.sessionID) return this.progress(event.data.form.sessionID, "", undefined, describeForm(event.data.form));
 		if (ocId && event.type === "session.tool.input.started" && event.data?.id && event.data.name) {
 			if (this.toolNames.size > 500) this.toolNames.clear();
 			this.toolNames.set(event.data.id, event.data.name);
@@ -510,15 +512,16 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// «⏳ Працює · редагує README.md»: пост оновлюється на місці, не частіше за PROGRESS_INTERVAL_MS (проміжні дії між оновленнями пропускаються).
-	private async progress(ocId: string, tool: string, input: Record<string, unknown> | undefined): Promise<void> {
-		if (!tool || !this.env.BOT_TOKEN) return;
+	// announcement: готовий текст (питання агента) замість підпису дії; показується завжди, навіть частіше за інтервал.
+	private async progress(ocId: string, tool: string, input: Record<string, unknown> | undefined, announcement?: string): Promise<void> {
+		if ((!tool && !announcement) || !this.env.BOT_TOKEN) return;
 		const now = Date.now();
-		if (now - (this.lastProgress.get(ocId) ?? 0) < (positiveInt(this.env.AGENT_PROGRESS_MS) ?? PROGRESS_INTERVAL_MS)) return;
+		if (!announcement && now - (this.lastProgress.get(ocId) ?? 0) < (positiveInt(this.env.AGENT_PROGRESS_MS) ?? PROGRESS_INTERVAL_MS)) return;
 		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: "watch:" }))].find(([, w]) => w.ocId === ocId);
 		if (!entry?.[1].postId) return;
 		this.lastProgress.set(ocId, now);
 		const w = entry[1];
-		const text = `${WORKING} · ${describeActivity(tool, input)}`;
+		const text = announcement ?? `${WORKING} · ${describeActivity(tool, input)}`;
 		const job = this.postQueue.catch(() => undefined).then(async () => {
 			if (await this.ctx.storage.get(entry[0])) await this.show(w, text); // спостереження могло закінчитись, поки чекали в черзі
 		});

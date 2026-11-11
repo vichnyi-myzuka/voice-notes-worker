@@ -9,6 +9,16 @@ const short = (p: string) => p.replace(/^\/workspace\/(?:sessions\/[^/]+\/|repos
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
 
+// Питання агента (інструмент question створює форму, подія form.created): заголовок, поля й варіанти відповіді для поста.
+const FORM_MAX = 1200; // пост разом із шапкою має вміститись у 4096
+export type ActivityForm = { title?: string; fields?: { title?: string; description?: string; options?: { label?: string; description?: string }[] }[] };
+
+export function describeForm(form: ActivityForm): string {
+	const parts = [form.title?.trim() || "Агент питає", ...(form.fields ?? []).flatMap((f) => [f.title?.trim() && f.title.trim() !== form.title?.trim() ? f.title.trim() : "", f.description?.trim() ?? "", ...(f.options ?? []).map((o) => `• ${o.label ?? ""}${o.description ? `: ${o.description}` : ""}`)])].filter(Boolean);
+	const text = `❓ ${parts.join("\n")}\n\nВідповідай на цей пост.`;
+	return text.length > FORM_MAX ? `${text.slice(0, FORM_MAX)}…` : text;
+}
+
 export function describeActivity(tool: string, input: Record<string, unknown> | undefined): string {
 	const i = input ?? {};
 	const file = str(i.filePath) ?? str(i.path) ?? str(i.file);
@@ -34,6 +44,8 @@ export function describeActivity(tool: string, input: Record<string, unknown> | 
 			const target = str(i.url) ?? str(i.query);
 			return target ? `відкриває ${cut(target.replace(/^https?:\/\//, ""))}` : "шукає в інтернеті";
 		}
+		case "question":
+			return "ставить питання";
 		case "task":
 			return "делегує підзадачу";
 		default:

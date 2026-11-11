@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeActivity } from "../src/infrastructure/container/activity";
+import { describeActivity, describeForm } from "../src/infrastructure/container/activity";
 
 describe("describeActivity", () => {
 	it("файли: шлях без теки сесії", () => {
@@ -18,5 +18,19 @@ describe("describeActivity", () => {
 		expect(describeActivity("webfetch", { url: "https://example.com/a" })).toBe("відкриває example.com/a");
 		expect(describeActivity("custom", undefined)).toBe("інструмент custom");
 		expect(describeActivity("read", { filePath: `a/${"x".repeat(100)}` })).toHaveLength("читає ".length + 60);
+	});
+});
+
+describe("describeForm", () => {
+	it("заголовок, поля й варіанти відповіді; підказка, як відповісти", () => {
+		const text = describeForm({ title: "Який стиль?", fields: [{ title: "Стиль", options: [{ label: "Мінімалізм", description: "світлий" }, { label: "Яскравий" }] }] });
+		expect(text).toBe("❓ Який стиль?\nСтиль\n• Мінімалізм: світлий\n• Яскравий\n\nВідповідай на цей пост.");
+	});
+
+	it("поле з тим самим заголовком не дублюється; порожня форма й надто довгий текст", () => {
+		expect(describeForm({ title: "Так чи ні?", fields: [{ title: "Так чи ні?" }] })).toBe("❓ Так чи ні?\n\nВідповідай на цей пост.");
+		expect(describeForm({})).toContain("Агент питає");
+		expect(describeForm({ title: "x".repeat(3000) }).length).toBeLessThanOrEqual(1201);
+		expect(describeActivity("question", {})).toBe("ставить питання");
 	});
 });
