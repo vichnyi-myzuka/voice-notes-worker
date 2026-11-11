@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { tg, tgSendMessage } from "./api";
-import type { ReceivedVoice, TgMessage } from "./types";
+import type { ReceivedMessage, TgMessage } from "./types";
 
 export const DOWNLOAD_MAX_BYTES = 20_000_000; // ліміт Bot API на getFile
 
@@ -17,11 +17,11 @@ export async function react(env: Env, msg: TgMessage): Promise<void> {
 // Канал: лише дописи в CHAT_ID без підпису (у нотаток бота підпис є завжди), публікувати там можуть лише адміни.
 // Особистий чат: лише від TG_OWNER_ID. В обох випадках ставимо ✍.
 // Помилки повідомляє в чат сам; Telegram завжди отримує 200, щоб не повторював запит без кінця.
-export async function receiveTelegramVoice(
+export async function receiveTelegramMessage(
 	env: Env,
 	msg: TgMessage,
 	// Повертає false, якщо повідомлення вже прибране (правка): тоді ✍ не ставимо.
-	store: (key: string, body: ArrayBuffer, meta: ReceivedVoice) => Promise<boolean>,
+	store: (key: string, body: ArrayBuffer, meta: ReceivedMessage) => Promise<boolean>,
 ): Promise<void> {
 	// Фото приймаємо й з підписом: підпис — частина нотатки (власних дописів бот у вебхуку не отримує).
 	const inChannel = msg.chat.type === "channel" && String(msg.chat.id) === env.CHAT_ID && (!msg.caption || !!msg.photo);

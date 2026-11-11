@@ -1,7 +1,7 @@
 import { noteIdByMessage } from "../../domain/published";
 import { captionKey } from "../../domain/recording";
 import type { Env } from "../../infrastructure/env";
-import { deleteOriginal, markEditing, receiveTelegramVoice, type ReceivedVoice, type TgUpdate } from "../../infrastructure/telegram";
+import { deleteOriginal, markEditing, receiveTelegramMessage, type ReceivedMessage, type TgUpdate } from "../../infrastructure/telegram";
 import { enqueueNote, safeEqual } from "./enqueue";
 
 // Відповідь на повідомлення, що не є нашою нотаткою (або застаріла): обробка повідомить про це користувача.
@@ -15,7 +15,7 @@ export async function telegramWebhook(req: Request, env: Env): Promise<Response>
 	}
 	const update = await req.json<TgUpdate>();
 	const msg = update.message ?? update.channel_post;
-	if (msg) await receiveTelegramVoice(env, msg, (key, body, incoming) => accept(env, key, body, incoming));
+	if (msg) await receiveTelegramMessage(env, msg, (key, body, incoming) => accept(env, key, body, incoming));
 	return new Response("ok");
 }
 
@@ -25,7 +25,7 @@ async function accept(
 	env: Env,
 	key: string,
 	body: ArrayBuffer,
-	{ contentType, replyTo, caption, deleteChatId, deleteMessageId, ...metadata }: ReceivedVoice,
+	{ contentType, replyTo, caption, deleteChatId, deleteMessageId, ...metadata }: ReceivedMessage,
 ): Promise<boolean> {
 	if (caption) await env.BUCKET.put(captionKey(key), caption);
 	// Відповідь на повідомлення в каналі = редагування цієї нотатки.
