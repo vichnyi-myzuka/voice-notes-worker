@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], execFails: false, execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], execFails: false, origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -74,6 +74,8 @@ function fakeContainer() {
 				const path = new URL(req.url).pathname;
 				opencode.requests.push(`${req.method} ${path}`);
 				opencode.auths.add(req.headers.get("authorization") ?? "");
+				if (req.headers.has("origin")) opencode.origins.push(req.headers.get("origin")!);
+				if (req.headers.has("x-opencode-ticket")) opencode.tickets.push(req.headers.get("x-opencode-ticket")!);
 				const ok = (data: unknown) => Response.json({ data });
 				if (path === "/api/info") return Response.json({ version: "2.2.7" });
 				if (req.method === "POST" && path === "/api/session") {
@@ -289,6 +291,13 @@ describe("AgentSession", () => {
 		const res = await session.fetch(new Request("https://agent.example/assets/app.js?v=1", { headers: { cookie: "agent_session=session-0001" } }));
 		expect(await res.text()).toBe("ui /assets/app.js");
 		expect(opencode.auths).toEqual(new Set([`Basic ${btoa("opencode:pw")}`]));
+	});
+
+	it("fetch: Origin підміняється на адресу контейнера (OpenCode перевіряє збіг з Host для термінала)", async () => {
+		const { session, opencode } = setup();
+		await session.fetch(new Request("https://agent.example/api/experimental/persistent-pty/p1/connect-token", { method: "POST", headers: { origin: "https://agent.example", "x-opencode-ticket": "1" } }));
+		expect(opencode.origins).toEqual(["http://container"]);
+		expect(opencode.tickets).toEqual(["1"]); // решта заголовків лишається
 	});
 
 	describe("знімки диска", () => {

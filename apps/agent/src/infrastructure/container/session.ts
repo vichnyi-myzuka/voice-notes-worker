@@ -247,6 +247,8 @@ export class AgentSession extends DurableObject<Env> {
 		headers.set("authorization", basicAuth(this.env.OPENCODE_PASSWORD));
 		headers.delete("host");
 		headers.delete("cookie"); // cookie Access контейнеру не потрібні
+		// OpenCode відхиляє запити термінала (connect-token, WebSocket), якщо Origin не збігається з Host: для нього ми same-origin.
+		if (headers.has("origin")) headers.set("origin", "http://container");
 		return this.ctx.container!.getTcpPort(OPENCODE_PORT).fetch(new Request(`http://container${url.pathname}${url.search}`, new Request(request, { headers })));
 	}
 }
