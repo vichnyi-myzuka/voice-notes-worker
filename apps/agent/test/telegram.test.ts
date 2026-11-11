@@ -13,7 +13,7 @@ const OWNER = 42;
 const CHANNEL = -1001;
 
 // Telegram Bot API на підміненому fetch: запам'ятовує виклики методів і віддає файл для getFile.
-function setup(transcript = "Поправ README", pick?: (user: string) => string | null) {
+function setup(transcript = "Поправ README", pick?: (user: string) => { repo?: string; type?: string; name?: string } | null) {
 	const agent = fakeAgent();
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
 	vi.stubGlobal(
@@ -27,8 +27,8 @@ function setup(transcript = "Поправ README", pick?: (user: string) => stri
 	);
 	const llm: Llm = {
 		askJson: (async (req: { user: string }, parse: (t: string) => unknown) => {
-			const repo = pick?.(req.user);
-			return repo ? parse(JSON.stringify({ repo })) : null;
+			const answer = pick?.(req.user);
+			return answer ? parse(JSON.stringify(answer)) : null;
 		}) as Llm["askJson"],
 		transcribe: vi.fn(async () => transcript) };
 	const pending: Promise<unknown>[] = [];
@@ -208,28 +208,33 @@ describe("вебхук Telegram", () => {
 			expect(replies()).toEqual(["🗑 Сесію видалено (гілка agent/… у репозиторії, якщо була, лишилась).", "⚠️ Сесію не знайдено."]);
 		});
 
-		describe("репозиторій з вільної мови", () => {
-			it("модель вибрала репозиторій зі списку: сесія з repo, у пості видно 📦; промпт без змін", async () => {
-				const { send, sessions, replies } = setup("Давай попрацюємо над нашим ботом, додай тести", (user) => (user.includes("our bot") ? "me/bot" : null));
+		describe("репозиторій і назва з вільної мови", () => {
+			it("модель вибрала репозиторій і назву: сесія з repo та name, у пості видно 📦; промпт без змін", async () => {
+				const { send, sessions, replies } = setup("", (user) => (user.includes("our bot") ? { repo: "me/bot", type: "test", name: "session-tests" } : null));
 				await send(msg({ text: "Давай попрацюємо над нашим ботом, додай тести" }));
-				expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Давай попрацюємо над нашим ботом, додай тести", repo: "me/bot" }]);
+				expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Давай попрацюємо над нашим ботом, додай тести", repo: "me/bot", name: "test-session-tests" }]);
 				expect(replies()[0]).toContain("📦 me/bot");
 			});
 
-			it("«none», відповідь поза списком чи збій моделі: сесія без репозиторію", async () => {
-				for (const pick of [() => "none", () => "evil/repo", () => null]) {
+			it("«none», репозиторій поза списком чи збій моделі: без репозиторію; назва лишається, якщо придатна", async () => {
+				for (const [pick, input] of [
+					[() => ({ repo: "none", type: "feat", name: "new-thing" }), { prompt: "Зроби щось нове", name: "feat-new-thing" }],
+					[() => ({ repo: "evil/repo", type: "bogus", name: "Fix README!" }), { prompt: "Зроби щось нове", name: "fix-readme" }],
+					[() => ({ repo: "none", name: "?" }), { prompt: "Зроби щось нове" }],
+					[() => null, { prompt: "Зроби щось нове" }],
+				] as const) {
 					const { send, sessions } = setup("", pick);
 					await send(msg({ text: "Зроби щось нове" }));
-					expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Зроби щось нове" }]);
+					expect([...sessions.values()].map((s) => s.input)).toEqual([input]);
 				}
 			});
 
-			it("явний префікс сильніший і моделі не питає", async () => {
-				const pick = vi.fn(() => "me/site");
+			it("явний префікс сильніший і репозиторій не вгадується, але назва придумується", async () => {
+				const pick = vi.fn((_: string) => ({ repo: "me/site", type: "docs", name: "readme" }));
 				const { send, sessions } = setup("", pick);
 				await send(msg({ text: "other/repo: Поправ README" }));
-				expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Поправ README", repo: "other/repo" }]);
-				expect(pick).not.toHaveBeenCalled();
+				expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Поправ README", repo: "other/repo", name: "docs-readme" }]);
+				expect(pick.mock.calls[0][0]).not.toContain("me/site"); // список репозиторіїв моделі не показано
 			});
 
 			it("parseRepos ігнорує сміття й некоректні елементи", () => {

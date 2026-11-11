@@ -277,6 +277,16 @@ describe("AgentSession", () => {
 		expect(await session.status(ID)).toBe("working");
 	});
 
+	it("start з назвою: тека й гілка за змістом задачі (<назва>-<номер>); remove й followUp користуються нею", async () => {
+		const { session, opencode } = setup();
+		const id = "tg--1001-18";
+		await session.start(id, { prompt: "Задача", repo: "me/app", name: "docs-add" });
+		expect(opencode.execs[0].cmd).toEqual(["session-prep", "docs-add-18", "me/app"]);
+		expect(opencode.directories).toEqual(["/workspace/sessions/docs-add-18"]);
+		await session.remove(id);
+		expect(opencode.execs.at(-1)!.cmd.at(-1)).toBe("docs-add-18");
+	});
+
 	it("remove: видаляє сесію OpenCode, теку й записи; невідома сесія — нічого", async () => {
 		const { session, opencode, store } = setup();
 		await session.remove("nope-0000");
