@@ -61,7 +61,7 @@ describe("вебхук Telegram", () => {
 		const { send, sessions, replies, calls } = setup();
 		expect((await send(msg({ text: "Поправ README" }))).status).toBe(200);
 		expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Поправ README" }]);
-		expect(replies()).toEqual([`🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
+		expect(replies()).toEqual([`⏳ Працює\n\n🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
 		expect(calls.find((c) => c.method === "setMessageReaction")?.body).toMatchObject({ message_id: 7 });
 	});
 
@@ -70,7 +70,7 @@ describe("вебхук Telegram", () => {
 		await send(msg({ voice: { file_id: "f1", file_size: 1000, mime_type: "audio/ogg" } }));
 		expect(llm.transcribe).toHaveBeenCalledWith(expect.any(ArrayBuffer), "audio/ogg");
 		expect([...sessions.values()][0].input.prompt).toBe("Додай CHANGELOG");
-		expect(replies()).toEqual([`🗣 Додай CHANGELOG\n\n🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
+		expect(replies()).toEqual([`🗣 Додай CHANGELOG\n\n⏳ Працює\n\n🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
 	});
 
 	it("повторна доставка того самого повідомлення не створює другу сесію", async () => {
@@ -93,7 +93,7 @@ describe("вебхук Telegram", () => {
 		expect((await send(post({ text: "Поправ README" }))).status).toBe(200);
 		expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Поправ README" }]);
 		const sent = calls.find((c) => c.method === "sendMessage")!.body;
-		expect(sent).toMatchObject({ chat_id: CHANNEL, text: `Поправ README\n\n🔗 <a href="https://agent.example/s/tg-${CHANNEL}-9">Відкрити сесію</a>`, parse_mode: "HTML" });
+		expect(sent).toMatchObject({ chat_id: CHANNEL, text: `Поправ README\n\n⏳ Працює\n\n🔗 <a href="https://agent.example/s/tg-${CHANNEL}-9">Відкрити сесію</a>`, parse_mode: "HTML" });
 		expect(calls.find((c) => c.method === "deleteMessage")?.body).toEqual({ chat_id: CHANNEL, message_id: 9 });
 		// порядок: спершу нова відповідь, потім видалення оригіналу
 		expect(calls.map((c) => c.method).filter((m) => ["sendMessage", "deleteMessage"].includes(m))).toEqual(["sendMessage", "deleteMessage"]);
@@ -159,7 +159,7 @@ describe("вебхук Telegram", () => {
 		it("нова сесія береться під спостереження: після завершення підсумок прийде в той самий чат", async () => {
 			const { send, watches } = setup();
 			await send(msg({ text: "Поправ README" }));
-			expect(watches).toEqual([{ id: SID, target: { chatId: OWNER, url: `https://agent.example/s/${SID}`, postId: 1 } }]); // postId — пост бота (його id віддає sendMessage)
+			expect(watches).toEqual([{ id: SID, target: { chatId: OWNER, url: `https://agent.example/s/${SID}`, postId: 1, header: "" } }]); // postId — пост бота (його id віддає sendMessage), header — його шапка
 		});
 
 		it("відповідь текстом на пост із сесією — уточнення в ту саму сесію, нової сесії немає", async () => {
@@ -168,7 +168,7 @@ describe("вебхук Telegram", () => {
 			expect(sessions.size).toBe(1);
 			expect(sessions.get(SID)?.messages).toEqual(["Поправ README", "Ще й CHANGELOG"]);
 			expect(watches).toHaveLength(2); // стежимо за новою роботою
-			expect(watches[1].target).toMatchObject({ chatId: OWNER, postId: 100 }); // 👨‍💻 піде на пост, на який відповіли
+			expect(watches[1].target).toEqual({ chatId: OWNER, url: `https://agent.example/s/${SID}` }); // пост сесії агент знає сам (зі сховища)
 			expect(replies()).toEqual([]);
 		});
 

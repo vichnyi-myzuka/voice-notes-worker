@@ -32,15 +32,44 @@ export function chatHtml(text: string): string {
 		.join("");
 }
 
-// Надсилає повідомлення з форматуванням і необов'язковим посиланням на сесію внизу («🔗 Відкрити сесію»). Без прев'ю карток
-// (сторінка за Access). Якщо Telegram відхилив розмітку, шле той самий текст без неї. Повертає message_id.
+const NO_PREVIEW = { is_disabled: true }; // без карток сторінок (вони за Access)
+
+// Текст повідомлення в двох видах: HTML і простий (запасний, якщо Telegram відхилить розмітку). Внизу, за потреби,
+// посилання на сесію («🔗 Відкрити сесію»).
+function render(text: string, sessionUrl?: string): { html: string; plain: string } {
+	const tail = (html: boolean) => (sessionUrl ? `${text ? "\n\n" : ""}🔗 ${html ? `<a href="${escape(sessionUrl)}">Відкрити сесію</a>` : sessionUrl}` : "");
+	return { html: `${chatHtml(text)}${tail(true)}`, plain: `${text}${tail(false)}` };
+}
+
+// Надсилає повідомлення з форматуванням і необов'язковим посиланням на сесію внизу. Якщо Telegram відхилив розмітку, шле
+// той самий текст без неї. Повертає message_id.
 export async function sendChat(env: BotEnv, chatId: number | string, text: string, sessionUrl?: string): Promise<number> {
-	const html = `${chatHtml(text)}${sessionUrl ? `${text ? "\n\n" : ""}🔗 <a href="${escape(sessionUrl)}">Відкрити сесію</a>` : ""}`;
-	const link_preview_options = { is_disabled: true };
+	const { html, plain } = render(text, sessionUrl);
 	try {
-		return (await tg(env, "sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML", link_preview_options })).message_id;
+		return (await tg(env, "sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML", link_preview_options: NO_PREVIEW })).message_id;
 	} catch (err) {
 		console.error("html message rejected, sending plain:", err);
-		return (await tg(env, "sendMessage", { chat_id: chatId, text: `${text}${sessionUrl ? `\n\n🔗 ${sessionUrl}` : ""}`, link_preview_options })).message_id;
+		return (await tg(env, "sendMessage", { chat_id: chatId, text: plain, link_preview_options: NO_PREVIEW })).message_id;
+	}
+}
+
+// Редагує повідомлення на місці (так само: HTML, потім простий текст). «Не змінилось» — не помилка. false — не вдалося
+// (повідомлення видалили чи надто довге): викликач може надіслати нове.
+export async function editChat(env: BotEnv, chatId: number | string, messageId: number, text: string, sessionUrl?: string): Promise<boolean> {
+	const { html, plain } = render(text, sessionUrl);
+	const edit = async (body: string, parse_mode?: "HTML") => {
+		try {
+			await tg(env, "editMessageText", { chat_id: chatId, message_id: messageId, text: body, ...(parse_mode && { parse_mode }), link_preview_options: NO_PREVIEW });
+			return true;
+		} catch (err) {
+			if (String(err).includes("message is not modified")) return true;
+			throw err;
+		}
+	};
+	try {
+		return await edit(html, "HTML");
+	} catch (err) {
+		console.error("html edit rejected, editing plain:", err);
+		return edit(plain).catch((e) => (console.error("edit failed:", e), false));
 	}
 }

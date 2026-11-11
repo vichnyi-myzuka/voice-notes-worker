@@ -85,8 +85,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		const followUp = await transcribe(env, llm, file, text);
 		if (!followUp) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 		await agent.followUp(id, followUp);
-		await agent.watch(id, { chatId: chat, url, postId: msg.reply_to_message?.message_id }).catch((err) => console.error("watch failed:", err));
-		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), робота видна за 👨‍💻 на пості, на який відповіли.
+		await agent.watch(id, { chatId: chat, url }).catch((err) => console.error("watch failed:", err));
+		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), стан видно в пості сесії (він оновлюється на місці) і за 👨‍💻.
 		await removeMessage(env, chat, msg.message_id);
 		return;
 	}
@@ -107,8 +107,10 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
 	const shown = inChannel || file ? `${file ? "🗣 " : ""}${prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt}\n\n` : "";
 	// Без прев'ю: інакше Telegram показує картку сторінки за Access.
-	const postId = await sendChat(env, chat, `${shown}${repo ? `📦 ${repo}` : ""}`.trim(), url);
-	await agent.watch(id, { chatId: chat, url, postId }).catch((err) => console.error("watch failed:", err));
+	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
+	const header = `${shown}${repo ? `📦 ${repo}` : ""}`.trim();
+	const postId = await sendChat(env, chat, [header, "⏳ Працює"].filter(Boolean).join("\n\n"), url);
+	await agent.watch(id, { chatId: chat, url, postId, header }).catch((err) => console.error("watch failed:", err));
 	if (inChannel) await tg(env, "deleteMessage", { chat_id: chat, message_id: msg.message_id }).catch((err) => console.error("delete original failed:", err));
 }
 
