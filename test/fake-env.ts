@@ -17,8 +17,8 @@ export function fakeEnv(vars: Partial<Env> = {}): Env & { store: Map<string, str
 	const BUCKET = {
 		get: async (k: string) => (store.has(k) ? object(k) : null),
 		head: async (k: string) => (store.has(k) ? {} : null),
-		put: async (k: string, v: string, opts?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }) => {
-			store.set(k, v);
+		put: async (k: string, v: string | ArrayBuffer, opts?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }) => {
+			store.set(k, typeof v === "string" ? v : new TextDecoder().decode(v)); // тіло запису з вебхука — ArrayBuffer
 			if (opts) options.set(k, opts);
 		},
 		delete: async (k: string | string[]) => [k].flat().forEach((x) => (store.delete(x), options.delete(x))),
