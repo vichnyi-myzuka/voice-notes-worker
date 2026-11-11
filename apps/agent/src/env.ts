@@ -16,5 +16,8 @@ export interface Env {
 	CLAUDE_CODE_OAUTH_TOKEN?: string;
 	// Модель Claude Agent (opus, sonnet, haiku, fable); за замовчуванням sonnet
 	CLAUDE_MODEL?: string;
+	// Тривалості в мс (за замовчуванням 1 година простою і 5 хвилин між знімками); коротші значення — для перевірки на Cloudflare
+	AGENT_INACTIVITY_MS?: string;
+	AGENT_SNAPSHOT_INTERVAL_MS?: string;
 	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access
 }
