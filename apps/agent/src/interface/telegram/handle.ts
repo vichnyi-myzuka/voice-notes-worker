@@ -73,7 +73,9 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		const followUp = await transcribe(env, llm, file, text);
 		if (!followUp) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 		await agent.followUp(id, followUp);
-		await agent.watch(id, { chatId: chat, url }).catch((err) => console.error("watch failed:", err));
+		await agent.watch(id, { chatId: chat, url, postId: msg.reply_to_message?.message_id }).catch((err) => console.error("watch failed:", err));
+		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), робота видна за 👨‍💻 на пості, на який відповіли.
+		await tg(env, "deleteMessage", { chat_id: chat, message_id: msg.message_id }).catch((err) => console.error("delete follow-up failed:", err));
 		return;
 	}
 
@@ -90,11 +92,11 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const repo = withRepo ? withRepo[1] : route.repo;
 
 	const { url } = await agent.start(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }) });
-	await agent.watch(id, { chatId: chat, url }).catch((err) => console.error("watch failed:", err));
 	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
 	const shown = inChannel || file ? `${file ? "🗣 " : ""}${prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt}\n\n` : "";
 	// Без прев'ю: інакше Telegram показує картку сторінки за Access.
-	await tg(env, "sendMessage", { chat_id: chat, text: `${shown}${repo ? `📦 ${repo}\n` : ""}🔗 ${url}`, link_preview_options: { is_disabled: true } });
+	const post = await tg(env, "sendMessage", { chat_id: chat, text: `${shown}${repo ? `📦 ${repo}\n` : ""}🔗 ${url}`, link_preview_options: { is_disabled: true } });
+	await agent.watch(id, { chatId: chat, url, postId: post.message_id }).catch((err) => console.error("watch failed:", err));
 	if (inChannel) await tg(env, "deleteMessage", { chat_id: chat, message_id: msg.message_id }).catch((err) => console.error("delete original failed:", err));
 }
 

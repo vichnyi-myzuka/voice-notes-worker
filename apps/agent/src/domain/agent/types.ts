@@ -19,7 +19,8 @@ export type SessionReport = {
 };
 
 // Куди повідомити про завершення роботи сесії (чат і посилання на неї).
-export type WatchTarget = { chatId: number; url: string };
+// postId: повідомлення чату з посиланням на сесію; поки сесія працює, на ньому стоїть 👨‍💻, після завершення реакцію знімає агент
+export type WatchTarget = { chatId: number; url: string; postId?: number };
 
 // Стан спільного контейнера для діагностики: що тримає його живим і коли був останній знімок.
 export type ComputerInfo = {
