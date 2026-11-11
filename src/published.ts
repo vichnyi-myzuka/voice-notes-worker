@@ -1,7 +1,8 @@
 import type { Env } from "./index";
 import { buildCaption, CAPTION_MAX, taskLinks, textNote, TEXT_CAPTION_MAX, type Meta } from "./note";
 import { NO_PREVIEW, tg } from "./telegram";
-import { getInTodoist, withAppliedRecurrence, type TriageItem } from "./todoist";
+import { getInTodoist, withAppliedRecurrence } from "./tasks";
+import type { TriageItem } from "./todoist";
 
 // Опублікована нотатка: запис у R2 для редагування (`notes/<id>.json`, 7 днів за lifecycle бакета)
 // і її повідомлення в каналі. Тут живуть ключі R2 і оновлення повідомлення; решта коду їх не знає.
@@ -11,7 +12,6 @@ export type Note = {
 	edits: string[]; // інструкції попередніх редагувань
 	meta: Meta;
 	triage: TriageItem[] | null;
-	actionId?: string;
 	messageId: number;
 	recordedTs: number;
 	text?: boolean; // текстова нотатка: повідомлення без аудіо, оригінал — у цитаті під підписом

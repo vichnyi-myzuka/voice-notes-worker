@@ -28,7 +28,8 @@ src/llm.ts        askJson: structured output gpt-6-luna → fallback Gemma 4 (Wo
 src/published.ts  опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / showNote / removeNote
 src/steps.ts      openSteps: крок = поле State, результат у R2, onFinalFailure для деградації на lastAttempt
 src/note.ts       Meta, підпис (buildCaption / fitCaption), хештеги, посилання на задачі, текстові нотатки
-src/todoist.ts    знімок Todoist, тріаж, валідація полів задач, planOps / buildCommands, applyAction, вкладення
+src/todoist.ts    знімок Todoist, тріаж, валідація полів задач
+src/tasks.ts      задачі нотатки в Todoist: syncTasks (ops → actionId → todoistApplied), planOps / buildCommands / applyOps, стан InTodoist, вкладення
 src/setup.ts      команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»)
 src/telegram.ts   Bot API, прийом голосових / тексту / фото з вебхука
 ```
