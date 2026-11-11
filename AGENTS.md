@@ -23,7 +23,8 @@
 ## Код
 
 ```
-src/index.ts      вебхук і producer, consumer (processNote / processEdit), DLQ, промпти summary й редагування, runSetup, підписи
+src/index.ts      вебхук і producer, consumer (processNote / processEdit), DLQ, runSetup, підписи
+src/understand.ts розуміння запису: transcribe (Whisper), readImage (vision), summarize, editNote — промпти й схеми
 src/llm.ts        askJson: structured output gpt-6-luna → fallback Gemma 4 (Workers AI), зображення (vision)
 src/published.ts  опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / showNote / removeNote
 src/steps.ts      openSteps: крок = поле State, результат у R2, onFinalFailure для деградації на lastAttempt

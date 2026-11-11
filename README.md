@@ -14,7 +14,8 @@ Telegram ──відповідь (голос/текст) на нотатку─
 
 ```
 wrangler.toml          bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE
-src/index.ts           producer, consumer, DLQ consumer, summary, редагування, автододавання в Todoist, тип Env
+src/index.ts           producer, consumer, DLQ consumer, автододавання в Todoist, тип Env
+src/understand.ts      розуміння запису: Whisper, vision, summary, правка нотатки (промпти й схеми)
 src/llm.ts             виклик зі structured output: gpt-6-luna, при збої Gemma 4
 src/todoist.ts         Todoist API (/sync), знімок, тріаж, валідація полів задач
 src/tasks.ts           задачі нотатки в Todoist: стан (InTodoist), planOps, buildCommands, applyOps, syncTasks (кроки ops → actionId → todoistApplied), вкладення
