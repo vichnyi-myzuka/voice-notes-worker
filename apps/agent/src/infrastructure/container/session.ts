@@ -4,6 +4,7 @@ import type { Env } from "../../env";
 import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { editChat, sendChat } from "../chat";
 import { parseConnections } from "./connections";
+import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
 import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
@@ -411,8 +412,8 @@ export class AgentSession extends DurableObject<Env> {
 		await interrupt(this.opencode(), tracked.ocId);
 	}
 
-	// Видалення сесії: історія в OpenCode, worktree (або порожня тека) і записи в сховищі. Гілка agent/<назва> лишається в спільному
-	// клоні, щоб не втратити закомічену роботу; незакомічене зникає. Невідома сесія: нічого не робимо.
+	// Видалення сесії: історія в OpenCode, worktree (або порожня тека) і записи в сховищі. Гілка agent/<назва> видаляється, якщо роботу не
+	// втрачено (див. CLEANUP); незакомічене зникає. Невідома сесія: нічого не робимо.
 	async remove(id: string): Promise<void> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked) return;
@@ -421,7 +422,7 @@ export class AgentSession extends DurableObject<Env> {
 		await deleteSession(this.opencode(), tracked.ocId);
 		await this.serial(async () => {
 			const proc = await this.ctx.container!.exec(
-				["sh", "-c", 'dir=/workspace/sessions/"$1"; if [ -e "$dir/.git" ]; then common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir) && git -C "$common/.." worktree remove --force "$dir"; fi; rm -rf "$dir"', "sh", tracked.folder ?? id],
+				["sh", "-c", CLEANUP, "sh", tracked.folder ?? id],
 				{ cwd: "/workspace", env: { HOME: "/root" } },
 			);
 			const out = await proc.output();

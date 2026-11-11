@@ -138,7 +138,7 @@ async function sessionCommand(env: BotEnv, chat: number, agent: Agent, id: strin
 	if (command === "/delete") {
 		await agent.remove(id);
 		if (postId) await tg(env, "deleteMessage", { chat_id: chat, message_id: postId }).catch((err) => console.error("delete post failed:", err));
-		return void (await tgSendMessage(env, chat, "🗑 Сесію видалено (гілка agent/… у репозиторії, якщо була, лишилась)."));
+		return; // підтвердження не шлемо: пост і сама команда зникають з чату
 	}
 	const report = await agent.report(id);
 	if (command === "/stop") {
