@@ -89,6 +89,7 @@ export class AgentSession extends DurableObject<Env> {
 	private async launch(snapshot: SavedSnapshot | undefined): Promise<void> {
 		const container = this.ctx.container!;
 		const repo = await this.ctx.storage.get<string>("repo");
+		console.log(snapshot ? `container start from snapshot ${snapshot.id}` : "container start from image");
 		container.start({
 			...(snapshot ? { containerSnapshot: { id: snapshot.id } } : { image: container.images.base }),
 			instance: "standard-1",
@@ -143,6 +144,7 @@ export class AgentSession extends DurableObject<Env> {
 			const startedAt = Date.now();
 			const snapshot = await container.snapshotContainer({ name: "session" });
 			await this.ctx.storage.put("snapshot", { id: snapshot.id, image: container.images.base, at: startedAt } satisfies SavedSnapshot);
+			console.log(`snapshot saved: ${snapshot.id}, ${snapshot.size} bytes, ${Date.now() - startedAt} ms`);
 		} catch (err) {
 			// Зайнятий агент або тимчасова помилка: повторимо наступного разу.
 			console.error("snapshot skipped:", err);
