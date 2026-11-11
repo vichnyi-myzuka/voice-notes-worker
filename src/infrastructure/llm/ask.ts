@@ -1,13 +1,9 @@
+import type { Json } from "../../domain/json";
+import type { JsonRequest } from "../../domain/llm";
 import type { Env } from "../env";
 
-// JSON-значення: відповіді моделей і схеми structured output.
-export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
-export type JsonObject = { [key: string]: Json };
-
-// Звужує значення з відповіді моделі до об'єкта.
-export const isJsonObject = (v: Json | undefined): v is JsonObject => typeof v === "object" && v !== null && !Array.isArray(v);
-
-// Повертає розібраний результат або null, якщо не впоралась жодна модель.
+// Один запит зі structured output: спершу gpt-6-luna, при будь-якій помилці
+// (API, немає кредитів/ключа, невалідна відповідь) — Gemma 4 у Workers AI.
 export async function askJson<T>(env: Env, req: JsonRequest, parse: (text: string) => T): Promise<T | null> {
 	const models: [string, (env: Env, req: JsonRequest) => Promise<string>][] = [
 		["gpt-6-luna", askLuna],
@@ -27,17 +23,6 @@ export async function askJson<T>(env: Env, req: JsonRequest, parse: (text: strin
 	return null;
 }
 
-// Один запит зі structured output: спершу gpt-6-luna, при будь-якій помилці
-// (API, немає кредитів/ключа, невалідна відповідь) — Gemma 4 у Workers AI.
-export type JsonRequest = {
-	name: string; // ім'я схеми та мітка в логах
-	system: string;
-	user: string;
-	schema: JsonObject;
-	reasoning?: "none" | "low"; // для Luna; Gemma завжди без reasoning
-	image?: { base64: string; type: string }; // зображення до user-повідомлення (обидві моделі вміють vision)
-};
-
 // ArrayBuffer → base64 частинами (String.fromCharCode з великим масивом переповнює стек).
 export function toBase64(data: ArrayBuffer): string {
 	const bytes = new Uint8Array(data);
@@ -46,13 +31,9 @@ export function toBase64(data: ArrayBuffer): string {
 	return btoa(s);
 }
 
-export const dataUrl = (image: NonNullable<JsonRequest["image"]>) => `data:${image.type};base64,${image.base64}`;
+export const dataUrl = (image: NonNullable<JsonRequest["image"]>) => `data:${image.type};base64,${toBase64(image.data)}`;
 
 // Витягує перший JSON-об'єкт з відповіді моделі.
-export function parseJsonObject(text: string): JsonObject {
-	return JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
-}
-
 export async function askLuna(env: Env, req: JsonRequest): Promise<string> {
 	if (!env.OPENAI_KEY) throw new Error("OPENAI_KEY is not set");
 	const res = await fetch("https://api.openai.com/v1/responses", {

@@ -1,4 +1,4 @@
-import { isJsonObject, parseJsonObject, type Json, type JsonObject } from "../../infrastructure/llm";
+import { isJsonObject, parseJsonObject, type Json, type JsonObject } from "../json";
 import type { TriageItem } from "../tracker";
 import type { Meta } from "./types";
 

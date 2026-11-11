@@ -6,6 +6,7 @@ export type {
 	SetupChange,
 	SetupPlan,
 	SetupWorld,
+	TaskLedger,
 	TaskOp,
 	TaskTracker,
 	TrackedTasks,

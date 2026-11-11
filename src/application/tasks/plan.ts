@@ -1,4 +1,3 @@
-import type { Env } from "../../infrastructure/env";
 import type { TaskOp, TrackedTasks, TriageItem } from "../../domain/tracker";
 
 export const sameItem = (a: TriageItem, b: TriageItem) =>
@@ -42,17 +41,6 @@ export function planOps(items: TriageItem[], tracked: TrackedTasks): TaskOp[] {
 		if (!kept.has(key)) ops.push({ key, item: null, id: prev.id });
 	}
 	return ops;
-}
-
-export const trackedTasksKey = (noteId: string) => `notes/${noteId}.tasks.json`;
-
-// До перейменування ключ мав назву трекера: нотатки, створені раніше (живуть 7 днів), читаємо за старим.
-// TODO: прибрати fallback, коли всі такі нотатки застаріють.
-const legacyKey = (noteId: string) => `notes/${noteId}.todoist.json`;
-
-export async function getTrackedTasks(env: Env, noteId: string): Promise<TrackedTasks> {
-	const stored = (await env.BUCKET.get(trackedTasksKey(noteId))) ?? (await env.BUCKET.get(legacyKey(noteId)));
-	return (await stored?.json<TrackedTasks>()) ?? {};
 }
 
 // Підпис показує повтор лише тих задач, які в Todoist справді з повтором.

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { labelRule, planSetup, setLabelRule, setupReport, validateSetup } from "../src/application/setup";
 import type { SetupPlan, SetupWorld } from "../src/domain/tracker";
+import { workersLlm } from "../src/infrastructure/llm";
 import { RULES_PROJECT, setupCommands, todoistTracker } from "../src/infrastructure/todoist";
 import { fakeEnv } from "./fake-env";
 
@@ -237,13 +238,13 @@ describe("planSetup", () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
 		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
-		expect(await planSetup(env, todoistTracker(env), "Купити молоко і подзвонити Іллі", false)).toEqual({ changes: [] });
+		expect(await planSetup(workersLlm(env), todoistTracker(env), "Купити молоко і подзвонити Іллі", false)).toEqual({ changes: [] });
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 	it("без TODOIST_TOKEN — теж порожній план без fetch", async () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal("fetch", fetchMock);
-		expect(await planSetup(fakeEnv(), todoistTracker(fakeEnv()), "створи проєкт Спорт", false)).toEqual({ changes: [] });
+		expect(await planSetup(workersLlm(fakeEnv()), todoistTracker(fakeEnv()), "створи проєкт Спорт", false)).toEqual({ changes: [] });
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

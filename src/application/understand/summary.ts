@@ -1,5 +1,4 @@
-import type { Env } from "../../infrastructure/env";
-import { askJson } from "../../infrastructure/llm";
+import type { Llm } from "../../domain/llm";
 import { parseMeta, type Meta } from "../../domain/note";
 
 export const SYSTEM_PROMPT = `You write a title, a summary, key ideas and tasks for a voice note transcript.
@@ -30,11 +29,10 @@ export const SUMMARY_SCHEMA = {
 	additionalProperties: false,
 };
 
-export async function summarize(env: Env, transcript: string, recordedAt: string, lastAttempt: boolean): Promise<Meta> {
+export async function summarize(llm: Llm, transcript: string, recordedAt: string, lastAttempt: boolean): Promise<Meta> {
 	if (!transcript) return { title: "", summary: "", ideas: [], tasks: [], discard: "empty" };
 
-	const meta = await askJson(
-		env,
+	const meta = await llm.askJson(
 		{ name: "voice_note", system: SYSTEM_PROMPT, user: `<transcript>\n${transcript}\n</transcript>`, schema: SUMMARY_SCHEMA },
 		parseMeta,
 	);

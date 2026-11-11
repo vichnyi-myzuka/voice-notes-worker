@@ -17,23 +17,27 @@ wrangler.toml          bindings: R2, Queue producer/consumer, DLQ, AI; vars TIME
 src/index.ts           entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
 src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
   interface/           точки входу
-    inbox/             прийом записів: вебхук каналу (через Channel) і завантаження з шорткату → R2 + черга
+    inbox/             HTTP: вебхук каналу (через Channel) і завантаження з шорткату
     queue/             споживачі черги й DLQ
   application/         сценарії
+    intake/            acceptIncoming (нова нотатка чи правка) і enqueueNote: запис → R2 + черга
     pipeline/          processNote / processEdit — кроки обробки запису, showNote; State зі слайсів модулів
-    understand/        transcribe (Whisper), readImage (vision), summarize, editNote — промпти й схеми
+    understand/        readImage (vision), summarize, editNote — промпти й схеми (моделі через порт Llm)
     setup/             команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»), runSetup
-    tasks/             задачі нотатки в трекері: syncTasks (ops → actionId → tasksApplied), planOps, applyOps, стан TrackedTasks
+    tasks/             задачі нотатки в трекері: syncTasks (ops → actionId → tasksApplied), planOps, applyOps, стан TrackedTasks (порт TaskLedger)
   domain/              правила й дані предметної області
     channel/           порт каналу (Channel): як записи приходять і нотатки публікуються; Telegram — лише адаптер
     tracker/           порт трекера задач (TaskTracker) і нейтральні типи (TriageItem, TaskOp, SetupPlan…); Todoist — лише адаптер
     note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
-    published/         опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / removeNote
+    published/         опублікована нотатка: Note і порт NoteRepository
+    llm/               порт Llm: askJson (structured output) і transcribe (голос → текст)
+    json/              Json, JsonObject, parseJsonObject — спільні для всіх шарів
     recording/         ключі запису в R2, ліміти розміру, час запису
   infrastructure/      зовнішні сервіси й сховище
     env/               Env і Job
     steps/             openSteps: крок = поле стану, результат у R2, onFinalFailure для деградації на lastAttempt
-    llm/               askJson: structured output gpt-6-luna → fallback Gemma 4 (Workers AI)
+    llm/               адаптер Llm: gpt-6-luna → fallback Gemma 4 (Workers AI), Whisper
+    r2/                адаптери NoteRepository і TaskLedger (нотатки та задачі нотаток у R2)
     telegram/          адаптер Channel для Telegram: Bot API, вебхук, прийом голосових / тексту / фото, реакції, сутності тексту
     security/          safeEqual (порівняння секретів)
     todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
@@ -43,12 +47,15 @@ AGENTS.md              правила роботи з репозиторієм �
 
 ### Архітектура
 
-Залежності йдуть згори вниз: `interface` → `application` → `domain`; `infrastructure` реалізує порти домену. Ядро (`interface`, `application`, `domain`) не знає ні про Telegram, ні про Todoist, лише про два порти:
+Залежності йдуть згори вниз: `interface` → `application` → `domain`; `infrastructure` реалізує порти домену. Ядро (`interface`, `application`, `domain`) не знає ні про Telegram, ні про Todoist, лише про порти:
 
 - **`Channel`** (`domain/channel`): звідки приходять записи й куди публікуються нотатки. Реалізація: `infrastructure/telegram` (вебхук, Bot API, сутності тексту, реакції, ліміти підпису).
 - **`TaskTracker`** (`domain/tracker`): знімок проєктів і міток, тріаж, створення й оновлення задач, налаштування проєктів і міток. Реалізація: `infrastructure/todoist` (`/sync`, команди, промпти й валідація полів задач).
 
-Адаптери створюються в `src/index.ts` і передаються вниз як `{ channel, tracker }`. Щоб підключити інший канал чи трекер, потрібно реалізувати відповідний інтерфейс; промпти тріажу при цьому належать адаптеру, бо описують модель конкретного трекера.
+- **`NoteRepository`** і **`TaskLedger`** (`domain/published`, `domain/tracker`): збереження нотаток і задач нотаток. Реалізація: `infrastructure/r2`.
+- **`Llm`** (`domain/llm`): structured output і розпізнавання голосу. Реалізація: `infrastructure/llm`.
+
+Адаптери створюються в `src/index.ts` і передаються вниз як `{ channel, tracker, notes, ledger, llm }`. Домен не імпортує `infrastructure`. Запис у R2 (аудіо, `<key>.state.json`) лишається в `application` через `Env`. Щоб підключити інший канал чи трекер, потрібно реалізувати відповідний інтерфейс; промпти тріажу при цьому належать адаптеру, бо описують модель конкретного трекера.
 
 Службові дані каналу (`fileId`, `deleteChatId`…) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є. Ключ списку задач нотатки в R2 — `notes/<id>.tasks.json` (старі нотатки з ключем `.todoist.json` читаються за запасним шляхом, поки не застаріють).
 

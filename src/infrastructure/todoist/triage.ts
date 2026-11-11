@@ -1,7 +1,7 @@
 import { promptDate } from "../../domain/recording";
 import type { TrackerSnapshot, TriageItem } from "../../domain/tracker";
-import type { Env } from "../env";
-import { askJson, isJsonObject, parseJsonObject } from "../llm";
+import type { Llm } from "../../domain/llm";
+import { isJsonObject, parseJsonObject } from "../../domain/json";
 import { TASK_FIELDS_HELP, taskFieldsSchema, taskRulesBlock, taskValidator } from "./fields";
 
 
@@ -17,7 +17,7 @@ If the author says they are waiting for someone or something related to a task, 
 Follow the author's rules in <rules>.`;
 
 export async function triage(
-	env: Env,
+	llm: Llm,
 	transcript: string,
 	tasks: string[],
 	snap: TrackerSnapshot,
@@ -50,7 +50,7 @@ export async function triage(
 	].join("\n\n");
 	const validate = taskValidator(snap, recordedAt, timeZone);
 
-	return askJson(env, { name: "todoist_triage", system: TRIAGE_SYSTEM, user, schema, reasoning: "low" }, (text) => {
+	return llm.askJson({ name: "todoist_triage", system: TRIAGE_SYSTEM, user, schema, reasoning: "low" }, (text) => {
 		const raw = parseJsonObject(text).items;
 		if (!Array.isArray(raw)) throw new Error("no items");
 		return raw
