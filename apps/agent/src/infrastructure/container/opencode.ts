@@ -103,3 +103,38 @@ export async function lastAssistant(oc: Opencode, sessionId: string): Promise<{ 
 	const text = (msg?.content ?? []).filter((p) => p.type === "text" && p.text).map((p) => p.text).at(-1) ?? "";
 	return { text: text.trim(), error: msg?.error?.message };
 }
+
+// Подія сервера OpenCode (SSE `/api/event`): тип і, якщо стосується сесії, її id.
+export type OpencodeEvent = { type: string; data?: { sessionID?: string } };
+
+// Читає потік подій, поки він не закінчиться чи не спрацює signal. Для кожної події викликає onEvent; для службового рядка
+// (heartbeat) викликає onEvent(undefined), щоб читач міг вирішити, чи потік ще потрібен.
+export async function readEvents(oc: Opencode, signal: AbortSignal, onEvent: (event: OpencodeEvent | undefined) => Promise<void>): Promise<void> {
+	const res = await oc.fetch("/api/event", { headers: { accept: "text/event-stream" }, signal });
+	if (!res.ok || !res.body) {
+		await res.body?.cancel();
+		throw new Error(`opencode events: ${res.status}`);
+	}
+	const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+	let buffer = "";
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) return;
+		buffer += value;
+		for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
+			const block = buffer.slice(0, end);
+			buffer = buffer.slice(end + 2);
+			const line = block.split("\n").find((l) => l.startsWith("data: "));
+			if (!line) {
+				await onEvent(undefined);
+				continue;
+			}
+			try {
+				await onEvent(JSON.parse(line.slice(6)) as OpencodeEvent);
+			} catch (err) {
+				if (signal.aborted) return;
+				console.error("event handling failed:", err);
+			}
+		}
+	}
+}

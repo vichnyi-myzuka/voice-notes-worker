@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -82,6 +82,9 @@ function fakeContainer() {
 				if (req.headers.has("origin")) opencode.origins.push(req.headers.get("origin")!);
 				if (req.headers.has("x-opencode-ticket")) opencode.tickets.push(req.headers.get("x-opencode-ticket")!);
 				const ok = (data: unknown) => Response.json({ data });
+				if (path === "/api/event") {
+					return new Response(new ReadableStream<Uint8Array>({ start: (c) => void opencode.events.push(c) }), { headers: { "content-type": "text/event-stream" } });
+				}
 				if (path === "/api/info") return Response.json({ version: "2.2.7" });
 				if (req.method === "POST" && path === "/api/session") {
 					const body = await req.json<{ title: string; location: { directory: string }; model?: unknown }>();
@@ -468,6 +471,64 @@ describe("AgentSession", () => {
 			expect(sent).toEqual([{ chat_id: 5, text: `✅ Готово\n\nЗробив PR: <a href="https://github.com/me/app/pull/7">me/app#7</a>\n\n🔗 <a href="${TARGET.url}">Відкрити сесію</a>`, parse_mode: "HTML", link_preview_options: { is_disabled: true } }]);
 			await session.alarm();
 			expect(sent).toHaveLength(1); // спостереження знято
+		});
+
+		describe("події OpenCode (SSE)", () => {
+			const flush = async () => {
+				for (let i = 0; i < 20; i++) await Promise.resolve();
+				await new Promise((r) => setTimeout(r, 0));
+			};
+			const done = { type: "session.execution.succeeded", data: { sessionID: ocId } };
+
+			it("підсумок приходить одразу по події завершення, без alarm; повторне опитування його не дублює", async () => {
+				const { session, opencode } = await watched();
+				expect(opencode.events).toHaveLength(1); // підписка відкрита
+				opencode.busy.clear();
+				opencode.info[ocId] = { outcome: "succeeded" };
+				opencode.lastText = "Готово за подією";
+				opencode.emit(done);
+				await flush();
+				expect(sent.filter((c) => String(c.text ?? "").includes("Готово за подією"))).toHaveLength(1);
+				await session.alarm();
+				expect(sent.filter((c) => String(c.text ?? "").includes("Готово за подією"))).toHaveLength(1);
+			});
+
+			it("швидка сесія: подія завершення працює, навіть коли опитування її ще не бачило працюючою", async () => {
+				const { opencode } = await watched();
+				opencode.busy.clear();
+				opencode.lastText = "Миттєво";
+				opencode.emit({ type: "session.execution.started", data: { sessionID: ocId } });
+				opencode.emit(done);
+				await flush();
+				expect(sent.some((c) => String(c.text ?? "").includes("Миттєво"))).toBe(true);
+			});
+
+			it("чужі сесії й інші події ігноруються", async () => {
+				const { opencode } = await watched();
+				opencode.emit({ type: "session.execution.succeeded", data: { sessionID: "ses_other" } });
+				opencode.emit({ type: "session.step.started", data: { sessionID: ocId } });
+				await flush();
+				expect(sent.filter((c) => "text" in c && !("reaction" in c))).toEqual([]);
+			});
+
+			it("потік обірвався: наступне опитування відкриває його знову; без спостережень потік закривається", async () => {
+				const { session, opencode } = await watched();
+				opencode.events[0].close();
+				await flush();
+				await session.alarm();
+				expect(opencode.events).toHaveLength(2);
+			});
+
+			it("зупинка за лімітом показує причину, а не «Зупинено» від події", async () => {
+				const { session, opencode } = await watched({ AGENT_MAX_COST_USD: "1" });
+				opencode.info[ocId] = { cost: 2 };
+				await session.alarm();
+				opencode.emit({ type: "session.execution.interrupted", data: { sessionID: ocId } });
+				await flush();
+				const texts = sent.map((c) => String(c.text ?? "")).filter(Boolean);
+				expect(texts).toHaveLength(1);
+				expect(texts[0]).toContain("вартість $2.00");
+			});
 		});
 
 		it("👨‍💻 стоїть на пості, поки сесія працює, і знімається по завершенню (і коли її зупинили вручну)", async () => {
