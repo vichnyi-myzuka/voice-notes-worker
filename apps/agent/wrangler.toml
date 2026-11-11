@@ -18,6 +18,12 @@ scheduling_policy = "durable_object"
 [containers.images.base]
 dockerfile = "./container/Dockerfile"
 
+# SSH у контейнер: `npx wrangler containers ssh <INSTANCE_ID>` (інстанс має працювати; id: `wrangler containers instances`).
+# Публічний ключ не секрет. Потрібен лише ssh-ed25519.
+[[containers.authorized_keys]]
+name = "owner"
+public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAO9Obaqo+AAXqqVhu7/Jv9mUE2hGRX95tZ+mHj9dbYY"
+
 [[durable_objects.bindings]]
 name = "AGENT_SESSION"
 class_name = "AgentSession"

@@ -2,7 +2,6 @@ import type { Agent } from "../../domain/agent";
 import type { Env } from "../../env";
 import { verifyAccess } from "../../infrastructure/access";
 
-const COOKIE = "agent_session";
 const ID = /^[a-z0-9-]{8,64}$/;
 const REPO = /^[\w-][\w.-]*\/[\w-][\w.-]*$/;
 
@@ -17,9 +16,9 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   GET  /api/sessions/<id>                   → {status}: working | idle | stopped
 //   POST /api/sessions/<id>/messages {text}   → уточнення в ту саму сесію
 //   POST /api/sessions/<id>/abort             → зупиняє поточну роботу агента
-//   GET  /s/<id>                              → запам'ятовує сесію в cookie й веде у веб-інтерфейс OpenCode
-//   будь-що інше                              → проксі у веб-інтерфейс сесії з cookie
-// Веб-інтерфейс OpenCode використовує абсолютні шляхи, тому сесію вибирає cookie, а не префікс шляху.
+//   POST /api/computer/snapshot                      → примусово зберігає диск контейнера (після змін поза сесіями, наприклад через SSH)
+//   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
+//   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)
 export async function handleFetch(req: Request, env: Env, agent: Agent): Promise<Response> {
 	if (!env.LOCAL_DEV) {
 		if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return new Response("Access is not configured", { status: 503 });
@@ -48,26 +47,31 @@ export async function handleFetch(req: Request, env: Env, agent: Agent): Promise
 	// до воркера («Unrecognised route»). Підміняємо його порожнім: без fetch-обробника все йде через мережу.
 	if (url.pathname === "/sw.js") return new Response(NEUTRAL_SW, { headers: { "content-type": "text/javascript", "cache-control": "no-store" } });
 
-	const current = req.headers.get("cookie")?.match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`))?.[1];
+	if (req.method === "POST" && url.pathname === "/api/computer/snapshot") {
+		return agent.snapshot().then(
+			(info) => json(info),
+			(err: unknown) => json({ error: err instanceof Error ? err.message : String(err) }, 409),
+		);
+	}
+
 	const link = url.pathname.match(/^\/s\/([^/]+)\/?$/);
 	if (link) {
 		if (!ID.test(link[1])) return new Response("Bad session id", { status: 400 });
-		// Усі сесії на одному домені, а інтерфейс OpenCode тримає в localStorage маршрути й вкладки попередньої сесії:
-		// у новому контейнері їх немає («Unrecognised route»). Тому при зміні сесії чистимо стан браузера.
-		const headers = new Headers({
-			"content-type": "text/html; charset=utf-8",
-			"set-cookie": `${COOKIE}=${link[1]}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=2592000`,
-			"cache-control": "no-store",
-		});
-		if (current !== link[1]) headers.set("clear-site-data", '"storage"');
-		// Сторінка, а не 302: заголовок надійніше обробляється у звичайній відповіді.
-		return new Response('<!doctype html><meta charset="utf-8"><script>location.replace("/")</script><a href="/">Відкрити</a>', { headers });
+		const ocId = await agent.link(link[1]);
+		if (!ocId) return new Response("Unknown session", { status: 404 });
+		return new Response(null, { status: 302, headers: { location: sessionPath(url.origin, ocId), "cache-control": "no-store" } });
 	}
 
-	const id = current;
-	if (!id || !ID.test(id)) return new Response("No session selected. Open the session link from the chat.", { status: 404 });
-	return agent.serve(id, req);
+	// Service worker OpenCode кешує оболонку застосунку й віддає її на будь-яку адресу, зокрема /s/<id>, так що запит не доходить
+	// до воркера («Unrecognised route»). Підміняємо його порожнім: без fetch-обробника все йде через мережу.
+	if (url.pathname === "/sw.js") return new Response(NEUTRAL_SW, { headers: { "content-type": "text/javascript", "cache-control": "no-store" } });
+
+	return agent.serve(req);
 }
+
+// Сторінка сесії в інтерфейсі OpenCode: /server/<ключ сервера>/session/<id>, де ключ — base64url адреси сервера (без «=»).
+// Для сервера на тому самому домені це origin; перевірено лише за кодом інтерфейсу, тож перевіряється в браузері.
+const sessionPath = (origin: string, ocId: string) => `/server/${btoa(origin).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")}/session/${ocId}`;
 
 async function create(req: Request, agent: Agent): Promise<Response> {
 	const body = await req.json<{ prompt?: string; repo?: string; id?: string }>().catch(() => null);

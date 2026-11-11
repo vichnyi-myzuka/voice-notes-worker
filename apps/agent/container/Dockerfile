@@ -19,7 +19,9 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
 	&& npm cache clean --force
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY git-auth.sh /usr/local/lib/git-auth.sh
+COPY session-prep /usr/local/bin/session-prep
+RUN chmod +x /entrypoint.sh /usr/local/bin/session-prep
 
 WORKDIR /workspace
 EXPOSE 4096
