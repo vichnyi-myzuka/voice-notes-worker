@@ -220,7 +220,7 @@ describe("вебхук Telegram", () => {
 			await send(msg({ text: "/delete", reply_to_message: botPost() }, 8));
 			expect(sessions.has(SID)).toBe(false);
 			await send(msg({ text: "/status", reply_to_message: botPost() }, 9));
-			expect(replies()).toEqual(["🗑 Сесію видалено (гілка agent/… у репозиторії, якщо була, лишилась).", "⚠️ Сесію не знайдено."]);
+			expect(replies()).toEqual(["⚠️ Сесію не знайдено."]); // про саме видалення бот мовчить
 		});
 
 		describe("репозиторій і назва з вільної мови", () => {

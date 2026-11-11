@@ -352,7 +352,10 @@ describe("AgentSession", () => {
 		expect(cleanup.slice(0, 2)).toEqual(["sh", "-c"]);
 		expect(cleanup.at(-1)).toBe(ID); // id іде аргументом, а не в тексті скрипта
 		expect(cleanup[2]).toContain("worktree remove --force");
-		expect(cleanup[2]).not.toContain("branch -D"); // закомічена робота лишається
+		// гілка видаляється лише якщо її кінчик уже на GitHub (origin/<гілка>) або збігається з головною: інакше робота лишається
+		expect(cleanup[2]).toContain("branch -D");
+		expect(cleanup[2]).toContain('"$tip" = "$pushed"');
+		expect(cleanup[2]).toContain("agent/*");
 		expect(await session.link(ID)).toBeUndefined();
 		expect([...store.keys()].filter((k) => k.startsWith("watch:") || k.startsWith("session:"))).toEqual([]);
 	});
