@@ -2,10 +2,11 @@ import type { Env } from "../../infrastructure/env";
 import { askJson } from "../../infrastructure/llm";
 import { parseEditedNote, plainTasks, type Meta } from "../../domain/note";
 import type { Note } from "../../domain/published";
-import { EDIT_TASKS_HELP, promptDate, taskFieldsSchema, taskRulesBlock, taskValidator, type TodoistSnapshot, type TriageItem } from "../../infrastructure/todoist";
+import { promptDate } from "../../domain/recording";
+import type { TaskTracker, TrackerSnapshot, TriageItem } from "../../domain/tracker";
 import { SUMMARY_SCHEMA, SYSTEM_PROMPT } from "./summary";
 
-export const EDIT_SYSTEM = `${SYSTEM_PROMPT}
+export const editSystem = (tracker: TaskTracker) => `${SYSTEM_PROMPT}
 
 Editing mode: you get an existing note (<note> JSON), its original transcript, earlier edit instructions and a new spoken edit instruction from the author.
 Return the full updated note. Apply exactly what the instruction asks (rename, add, remove, reword, change dates, projects, labels or priority of tasks, etc.) and keep everything else unchanged.
@@ -13,16 +14,17 @@ Tasks: return every task that should remain, in order. An existing task keeps it
 Keep the summary and ideas consistent with the edited note: if the instruction changes something they mention (a date, a removed task), update that part, otherwise leave them as is.
 Removing a property of a task ("прибери повтор", "зроби разовою", "без дати", "прибери нагадування", "зніми мітку") keeps the task and clears only that field (removing a recurrence keeps due as the next occurrence, so the task stays a one-time task on that date); remove a task only when the instruction asks to remove the task itself.
 Change a task's title only when the instruction asks to rename or reword it. Moving a task in time ("перенеси на п'ятницю", "зроби на сьогодні") changes only due/deadline and never turns into a title like "Перенести …".
-${EDIT_TASKS_HELP}
+${tracker.prompts.help}
 Commands in the instruction that change the Todoist setup (create, rename or delete a project or a label, change its description) are carried out separately and are already applied: never turn them into tasks; if the instruction has nothing else, return the note unchanged with discard "none". If a task's project or label was renamed, use the new name from <projects> / <labels>.
 Relative dates in the instruction ("сьогодні", "завтра", "в п'ятницю") are counted from the edit date; in the original transcript, from the recording date.
 In editing mode, discard means: "delete" if the author asks to delete the whole note ("видали нотатку", "видали цей запис повністю", "видали все") — not when they ask to remove one or some tasks, that is a normal edit; "cancelled" if the author cancels this edit itself ("скасуй", "нічого не міняй"); "empty" if the instruction has no meaningful content; otherwise "none".`;
 
 export async function editNote(
 	env: Env,
+	tracker: TaskTracker,
 	note: Note,
 	instruction: string,
-	snap: TodoistSnapshot | null,
+	snap: TrackerSnapshot | null,
 ): Promise<{ meta: Meta; triage: TriageItem[] | null } | null> {
 	const { title, summary, ideas } = note.meta;
 	const oldTasks = note.triage ?? plainTasks(note.meta.tasks);
@@ -47,7 +49,7 @@ export async function editNote(
 	);
 	const taskSchema = {
 		type: "object",
-		properties: { key: { type: "string" }, title: { type: "string" }, ...(snap ? taskFieldsSchema(snap) : {}) },
+		properties: { key: { type: "string" }, title: { type: "string" }, ...(snap ? tracker.prompts.fieldsSchema(snap) : {}) },
 		required: snap
 			? ["key", "title", "project", "labels", "priority", "due", "deadline", "recurrence", "recurrence_label", "reminders", "details"]
 			: ["key", "title"],
@@ -65,7 +67,7 @@ export async function editNote(
 	const user = [
 		`Recording date: ${promptDate(new Date(note.recordedTs), env.TIMEZONE)}`,
 		`Edit date: ${promptDate(now, env.TIMEZONE)}`,
-		snap ? taskRulesBlock(snap) : "",
+		snap ? tracker.prompts.rulesBlock(snap) : "",
 		`<note>\n${JSON.stringify({ title, summary, ideas, tasks })}\n</note>`,
 		`<transcript>\n${note.transcript}\n</transcript>`,
 		note.edits.length ? `<earlier_edits>\n${note.edits.join("\n")}\n</earlier_edits>` : "",
@@ -75,8 +77,8 @@ export async function editNote(
 		.join("\n\n");
 
 	// "today"/"tomorrow" у правці рахуються від дати правки.
-	const validate = snap ? taskValidator(snap, now, env.TIMEZONE) : null;
-	return askJson(env, { name: "voice_note_edit", system: EDIT_SYSTEM, user, schema }, (text) =>
+	const validate = snap ? tracker.prompts.validator(snap, now) : null;
+	return askJson(env, { name: "voice_note_edit", system: editSystem(tracker), user, schema }, (text) =>
 		parseEditedNote(text, oldTasks, validate),
 	);
 }

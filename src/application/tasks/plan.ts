@@ -1,6 +1,5 @@
 import type { Env } from "../../infrastructure/env";
-import type { TriageItem } from "../../infrastructure/todoist";
-import type { InTodoist, TodoistOp } from "./types";
+import type { TaskOp, TrackedTasks, TriageItem } from "../../domain/tracker";
 
 export const sameItem = (a: TriageItem, b: TriageItem) =>
 	a.title === b.title &&
@@ -17,8 +16,8 @@ export const sameReminders = (a: TriageItem, b: TriageItem) => [...(a.reminders 
 
 // Що зробити в Todoist: змінені задачі оновити, нові створити, прибрані видалити.
 // Дублікати існуючих задач не створюємо; незмінені задачі пропускаємо.
-export function planOps(items: TriageItem[], inTodoist: InTodoist): TodoistOp[] {
-	const ops: TodoistOp[] = [];
+export function planOps(items: TriageItem[], inTodoist: TrackedTasks): TaskOp[] {
+	const ops: TaskOp[] = [];
 	const kept = new Set<string>();
 	for (const item of items) {
 		const prev = item.key ? inTodoist[item.key] : undefined;
@@ -44,14 +43,19 @@ export function planOps(items: TriageItem[], inTodoist: InTodoist): TodoistOp[] 
 	return ops;
 }
 
-export const inTodoistKey = (noteId: string) => `notes/${noteId}.todoist.json`;
+export const trackedTasksKey = (noteId: string) => `notes/${noteId}.tasks.json`;
 
-export async function getInTodoist(env: Env, noteId: string): Promise<InTodoist> {
-	return (await (await env.BUCKET.get(inTodoistKey(noteId)))?.json<InTodoist>()) ?? {};
+// До перейменування ключ мав назву трекера: нотатки, створені раніше (живуть 7 днів), читаємо за старим.
+// TODO: прибрати fallback, коли всі такі нотатки застаріють.
+const legacyKey = (noteId: string) => `notes/${noteId}.todoist.json`;
+
+export async function getTrackedTasks(env: Env, noteId: string): Promise<TrackedTasks> {
+	const stored = (await env.BUCKET.get(trackedTasksKey(noteId))) ?? (await env.BUCKET.get(legacyKey(noteId)));
+	return (await stored?.json<TrackedTasks>()) ?? {};
 }
 
 // Підпис показує повтор лише тих задач, які в Todoist справді з повтором.
-export function withAppliedRecurrence(items: TriageItem[] | null, inTodoist: InTodoist): TriageItem[] | null {
+export function withAppliedRecurrence(items: TriageItem[] | null, inTodoist: TrackedTasks): TriageItem[] | null {
 	return (
 		items?.map((i) => {
 			const applied = i.key ? inTodoist[i.key] : undefined;

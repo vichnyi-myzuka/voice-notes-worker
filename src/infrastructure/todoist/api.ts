@@ -1,30 +1,42 @@
+import type { SetupWorld, TrackerSnapshot } from "../../domain/tracker";
 import type { Env } from "../env";
-import type { TodoistSnapshot } from "./types";
+import type { SyncResult, TodoistCommand } from "./types";
 
 export const SYNC_URL = "https://api.todoist.com/api/v1/sync";
 
-export async function get(env: Env, path: string): Promise<Record<string, unknown>> {
+// Службовий проєкт з правилами тріажу в описі. Може бути активним або в архіві; у тріажі не бере участі.
+export const RULES_PROJECT = "⚙️ Правила";
+
+export async function get<T>(env: Env, path: string): Promise<T> {
 	const res = await fetch(`https://api.todoist.com/api/v1/${path}`, { headers: { authorization: `Bearer ${env.TODOIST_TOKEN}` } });
 	if (!res.ok) throw new Error(`Todoist ${path} ${res.status}: ${await res.text()}`);
-	return res.json();
+	return res.json<T>();
 }
 
-export async function sync(env: Env, body: Record<string, string>): Promise<Record<string, unknown>> {
+async function sync<T>(env: Env, body: Record<string, string>): Promise<T> {
 	const res = await fetch(SYNC_URL, {
 		method: "POST",
 		headers: { authorization: `Bearer ${env.TODOIST_TOKEN}` },
 		body: new URLSearchParams(body),
 	});
 	if (!res.ok) throw new Error(`Todoist sync ${res.status}: ${await res.text()}`);
-	return res.json();
+	return res.json<T>();
 }
 
-export async function fetchSnapshot(env: Env): Promise<TodoistSnapshot> {
-	const d = (await sync(env, { sync_token: "*", resource_types: JSON.stringify(["projects", "labels", "items"]) })) as {
-		projects: { id: string; name: string; description?: string; inbox_project?: boolean; is_archived?: boolean; is_deleted?: boolean }[];
+// Повний стан вказаних ресурсів (projects, labels, items).
+export const readResources = <T>(env: Env, types: string[]) => sync<T>(env, { sync_token: "*", resource_types: JSON.stringify(types) });
+
+// Виконує пакет команд; результат — статуси кожної.
+export const runCommands = (env: Env, commands: TodoistCommand[]) => sync<SyncResult>(env, { commands: JSON.stringify(commands) });
+
+type Project = { id: string; name: string; description?: string; inbox_project?: boolean; is_archived?: boolean; is_deleted?: boolean };
+
+export async function fetchSnapshot(env: Env): Promise<TrackerSnapshot> {
+	const d = await readResources<{
+		projects: Project[];
 		labels: { name: string; is_deleted?: boolean }[];
 		items: { content: string; checked?: boolean; is_deleted?: boolean }[];
-	};
+	}>(env, ["projects", "labels", "items"]);
 	const active = d.projects.filter((p) => !p.is_archived && !p.is_deleted);
 	return {
 		projects: active
@@ -36,30 +48,8 @@ export async function fetchSnapshot(env: Env): Promise<TodoistSnapshot> {
 	};
 }
 
-// RULES_PROJECT серед активних проєктів або в архіві (архівних проєктів немає в /sync).
-export async function findRulesProject(
-	env: Env,
-	active: { id: string; name: string; description?: string }[],
-): Promise<{ id: string; description: string } | null> {
-	const own = active.find((p) => p.name === RULES_PROJECT);
-	if (own) return { id: own.id, description: own.description ?? "" };
-	let cursor = "";
-	do {
-		const page = (await get(env, `projects/archived?limit=200${cursor && `&cursor=${encodeURIComponent(cursor)}`}`)) as {
-			results?: { id: string; name: string; description?: string }[];
-			next_cursor?: string | null;
-		};
-		const found = page.results?.find((p) => p.name === RULES_PROJECT);
-		if (found) return { id: found.id, description: found.description ?? "" };
-		const next = page.next_cursor ?? "";
-		cursor = next !== cursor ? next : ""; // захист від зациклення
-	} while (cursor);
-	console.error(`Todoist project "${RULES_PROJECT}" not found: triage runs without rules`);
-	return null;
-}
-
-// Знімок Todoist для тріажу; без токена або при збої — null (нотатка прийде без тріажу).
-export async function trySnapshot(env: Env): Promise<TodoistSnapshot | null> {
+// Знімок для тріажу; без токена або при збої — null (нотатка прийде без тріажу).
+export async function trySnapshot(env: Env): Promise<TrackerSnapshot | null> {
 	if (!env.TODOIST_TOKEN) return null;
 	try {
 		return await fetchSnapshot(env);
@@ -69,16 +59,41 @@ export async function trySnapshot(env: Env): Promise<TodoistSnapshot | null> {
 	}
 }
 
-// Службовий проєкт з правилами тріажу в описі. Може бути активним або в архіві; у тріажі не бере участі.
-export const RULES_PROJECT = "⚙️ Правила";
-
-// Дата у форматі YYYY-MM-DD у часовому поясі.
-export function isoDate(date: Date, timeZone: string): string {
-	return new Intl.DateTimeFormat("sv-SE", { timeZone }).format(date);
+// Проєкти, мітки й правила для команд налаштування.
+export async function fetchWorld(env: Env): Promise<SetupWorld> {
+	const d = await readResources<{
+		projects: Project[];
+		labels: { id: string; name: string; is_deleted?: boolean }[];
+		items: { project_id: string; checked?: boolean; is_deleted?: boolean }[];
+	}>(env, ["projects", "labels", "items"]);
+	const active = d.projects.filter((p) => !p.is_archived && !p.is_deleted);
+	const open = d.items.filter((i) => !i.checked && !i.is_deleted);
+	const rules = await findRulesProject(env, active);
+	return {
+		projects: active
+			.filter((p) => !p.inbox_project && p.name !== RULES_PROJECT)
+			.map((p) => ({ id: p.id, name: p.name, description: p.description ?? "", openTasks: open.filter((i) => i.project_id === p.id).length })),
+		labels: d.labels.filter((l) => !l.is_deleted).map((l) => ({ id: l.id, name: l.name })),
+		rules: rules && { id: rules.id, text: rules.description },
+		reserved: ["Inbox", "Вхідні", RULES_PROJECT],
+	};
 }
 
-// Дата для промпту: "2026-11-09 (понеділок, 09.11.2026)".
-export function promptDate(date: Date, timeZone: string): string {
-	const long = new Intl.DateTimeFormat("uk-UA", { timeZone, weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
-	return `${isoDate(date, timeZone)} (${long})`;
+// RULES_PROJECT серед активних проєктів або в архіві (архівних проєктів немає в /sync).
+export async function findRulesProject(env: Env, active: Project[]): Promise<{ id: string; description: string } | null> {
+	const own = active.find((p) => p.name === RULES_PROJECT);
+	if (own) return { id: own.id, description: own.description ?? "" };
+	let cursor = "";
+	do {
+		const page = await get<{ results?: Project[]; next_cursor?: string | null }>(
+			env,
+			`projects/archived?limit=200${cursor && `&cursor=${encodeURIComponent(cursor)}`}`,
+		);
+		const found = page.results?.find((p) => p.name === RULES_PROJECT);
+		if (found) return { id: found.id, description: found.description ?? "" };
+		const next = page.next_cursor ?? "";
+		cursor = next !== cursor ? next : ""; // захист від зациклення
+	} while (cursor);
+	console.error(`Todoist project "${RULES_PROJECT}" not found: triage runs without rules`);
+	return null;
 }

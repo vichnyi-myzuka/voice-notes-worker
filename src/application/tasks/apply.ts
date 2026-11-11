@@ -1,156 +1,27 @@
+import type { TaskTracker } from "../../domain/tracker";
 import type { Env } from "../../infrastructure/env";
-import { fetchSnapshot, sync, type TodoistSnapshot, type TriageItem } from "../../infrastructure/todoist";
-import { getInTodoist, inTodoistKey } from "./plan";
-import type { ApplyParams, TodoistOp } from "./types";
+import { getTrackedTasks, trackedTasksKey } from "./plan";
+import type { ApplyParams } from "./types";
 
-export async function applyOps(env: Env, { noteId, runId: id, ops: planned, description: text, messageUrl }: ApplyParams): Promise<true> {
-	const snap = await fetchSnapshot(env);
+// Виконує операції в трекері й оновлює стан задач нотатки.
+export async function applyOps(env: Env, tracker: TaskTracker, { noteId, runId, ops, description: text, messageUrl }: ApplyParams): Promise<true> {
 	const description = messageUrl ? `${text}\n${messageUrl}` : text;
-	type SyncResult = { sync_status: Record<string, unknown>; temp_id_mapping: Record<string, string> };
-	const run = async (commands: object[]) => (await sync(env, { commands: JSON.stringify(commands) })) as SyncResult;
-	const res = await run(buildCommands(id, planned, description, snap));
+	const { results, errors } = await tracker.applyOps(runId, ops, description);
 
-	// Повтор, якого Todoist не розпізнав (INVALID_DATE), відхиляє всю команду: такі задачі пробуємо ще раз без повтору
-	// (з датою першого виконання). В InTodoist вони потрапляють без повтору, тож підпис не покаже 🔁.
-	const prefix = planned.map(() => id);
-	const ops = [...planned];
-	const bad = planned.flatMap((op, n) => (op.item?.recurrence && invalidDate(res.sync_status[`${id}-${n}`]) ? [n] : []));
-	if (bad.length) {
-		const retryId = `${id}x`;
-		bad.forEach((n) => {
-			ops[n] = { ...ops[n], item: { ...ops[n].item!, recurrence: "", recurrenceLabel: "" } };
-			prefix[n] = retryId;
-			// Статуси задачі й залежних команд (нагадування, переміщення): їх замінять статуси повтору.
-			const own = new RegExp(`^${id}-${n}(?:[a-z]|$)`);
-			for (const k of Object.keys(res.sync_status)) if (own.test(k)) delete res.sync_status[k];
-			console.error(`todoist: recurrence "${planned[n].item!.recurrence}" not recognized, task "${planned[n].item!.title}" saved without it`);
-		});
-		const mine = (c: object) => bad.some((n) => new RegExp(`^${retryId}-${n}(?:[a-z]|$)`).test((c as { uuid: string }).uuid));
-		const retry = await run(buildCommands(retryId, ops, description, snap).filter(mine));
-		Object.assign(res.sync_status, retry.sync_status);
-		Object.assign(res.temp_id_mapping, retry.temp_id_mapping);
-	}
-	const errors = Object.values(res.sync_status).filter((s) => s !== "ok");
-
-	// Стан оновлюємо і для успішних команд при частковому збої: інакше ID створених задач загубляться.
-	// Повтор безпечний: Todoist не виконує команду з тим самим uuid вдруге.
-	const state = await getInTodoist(env, noteId);
+	// Стан оновлюємо і для успішних операцій при частковому збої: інакше ID створених задач загубляться.
+	// Повтор безпечний: трекер не виконує команду з тим самим id вдруге.
+	// Повтор, якого трекер не розпізнав, у результаті вже прибрано: підпис не покаже 🔁.
+	const tracked = await getTrackedTasks(env, noteId);
 	ops.forEach((op, n) => {
-		const p = prefix[n];
-		if (res.sync_status[`${p}-${n}`] !== "ok") return;
-		if (!op.item) delete state[op.key];
-		else {
-			const taskId = op.id ?? res.temp_id_mapping[`tmp-${p}-${n}`];
-			// ID нагадувань: нові — з temp_id_mapping, інакше лишаються попередні.
-			const reminderIds =
-				!op.id || op.reminders
-					? (op.item.reminders ?? []).map((_, j) => res.temp_id_mapping[`tmp-${p}-${n}r${j}`]).filter(Boolean)
-					: state[op.key]?.reminderIds;
-			if (taskId) state[op.key] = { id: taskId, item: op.item, ...(reminderIds?.length && { reminderIds }) };
+		const result = results[n];
+		if (!result.ok) return;
+		if (!op.item) delete tracked[op.key];
+		else if (result.id) {
+			const reminderIds = result.reminderIds ?? tracked[op.key]?.reminderIds;
+			tracked[op.key] = { id: result.id, item: result.item ?? op.item, ...(reminderIds?.length && { reminderIds }) };
 		}
 	});
-	await env.BUCKET.put(inTodoistKey(noteId), JSON.stringify(state));
-	if (errors.length) throw new Error(`Todoist commands failed: ${JSON.stringify(errors)}`);
+	await env.BUCKET.put(trackedTasksKey(noteId), JSON.stringify(tracked));
+	if (errors.length) throw new Error(`Task tracker commands failed: ${JSON.stringify(errors)}`);
 	return true;
-}
-
-export const invalidDate = (status: unknown) => (status as { error_tag?: string } | undefined)?.error_tag === "INVALID_DATE";
-
-// Команди /sync для операцій. uuid сталий для дії й операції: повторне натискання
-// чи ретрай не виконає команду вдруге (Todoist ігнорує повторний uuid).
-export function buildCommands(actionId: string, ops: TodoistOp[], description: string, snap: TodoistSnapshot): object[] {
-	// Опис задачі: подробиці з запису, під ними — посилання на нотатку.
-	const describe = (i: TriageItem) => (i.details ? `${i.details}\n\n${description}` : description);
-	const projectId = (name: string) => snap.projects.find((p) => (name ? p.name === name : p.inbox))?.id;
-	const fields = (i: TriageItem) => ({
-		content: i.title,
-		labels: i.labels,
-		priority: 5 - i.priority, // в API 4 — це p1
-		// Повтор — фразою (Todoist сам рахує дати); інакше дата, з часом — «плаваючий» час (без поясу).
-		due: i.recurrence
-			? { string: i.recurrence, lang: "en" }
-			: i.due
-				? { date: i.due.includes("T") ? `${i.due}:00` : i.due }
-				: null,
-		deadline: i.deadline ? { date: i.deadline } : null,
-	});
-	return ops.flatMap((op, n) => {
-		const uuid = (suffix = "") => `${actionId}-${n}${suffix}`;
-		// Нагадування задачі (item_id може бути temp_id щойно створеної задачі в цьому ж пакеті).
-		const addReminders = (itemId: string, item: TriageItem) =>
-			(item.reminders ?? []).map((r, j) => ({
-				type: "reminder_add",
-				uuid: uuid(`r${j}`),
-				temp_id: `tmp-${actionId}-${n}r${j}`,
-				args: r.startsWith("before:")
-					? { item_id: itemId, type: "relative", minute_offset: Number(r.slice(7)) }
-					: { item_id: itemId, type: "absolute", due: { date: `${r}:00` } },
-			}));
-		if (!op.id) {
-			const { due, deadline, ...rest } = fields(op.item!);
-			const project_id = op.item!.project ? projectId(op.item!.project) : undefined;
-			const temp_id = `tmp-${actionId}-${n}`;
-			return [
-				{
-					type: "item_add",
-					uuid: uuid(),
-					temp_id,
-					args: { ...rest, description: describe(op.item!), ...(project_id && { project_id }), ...(due && { due }), ...(deadline && { deadline }) },
-				},
-				...addReminders(temp_id, op.item!),
-			];
-		}
-		if (!op.item) return [{ type: "item_delete", uuid: uuid(), args: { id: op.id } }];
-		// Опис переписуємо лише коли змінились подробиці: інакше не чіпаємо те, що автор дописав у Todoist сам.
-		const cmds: object[] = [
-			{ type: "item_update", uuid: uuid(), args: { id: op.id, ...fields(op.item), ...(op.describe && { description: describe(op.item) }) } },
-		];
-		// Проєкт могли перейменувати чи видалити після тріажу: тоді задачу не переміщуємо.
-		const target = op.move ? projectId(op.item.project) : undefined;
-		if (target) cmds.push({ type: "item_move", uuid: uuid("m"), args: { id: op.id, project_id: target } });
-		if (op.reminders) {
-			(op.oldReminderIds ?? []).forEach((id, k) => cmds.push({ type: "reminder_delete", uuid: uuid(`rd${k}`), args: { id } }));
-			cmds.push(...addReminders(op.id, op.item));
-		}
-		return cmds;
-	});
-}
-
-// Фото з нотатки — коментарем-вкладенням до задач. Повтор безпечний: коментарі мають сталі uuid
-// (повторне завантаження файлу лише лишить зайвий upload).
-export async function attachFile(env: Env, id: string, taskIds: string[], file: Blob, fileName: string): Promise<void> {
-	if (!taskIds.length) return;
-	const form = new FormData();
-	form.append("file", file, fileName);
-	const res = await fetch("https://api.todoist.com/api/v1/uploads", {
-		method: "POST",
-		headers: { authorization: `Bearer ${env.TODOIST_TOKEN}` },
-		body: form,
-	});
-	if (!res.ok) throw new Error(`Todoist uploads ${res.status}: ${await res.text()}`);
-	const upload = await res.json();
-	const commands = taskIds.map((item_id, n) => ({
-		type: "note_add",
-		uuid: `${id}-a${n}`,
-		temp_id: `tmp-${id}-a${n}`,
-		args: { item_id, content: "📷 Фото з нотатки", file_attachment: upload },
-	}));
-	const status = ((await sync(env, { commands: JSON.stringify(commands) })) as { sync_status: Record<string, unknown> }).sync_status;
-	const errors = Object.values(status).filter((s) => s !== "ok");
-	if (errors.length) throw new Error(`Todoist note_add: ${JSON.stringify(errors)}`);
-}
-
-// Видаляє задачі, які ще відкриті (виконані лишаються в історії Todoist). Повертає кількість видалених.
-export async function deleteOpenTasks(env: Env, ids: string[]): Promise<number> {
-	if (!ids.length) return 0;
-	const d = (await sync(env, { sync_token: "*", resource_types: JSON.stringify(["items"]) })) as {
-		items: { id: string; checked?: boolean; is_deleted?: boolean }[];
-	};
-	const open = new Set(d.items.filter((i) => !i.checked && !i.is_deleted).map((i) => i.id));
-	const commands = ids.filter((id) => open.has(id)).map((id) => ({ type: "item_delete", uuid: `delete-${id}`, args: { id } }));
-	if (!commands.length) return 0;
-	const res = (await sync(env, { commands: JSON.stringify(commands) })) as { sync_status: Record<string, unknown> };
-	const errors = Object.values(res.sync_status).filter((s) => s !== "ok");
-	if (errors.length) throw new Error(`Todoist delete failed: ${JSON.stringify(errors)}`);
-	return commands.length;
 }

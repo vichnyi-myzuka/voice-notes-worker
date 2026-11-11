@@ -1,10 +1,10 @@
-import type { TodoistSnapshot, TriageItem } from "./types";
-import { isoDate } from "./api";
+import { isoDate } from "../../domain/recording";
+import type { TrackerSnapshot, TriageItem } from "../../domain/tracker";
 
-export const listNames = (snap: TodoistSnapshot) => snap.projects.filter((p) => !p.inbox).map((p) => p.name);
+export const listNames = (snap: TrackerSnapshot) => snap.projects.filter((p) => !p.inbox).map((p) => p.name);
 
 // Поля задачі Todoist у JSON-схемі: enum гарантує, що модель не вигадає неіснуючий проєкт чи мітку.
-export function taskFieldsSchema(snap: TodoistSnapshot): Record<string, unknown> {
+export function taskFieldsSchema(snap: TrackerSnapshot): Record<string, unknown> {
 	return {
 		project: { type: "string", enum: ["", ...listNames(snap)] },
 		labels: snap.labels.length
@@ -22,7 +22,7 @@ export function taskFieldsSchema(snap: TodoistSnapshot): Record<string, unknown>
 
 // Правила автора, мітки й проєкти — і для тріажу, і для редагування задач.
 // Що означає кожен проєкт, автор пише в описі проєкту в Todoist: «Назва — опис».
-export function taskRulesBlock(snap: TodoistSnapshot): string {
+export function taskRulesBlock(snap: TrackerSnapshot): string {
 	const projects = snap.projects
 		.filter((p) => !p.inbox)
 		.map((p) => (p.description ? `${p.name} — ${p.description.replace(/\s*\n\s*/g, " ")}` : p.name));
@@ -49,7 +49,7 @@ export const TASK_FIELDS_HELP = `- project: a project from <projects> (name befo
 
 // Перевіряє поля задачі, які повернула модель (Gemma може не дотримуватись enum).
 // "today"/"tomorrow" перетворюються на дату відносно base (дата запису або правки).
-export function taskValidator(snap: TodoistSnapshot, base: Date, timeZone: string): (r: Record<string, unknown>) => TriageItem {
+export function taskValidator(snap: TrackerSnapshot, base: Date, timeZone: string): (r: Record<string, unknown>) => TriageItem {
 	const taskByKey = new Map(snap.tasks.map((t) => [normalize(t), t]));
 	const projects = new Set(listNames(snap));
 	const labels = new Set(snap.labels);

@@ -1,16 +1,15 @@
 import type { Env } from "../../infrastructure/env";
-import type { Channel } from "../../domain/channel";
 import { loadNote, removeNote, saveNote, type Note } from "../../domain/published";
 import { formatRecordedAt } from "../../domain/recording";
 import { runSetup } from "../setup";
 import { openSteps } from "../../infrastructure/steps";
-import { deleteOpenTasks, getInTodoist, syncTasks } from "../tasks";
-import { trySnapshot } from "../../infrastructure/todoist";
+import { getTrackedTasks, syncTasks } from "../tasks";
 import { editNote, transcribe } from "../understand";
 import { captionNotice, showNote } from "./show";
-import type { State } from "./types";
+import type { Ports, State } from "./types";
 
-export async function processEdit(env: Env, channel: Channel, key: string, noteId: string, lastAttempt: boolean): Promise<void> {
+export async function processEdit(env: Env, ports: Ports, key: string, noteId: string, lastAttempt: boolean): Promise<void> {
+	const { channel, tracker } = ports;
 	const obj = await env.BUCKET.get(key);
 	if (!obj) return; // уже оброблено
 	const stateKey = `${key}.state.json`;
@@ -36,11 +35,11 @@ export async function processEdit(env: Env, channel: Channel, key: string, noteI
 		return contentType.startsWith("text/") ? (await obj.text()).trim() : await transcribe(env, await obj.arrayBuffer(), contentType);
 	});
 	// Команди налаштування Todoist — до правки, щоб модель уже бачила нові назви проєктів і міток.
-	const setup = await runSetup(env, instruction, run);
+	const setup = await runSetup(env, tracker, instruction, run);
 	// Крок зберігає meta і triage разом: triage пишемо в стан до збереження кроку.
 	const meta = await step("meta", async () => {
-		const snap = await trySnapshot(env);
-		const edited = instruction ? await editNote(env, note, instruction, snap) : null;
+		const snap = await tracker.snapshot();
+		const edited = instruction ? await editNote(env, tracker, note, instruction, snap) : null;
 		if (instruction && !edited && !lastAttempt) throw new Error("All edit models failed");
 		// Інструкція була лише командою налаштування: нотатку лишаємо, але підпис оновимо (звіт про зміни).
 		const keepNote = setup.length > 0 && (!edited || (edited.meta.discard && edited.meta.discard !== "delete"));
@@ -51,8 +50,8 @@ export async function processEdit(env: Env, channel: Channel, key: string, noteI
 	const triaged = state.triage ?? null;
 	if (meta.discard === "delete") {
 		// «Видали нотатку»: відкриті задачі в Todoist, саму нотатку в каналі й записи в R2.
-		const ids = Object.values(await getInTodoist(env, noteId)).map((t) => t.id);
-		const deleted = env.TODOIST_TOKEN ? await deleteOpenTasks(env, ids) : 0;
+		const ids = Object.values(await getTrackedTasks(env, noteId)).map((t) => t.id);
+		const deleted = await tracker.deleteOpenTasks(ids);
 		await channel.remove(note.messageId);
 		await removeNote(env, noteId, note);
 		console.log(`note ${noteId} deleted by request: ${deleted} open tasks deleted in Todoist`);
@@ -66,7 +65,7 @@ export async function processEdit(env: Env, channel: Channel, key: string, noteI
 	}
 
 	// Порівнюємо з тим, що вже є в Todoist: змінені задачі оновлюємо, нові створюємо, прибрані видаляємо.
-	const applied = await syncTasks(env, run, {
+	const applied = await syncTasks(env, tracker, run, {
 		noteId,
 		items: triaged,
 		description: `🎙 ${meta.title} (${formatRecordedAt(String(note.recordedTs), env.TIMEZONE)})`,
@@ -76,7 +75,7 @@ export async function processEdit(env: Env, channel: Channel, key: string, noteI
 	const allSetup = [...(note.setup ?? []), ...setup];
 	await step("captionEdited", async () => {
 		const notice = captionNotice(allSetup, applied === false);
-		await showNote(env, channel, noteId, note, { meta, triage: triaged, notice });
+		await showNote(env, ports, noteId, note, { meta, triage: triaged, notice });
 		return true;
 	});
 

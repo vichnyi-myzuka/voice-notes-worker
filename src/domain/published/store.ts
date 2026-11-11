@@ -22,5 +22,5 @@ export async function noteIdByMessage(env: Env, messageId: number | string): Pro
 
 // Прибирає запис нотатки в R2 разом зі станом її задач у Todoist (повідомлення в каналі видаляє викликач).
 export async function removeNote(env: Env, noteId: string, note: Note): Promise<void> {
-	await env.BUCKET.delete([noteKey(noteId), byMessageKey(note.messageId), `notes/${noteId}.todoist.json`]);
+	await env.BUCKET.delete([noteKey(noteId), byMessageKey(note.messageId), `notes/${noteId}.tasks.json`, `notes/${noteId}.todoist.json`]);
 }

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { buildCaption, formatCaption, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks, taskLinks } from "../src/domain/note";
 import { TEXT_CAPTION_MAX } from "../src/infrastructure/telegram";
-import { taskValidator, type TodoistSnapshot, type TriageItem } from "../src/infrastructure/todoist";
+import type { TrackerSnapshot, TriageItem } from "../src/domain/tracker";
+import { taskUrl } from "../src/infrastructure/todoist";
+import { taskValidator } from "../src/infrastructure/todoist/fields";
 
-const snap: TodoistSnapshot = {
+const snap: TrackerSnapshot = {
 	projects: [
 		{ id: "p0", name: "Inbox", inbox: true },
 		{ id: "p1", name: "Gifts", inbox: false },
@@ -103,13 +105,13 @@ describe("taskLinks", () => {
 
 	it("offset/length у UTF-16 після емодзі та не-BMP символів", () => {
 		const { triage, caption } = make("Опис 🎉 з емодзі 😀.", ["Купити хліб", "Зателефонувати мамі"], ["Думка 𝒳"]);
-		const links = taskLinks(caption, triage, { t1: "11", t2: "22" });
+		const links = taskLinks(caption, triage, { t1: "11", t2: "22" }, taskUrl);
 		expect(texts(caption, links)).toEqual(["Купити хліб", "Зателефонувати мамі"]);
 		expect(links.map((l) => l.url)).toEqual([url("11"), url("22")]);
 	});
 	it("назва і в summary, і в задачах — посилання на рядок задачі", () => {
 		const { triage, caption } = make("Треба Купити хліб сьогодні", ["Купити хліб"]);
-		const [link] = taskLinks(caption, triage, { t1: "11" });
+		const [link] = taskLinks(caption, triage, { t1: "11" }, taskUrl);
 		expect(link.offset).toBeGreaterThan(caption.indexOf("✅ Задачі:"));
 		expect(caption.slice(link.offset - 3, link.offset + link.length)).toBe("\n• Купити хліб");
 	});
@@ -127,13 +129,13 @@ describe("taskLinks", () => {
 			"",
 			1024,
 		);
-		const links = taskLinks(caption, triage, { t1: "1", t3: "3" });
+		const links = taskLinks(caption, triage, { t1: "1", t3: "3" }, taskUrl);
 		expect(texts(caption, links)).toEqual(["В"]);
 		expect(links[0].url).toBe(url("3"));
 	});
 	it("однакова назва двічі — два окремі посилання", () => {
 		const { triage, caption } = make("С", ["Позвонити", "Позвонити"]);
-		const links = taskLinks(caption, triage, { t1: "1", t2: "2" });
+		const links = taskLinks(caption, triage, { t1: "1", t2: "2" }, taskUrl);
 		expect(texts(caption, links)).toEqual(["Позвонити", "Позвонити"]);
 		expect(links[0].offset).toBeLessThan(links[1].offset);
 		expect(links.map((l) => l.url)).toEqual([url("1"), url("2")]);
@@ -143,7 +145,7 @@ describe("taskLinks", () => {
 		const { triage, caption } = make("дуже ".repeat(190), titles, ["Думка, яка не влізе"]);
 		expect(caption.length).toBeLessThanOrEqual(1024);
 		expect(caption).not.toContain("Ключові думки");
-		const links = taskLinks(caption, triage, { t1: "1", t2: "2", t3: "3", t4: "4" });
+		const links = taskLinks(caption, triage, { t1: "1", t2: "2", t3: "3", t4: "4" }, taskUrl);
 		expect(texts(caption, links)).toEqual(titles);
 	});
 	it("задачі, що не влазять, замінює рядок «…і ще N у Todoist»", () => {
@@ -155,7 +157,7 @@ describe("taskLinks", () => {
 		expect(shown).toBeLessThan(30);
 		expect(caption).toContain(`…і ще ${30 - shown} у Todoist`);
 		expect(caption).toContain("Короткий опис.");
-		const links = taskLinks(caption, triage, Object.fromEntries(titles.map((_, i) => [`t${i + 1}`, String(i)])));
+		const links = taskLinks(caption, triage, Object.fromEntries(titles.map((_, i) => [`t${i + 1}`, String(i)])), taskUrl);
 		expect(links.length).toBe(shown);
 	});
 	it("текстова нотатка вміщує більше (TEXT_CAPTION_MAX)", () => {
@@ -167,8 +169,8 @@ describe("taskLinks", () => {
 	});
 	it("без «✅ Задачі:» — порожній список", () => {
 		const caption = "Назва\n\nОпис\n\n#листопад_2026";
-		expect(taskLinks(caption, [item("А", { key: "t1" })], { t1: "1" })).toEqual([]);
-		expect(taskLinks(caption, null, {})).toEqual([]);
+		expect(taskLinks(caption, [item("А", { key: "t1" })], { t1: "1" }, taskUrl)).toEqual([]);
+		expect(taskLinks(caption, null, {}, taskUrl)).toEqual([]);
 	});
 });
 
