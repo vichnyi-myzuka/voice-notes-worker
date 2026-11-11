@@ -1,6 +1,7 @@
 import { DOWNLOAD_MAX_BYTES, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import type { Agent, SessionReport } from "../../domain/agent";
 import type { Env } from "../../env";
+import { sendChat } from "../../infrastructure/chat";
 import { routeTask, type KnownRepo } from "./repo";
 
 export const TELEGRAM_PATH = "/telegram";
@@ -41,6 +42,12 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 
 // Посилання на сесію в пості бота: з нього відповідь (reply) знаходить, до якої сесії належить.
 const SESSION_URL = /https?:\/\/\S+\/s\/(tg-[\w-]+)/;
+// Текст повідомлення разом з адресами клікабельних слів: посилання на сесію в пості тепер сховане під «Відкрити сесію».
+function textWithLinks(m: TgMessage["reply_to_message"]): string {
+	const entities = [...(m?.entities ?? []), ...(m?.caption_entities ?? [])];
+	return [m?.text ?? m?.caption ?? "", ...entities.flatMap((e) => (e.url ? [e.url] : []))].join("\n");
+}
+
 // «owner/name: задача» на початку тексту — репозиторій для сесії.
 const REPO_PREFIX = /^([\w-][\w.-]*\/[\w-][\w.-]*)\s*:\s*([\s\S]+)$/;
 
@@ -48,7 +55,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const text = msg.text?.trim();
-	const replied = SESSION_URL.exec(msg.reply_to_message?.text ?? msg.reply_to_message?.caption ?? "");
+	const replied = SESSION_URL.exec(textWithLinks(msg.reply_to_message));
 	const say = (t: string) => tgSendMessage(env, chat, t);
 
 	if (!file && (!text || text.startsWith("/"))) {
@@ -95,8 +102,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
 	const shown = inChannel || file ? `${file ? "🗣 " : ""}${prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt}\n\n` : "";
 	// Без прев'ю: інакше Telegram показує картку сторінки за Access.
-	const post = await tg(env, "sendMessage", { chat_id: chat, text: `${shown}${repo ? `📦 ${repo}\n` : ""}🔗 ${url}`, link_preview_options: { is_disabled: true } });
-	await agent.watch(id, { chatId: chat, url, postId: post.message_id }).catch((err) => console.error("watch failed:", err));
+	const postId = await sendChat(env, chat, `${shown}${repo ? `📦 ${repo}` : ""}`.trim(), url);
+	await agent.watch(id, { chatId: chat, url, postId }).catch((err) => console.error("watch failed:", err));
 	if (inChannel) await tg(env, "deleteMessage", { chat_id: chat, message_id: msg.message_id }).catch((err) => console.error("delete original failed:", err));
 }
 

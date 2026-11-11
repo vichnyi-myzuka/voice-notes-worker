@@ -2,6 +2,7 @@ import { tg } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { sendChat } from "../chat";
 import { parseConnections } from "./connections";
 import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
@@ -91,8 +92,31 @@ export class AgentSession extends DurableObject<Env> {
 		return this.starting;
 	}
 
+	// Контейнер, що працює зі старого образу, після деплою не оновлюється сам: старі файли (AGENTS.md, команди) лишаються, а знімок
+	// з нього підписувався б новим образом. Тому при зверненні перезапускаємо його з нового образу, коли ніхто не працює; якщо
+	// зайнятий, дочекаємось наступного звернення. Сесії при цьому зникають (як завжди при зміні образу).
+	private async stale(): Promise<boolean> {
+		const container = this.ctx.container;
+		return !!container?.running && (await this.ctx.storage.get<string>("launchedImage")) !== container.images.base;
+	}
+
+	private async replaceStale(): Promise<void> {
+		if (!(await this.stale()) || (await isAnyBusy(this.opencode()).catch(() => true))) return;
+		console.log("container runs an older image, restarting from the new one");
+		await this.destroyContainer();
+		await this.ctx.storage.delete("snapshot");
+	}
+
+	// destroy() інколи кидає виняток, хоч контейнер зупиняється: ігноруємо його й чекаємо, поки running стане false.
+	private async destroyContainer(): Promise<void> {
+		const container = this.ctx.container!;
+		await container.destroy().catch((err) => console.error("container destroy:", err));
+		for (let i = 0; container.running && i < 40; i++) await scheduler.wait(500);
+	}
+
 	private async startAndWait(): Promise<void> {
 		const container = this.ctx.container!;
+		await this.replaceStale();
 		const started = !container.running;
 		let restored = false;
 		if (started) {
@@ -107,7 +131,7 @@ export class AgentSession extends DurableObject<Env> {
 			if (!restored) throw err;
 			// Знімок не відновився (наприклад, минув термін зберігання): стартуємо з чистого образу.
 			console.error("snapshot restore failed, starting from the image:", err);
-			await container.destroy();
+			await this.destroyContainer();
 			await this.ctx.storage.delete("snapshot");
 			await this.launch(undefined);
 			await container.setInactivityTimeout(this.inactivityMs());
@@ -119,6 +143,7 @@ export class AgentSession extends DurableObject<Env> {
 	private async launch(snapshot: SavedSnapshot | undefined): Promise<void> {
 		const container = this.ctx.container!;
 		console.log(snapshot ? `container start from snapshot ${snapshot.id}` : "container start from image");
+		await this.ctx.storage.put("launchedImage", snapshot ? snapshot.image : container.images.base); // з якого образу контейнер насправді
 		container.start({
 			...(snapshot ? { containerSnapshot: { id: snapshot.id } } : { image: container.images.base }),
 			instance: "standard-1",
@@ -164,6 +189,7 @@ export class AgentSession extends DurableObject<Env> {
 		// Поки хтось працює чи за кимось стежать, опитуємо часто (підсумки, ліміти) й знімок відкладаємо.
 		if (await this.tick()) return void (await this.ctx.storage.setAlarm(Date.now() + WATCH_INTERVAL_MS));
 		if (!container?.running) return; // контейнер уже спить: знімати нічого
+		if (await this.stale()) return; // старий образ: знімок був би підписаний новим (див. stale); перезапустимо при зверненні
 		const [activeAt = 0, saved] = await Promise.all([this.ctx.storage.get<number>("activeAt"), this.ctx.storage.get<SavedSnapshot>("snapshot")]);
 		if (saved && saved.image === container.images.base && saved.at >= activeAt) return; // нових змін немає
 		try {
@@ -240,11 +266,12 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ctx.storage.delete(key);
 		await this.mark(w, false);
 		if (!text || !this.env.BOT_TOKEN) return;
-		await tg({ BOT_TOKEN: this.env.BOT_TOKEN }, "sendMessage", { chat_id: w.chatId, text: `${text}\n\n🔗 ${w.url}`, link_preview_options: { is_disabled: true } }).catch((err) => console.error("notify failed:", err));
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url).catch((err) => console.error("notify failed:", err));
 	}
 
 	private async saveSnapshot(): Promise<SnapshotInfo> {
 		const container = this.ctx.container!;
+		if (await this.stale()) throw new Error("container runs an older image");
 		const startedAt = Date.now();
 		const snapshot = await container.snapshotContainer({ name: "computer" });
 		await this.ctx.storage.put("snapshot", { id: snapshot.id, image: container.images.base, at: startedAt } satisfies SavedSnapshot);
@@ -264,7 +291,7 @@ export class AgentSession extends DurableObject<Env> {
 	// це єдиний спосіб його позбутися без SSH: знімок видаляється, контейнер зупиняється.
 	async resetComputer(): Promise<void> {
 		await this.ctx.storage.delete("snapshot");
-		if (this.ctx.container?.running) await this.ctx.container.destroy();
+		if (this.ctx.container?.running) await this.destroyContainer();
 	}
 
 	// Готує теку сесії в контейнері (клон + worktree або порожня тека) і повертає її шлях. exec не успадковує env контейнера,

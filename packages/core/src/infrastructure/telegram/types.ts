@@ -11,7 +11,8 @@ export type TgMessage = {
 	audio?: TgFile;
 	photo?: TgFile[]; // розміри від меншого до більшого
 	// Telegram віддає повідомлення, на яке відповіли, разом із текстом: так бот агента знаходить сесію за посиланням у пості.
-	reply_to_message?: { message_id: number; text?: string; caption?: string };
+	// entities: у клікабельного слова адреса лежить у text_link.url, а не в тексті
+	reply_to_message?: { message_id: number; text?: string; caption?: string; entities?: { type: string; url?: string }[]; caption_entities?: { type: string; url?: string }[] };
 };
 
 export type ReceivedMessage = {
@@ -40,7 +41,7 @@ type MessageRef = { message_id: number };
 // Методи Bot API, які використовує воркер: параметри й результат. Ключі — назви методів.
 export type TgMethods = {
 	sendMessage: {
-		params: { chat_id: ChatId; text: string; entities?: TgEntity[]; link_preview_options?: { is_disabled: boolean } };
+		params: { chat_id: ChatId; text: string; parse_mode?: "HTML"; entities?: TgEntity[]; link_preview_options?: { is_disabled: boolean } };
 		result: MessageRef;
 	};
 	sendAudio: { params: { chat_id: ChatId; audio: string; title: string; caption: string }; result: MessageRef };
