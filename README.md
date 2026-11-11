@@ -12,10 +12,15 @@ Telegram ──відповідь (голос/текст) на нотатку─
 
 ## Структура
 
+Моно-репозиторій на npm workspaces: `apps/*` — воркери, `packages/*` — спільний код. Застосунки залежать від пакетів, але не один від одного.
+
 ```
-wrangler.toml          bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE
-src/index.ts           entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
-src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
+apps/notes/            воркер нотаток (цей бот); команди wrangler запускай із цієї теки
+apps/notes/wrangler.toml  bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE
+apps/notes/test/       тести воркера нотаток
+apps/notes/test-audio/ тестові голосові записи
+apps/notes/src/index.ts  entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
+apps/notes/src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
   interface/           точки входу
     inbox/             HTTP: вебхук каналу (через Channel) і завантаження з шорткату
     queue/             споживачі черги й DLQ
@@ -42,7 +47,7 @@ src/<шар>/<модуль>/    шари: interface → application → domain, 
     security/          safeEqual (порівняння секретів)
     todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
 AGENTS.md              правила роботи з репозиторієм для агентів
-.dev.vars.example      шаблон секретів для локального запуску
+.dev.vars.example      (в apps/notes) шаблон секретів для локального запуску
 ```
 
 ### Архітектура
@@ -63,6 +68,7 @@ AGENTS.md              правила роботи з репозиторієм �
 
 ```sh
 npm install
+cd apps/notes   # усі команди wrangler нижче запускаються звідси
 npx wrangler login
 
 # 1. R2-бакет і lifecycle rule (страховка: прибирає все старше 7 днів)
@@ -108,23 +114,23 @@ npx wrangler deploy
 
 ## Тести, lint і git-хуки
 
-- `npm run lint` — oxlint (`src`, `test`).
+- `npm run lint` — oxlint (`src`, `test` кожного застосунку).
 - `npm run typecheck` — `tsc --noEmit`.
-- `npm test` — vitest: наскрізний e2e через `worker.fetch` і `worker.queue` з підміненими OpenAI, Telegram і Todoist (`test/e2e.test.ts`: вебхук → нотатка → задача → «Видали нотатку»), unit-тести кроків обробки (`test/steps.test.ts`), маршрутизація `handleFetch` із каналом-заглушкою (`test/inbox.test.ts`), наскрізні `processNote` і `processEdit` з підміненими OpenAI і Telegram (`test/process-note.test.ts`: публікація, правка й повтор після збою без повторного LLM), чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyOps` і `syncTasks` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `test/todoist.test.ts` і `test/sync-tasks.test.ts`. Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
+- `npm test` — vitest: наскрізний e2e через `worker.fetch` і `worker.queue` з підміненими OpenAI, Telegram і Todoist (`apps/notes/test/e2e.test.ts`: вебхук → нотатка → задача → «Видали нотатку»), unit-тести кроків обробки (`apps/notes/test/steps.test.ts`), маршрутизація `handleFetch` із каналом-заглушкою (`apps/notes/test/inbox.test.ts`), наскрізні `processNote` і `processEdit` з підміненими OpenAI і Telegram (`apps/notes/test/process-note.test.ts`: публікація, правка й повтор після збою без повторного LLM), чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyOps` і `syncTasks` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `apps/notes/test/todoist.test.ts` і `apps/notes/test/sync-tasks.test.ts`. Без мережі й без LLM — у `apps/notes/test/fake-env.ts` R2 у пам'яті.
 - `npm run check` — усе разом (lint + typecheck + test).
 
 Git-хуки лежать в `.githooks/` і вмикаються автоматично після `npm install` (скрипт `prepare` ставить `core.hooksPath`):
 - pre-commit = lint + typecheck;
 - pre-push = `npm run check`.
 
-Якість промптів (регресії LLM) перевіряється вручну на записах з `test-audio/` (див. розділ нижче), а не в хуках: це платні моделі й десятки секунд.
+Якість промптів (регресії LLM) перевіряється вручну на записах з `apps/notes/test-audio/` (див. розділ нижче), а не в хуках: це платні моделі й десятки секунд.
 
 У надзвичайній ситуації обійти хуки: `git commit --no-verify`.
 
 ## Локальний тест
 
 ```sh
-cp .dev.vars.example .dev.vars   # заповніть ключі, якщо хочете пройти весь ланцюжок
+cd apps/notes && cp .dev.vars.example .dev.vars   # заповніть ключі, якщо хочете пройти весь ланцюжок
 npm run dev   # для тріажу потрібен TODOIST_TOKEN у .dev.vars
 
 # тестовий m4a (macOS):
@@ -140,7 +146,7 @@ curl -X POST http://localhost:8787 -H "x-secret: local-test" \
   -F "audio=@test.m4a;type=audio/mp4"
 ```
 
-Тестові записи (синтез голосом Lesya через `say`) лежать у `test-audio/` і комітяться:
+Тестові записи (синтез голосом Lesya через `say`) лежать у `apps/notes/test-audio/` і комітяться:
 
 | Файл | Що перевіряє |
 |---|---|
@@ -157,7 +163,7 @@ curl -X POST http://localhost:8787 -H "x-secret: local-test" \
 
 ```sh
 source .env && curl -X POST https://voice-notes-worker.<subdomain>.workers.dev -H "x-secret: $SECRET" \
-  -F "audio=@test-audio/shopping-list.m4a;type=audio/mp4"
+  -F "audio=@apps/notes/test-audio/shopping-list.m4a;type=audio/mp4"
 ```
 
 `wrangler dev` локально емулює R2 і Queue, тож consumer спрацює одразу в тому ж процесі. Binding `AI` навіть локально звертається до справжнього Workers AI (з безкоштовної квоти), тож для повного ланцюжка потрібні лише `wrangler login` і `BOT_TOKEN`/`CHAT_ID`.
