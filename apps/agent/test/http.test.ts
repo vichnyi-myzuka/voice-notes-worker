@@ -122,7 +122,7 @@ describe("веб-інтерфейс", () => {
 describe("ручний знімок", () => {
 	it("GET /api/computer/connections повертає SSH-з'єднання", async () => {
 		const { agent } = fakeAgent();
-		const res = await handleFetch(call("/api/computer/connections", "GET"), env, agent);
+		const res = await handleFetch(call("/api/computer/connections?detail=1", "GET"), env, agent);
 		expect(await res.json()).toMatchObject({ running: true, ssh: { listening: true, connections: 1 } });
 	});
 

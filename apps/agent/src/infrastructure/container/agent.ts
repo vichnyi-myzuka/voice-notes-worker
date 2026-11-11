@@ -9,7 +9,7 @@ export type SessionObject = {
 	link(id: string): Promise<string | undefined>;
 	snapshot(): Promise<SnapshotInfo>;
 	info(): Promise<ComputerInfo>;
-	connections(): Promise<ConnectionsInfo>;
+	connections(detail: boolean): Promise<ConnectionsInfo>;
 	fetch(req: Request): Promise<Response>;
 };
 
@@ -31,6 +31,6 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		link: (id) => computer().link(id),
 		snapshot: () => computer().snapshot(),
 		info: () => computer().info(),
-		connections: () => computer().connections(),
+		connections: (detail) => computer().connections(detail),
 	};
 };

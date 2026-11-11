@@ -40,8 +40,9 @@ export type Agent = {
 	link(id: string): Promise<string | undefined>;
 	// Внутрішній стан контейнера для діагностики (наприклад, чому він не засинає).
 	info(): Promise<ComputerInfo>;
-	// Скільки SSH-з'єднань (і з'єднань воркера з OpenCode) зараз відкрито; контейнер не будить.
-	connections(): Promise<ConnectionsInfo>;
+	// Чи працює контейнер; з detail ще й скільки SSH-з'єднань (і з'єднань воркера з OpenCode) відкрито. Контейнер не будить, але
+	// detail читає /proc через exec, а exec продовжує життя контейнера (перевірено): не опитуй у циклі.
+	connections(detail: boolean): Promise<ConnectionsInfo>;
 	// Примусово зберігає диск контейнера (зміни, зроблені поза сесіями агента, наприклад через SSH).
 	snapshot(): Promise<SnapshotInfo>;
 };
