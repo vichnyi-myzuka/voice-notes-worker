@@ -13,7 +13,7 @@ export type TgMessage = {
 	reply_to_message?: { message_id: number };
 };
 
-export type ReceivedVoice = {
+export type ReceivedMessage = {
 	contentType: string;
 	fileId?: string; // для тексту немає
 	kind: string; // voice | audio | text | photo

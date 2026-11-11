@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { receiveTelegramVoice, telegramMessageUrl, tgSendNote, type ReceivedVoice } from "../src/infrastructure/telegram";
+import { receiveTelegramMessage, telegramMessageUrl, tgSendNote, type ReceivedMessage } from "../src/infrastructure/telegram";
 import { fakeEnv } from "./fake-env";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -11,7 +11,7 @@ describe("telegramMessageUrl", () => {
 	});
 });
 
-describe("receiveTelegramVoice", () => {
+describe("receiveTelegramMessage", () => {
 	const env = fakeEnv({ TG_OWNER_ID: "230295237" });
 	const voice = { file_id: "f", file_size: 1000 };
 	const base = { message_id: 1, date: 1 };
@@ -24,8 +24,8 @@ describe("receiveTelegramVoice", () => {
 	])("ігнорує: %s", async (_, msg) => {
 		const fetchSpy = vi.fn();
 		vi.stubGlobal("fetch", fetchSpy);
-		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => true);
-		await receiveTelegramVoice(env, msg, store);
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
+		await receiveTelegramMessage(env, msg, store);
 		expect(store).not.toHaveBeenCalled();
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
@@ -42,8 +42,8 @@ describe("receiveTelegramVoice", () => {
 	])("текст не стає нотаткою: %s", async (_, msg) => {
 		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
 		vi.stubGlobal("fetch", fetchSpy);
-		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => true);
-		await receiveTelegramVoice(env, msg, store);
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
+		await receiveTelegramMessage(env, msg, store);
 		expect(store).not.toHaveBeenCalled();
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
@@ -51,8 +51,8 @@ describe("receiveTelegramVoice", () => {
 	it("/start від власника в приваті — лише відповідь, без нотатки", async () => {
 		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
 		vi.stubGlobal("fetch", fetchSpy);
-		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => true);
-		await receiveTelegramVoice(env, { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "/start" }, store);
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
+		await receiveTelegramMessage(env, { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "/start" }, store);
 		expect(store).not.toHaveBeenCalled();
 		expect(fetchSpy).toHaveBeenCalledOnce();
 		expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain("sendMessage");
@@ -61,8 +61,8 @@ describe("receiveTelegramVoice", () => {
 	it("звичайний текст у каналі — нова нотатка з даними для видалення", async () => {
 		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
 		vi.stubGlobal("fetch", fetchSpy);
-		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => true);
-		await receiveTelegramVoice(env, { ...base, message_id: 9, chat: { id: -1004390223227, type: "channel" }, text: "Купити хліб і зателефонувати мамі" }, store);
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
+		await receiveTelegramMessage(env, { ...base, message_id: 9, chat: { id: -1004390223227, type: "channel" }, text: "Купити хліб і зателефонувати мамі" }, store);
 		expect(store).toHaveBeenCalledOnce();
 		const [key, body, meta] = store.mock.calls[0];
 		expect(key).toMatch(/^1000-[0-9a-f]{8}\.txt$/);
@@ -79,8 +79,8 @@ describe("receiveTelegramVoice", () => {
 
 	it("звичайний текст від власника в приваті — нотатка без даних для видалення", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true })));
-		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => true);
-		await receiveTelegramVoice(env, { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "ідея для проєкту" }, store);
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
+		await receiveTelegramMessage(env, { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "ідея для проєкту" }, store);
 		expect(store).toHaveBeenCalledOnce();
 		const [key, , meta] = store.mock.calls[0];
 		expect(key).toMatch(/\.txt$/);
@@ -92,8 +92,8 @@ describe("receiveTelegramVoice", () => {
 	it("текстова відповідь на нотатку в каналі — інструкція редагування без завантаження файлу", async () => {
 		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
 		vi.stubGlobal("fetch", fetchSpy);
-		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => true);
-		await receiveTelegramVoice(
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
+		await receiveTelegramMessage(
 			env,
 			{ ...base, message_id: 8, chat: { id: -1004390223227, type: "channel" }, text: "Зроби все на сьогодні", reply_to_message: { message_id: 5 } },
 			store,
@@ -111,8 +111,8 @@ describe("receiveTelegramVoice", () => {
 	it("правка, яку store вже прибрав (повертає false), — без реакції ✍", async () => {
 		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
 		vi.stubGlobal("fetch", fetchSpy);
-		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => false);
-		await receiveTelegramVoice(
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => false);
+		await receiveTelegramMessage(
 			env,
 			{ ...base, message_id: 8, chat: { id: -1004390223227, type: "channel" }, text: "Зроби все на сьогодні", reply_to_message: { message_id: 5 } },
 			store,
@@ -132,8 +132,8 @@ describe("receiveTelegramVoice", () => {
 						: Response.json({ ok: true }),
 			),
 		);
-		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => true);
-		await receiveTelegramVoice(
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
+		await receiveTelegramMessage(
 			env,
 			{ ...base, message_id: 7, chat: { id: -1004390223227, type: "channel" }, voice, reply_to_message: { message_id: 5 } },
 			store,
@@ -161,8 +161,8 @@ describe("receiveTelegramVoice", () => {
 						: Response.json({ ok: true }),
 			),
 		);
-		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedVoice) => true);
-		await receiveTelegramVoice(
+		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
+		await receiveTelegramMessage(
 			env,
 			{
 				...base,
