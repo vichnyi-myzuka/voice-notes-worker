@@ -6,5 +6,5 @@ export { AgentSession } from "./infrastructure/container";
 export type { Env } from "./env";
 
 export default {
-	fetch: (req, env) => handleFetch(req, env, durableAgent(env, new URL(req.url).origin)),
+	fetch: (req, env) => handleFetch(req, env, durableAgent(env.AGENT_SESSION, new URL(req.url).origin)),
 } satisfies ExportedHandler<Env>;

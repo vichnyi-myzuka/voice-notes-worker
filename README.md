@@ -370,3 +370,22 @@ npm run deploy
 ### Відкриті питання прототипу
 
 Порт і Durable Object покриті тестами на фейках (`apps/agent/test`: `fake-agent.ts`, `session.test.ts` зі скриптованим OpenCode), але не перевірені без розгорнутого контейнера: ціна й холодний старт `standard-1`; чи проходять WebSocket-запити (термінал у веб-інтерфейсі) через `getTcpPort().fetch`; чи достатньо cookie-маршрутизації для SSE (`/event`); точний URL, що відкриває саме сесію агента, а не головну сторінку. Результати записати в issue #3.
+
+### Без контейнера: OpenCode SDK у Durable Object (експериментально)
+
+Другий вхід того ж воркера (`src/sdk.ts`, `wrangler.sdk.toml`): сесія — Durable Object `WorkerdSession`, у якому працює OpenCode V2 через `@opencode/sdk/workerd`, а база лежить у SQLite самого DO. Той самий HTTP-шар і порт `Agent`, Docker не потрібен.
+
+```sh
+cd apps/agent
+npx wrangler dev -c wrangler.sdk.toml --var LOCAL_DEV:1 --port 8789
+curl -X POST localhost:8789/api/sessions -H 'content-type: application/json' -d '{"id":"probe-00001","prompt":"Скажи привіт"}'
+```
+
+Перевірено локально: сесія створюється, задача ставиться (агент `build`, модель за замовчуванням `opencode/big-pickle`), `status` → `working`, `abort` перериває крок, `status` → `idle`, повторний `start` ідемпотентний, історія віддається JSON-ом на `/` (з cookie сесії).
+
+Обмеження профілю workerd (за типами й документацією SDK): `FileSystem`, `Pty` і shell — заглушки («fail until a remote sandbox backs them»), `Vcs` і `Snapshot` — no-op. Тож такий агент **не може клонувати репозиторій, читати файли й запускати команди**; корисний для розмов і для інструментів, які дають плагіни (наприклад, через GitHub API). Веб-інтерфейсу немає. Бандл 24,9 МБ (3,9 МБ gzip): потрібен платний план Workers.
+
+### Версії OpenCode
+
+Контейнерний образ ставить `opencode-ai` з npm (зараз це V1: `opencode web`, API `/session`, `OPENCODE_SERVER_PASSWORD`). V2 ставиться окремим інсталятором, його сервер віддає веб-інтерфейс сам (`opencode serve`, API `/api/...`, `OPENCODE_PASSWORD`; старий `OPENCODE_SERVER_PASSWORD` ще працює). Перехід контейнера на V2 потребує зміни `infrastructure/container/opencode.ts` і Dockerfile.
+

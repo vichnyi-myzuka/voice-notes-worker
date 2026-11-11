@@ -1,0 +1,19 @@
+# Експериментальний варіант без контейнера: OpenCode V2 SDK працює прямо в Durable Object.
+# Запуск: npx wrangler dev -c wrangler.sdk.toml --var LOCAL_DEV:1  (Docker не потрібен)
+name = "voice-notes-agent-sdk"
+main = "src/sdk.ts"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
+
+[observability]
+enabled = true
+
+[[durable_objects.bindings]]
+name = "AGENT_SESSION"
+class_name = "WorkerdSession"
+
+[exports.WorkerdSession]
+type = "durable-object"
+storage = "sqlite"
