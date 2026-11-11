@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import type { AgentStatus, ComputerInfo, SnapshotInfo, StartInput } from "../../domain/agent";
+import type { AgentStatus, ComputerInfo, ConnectionsInfo, SnapshotInfo, StartInput } from "../../domain/agent";
+import { parseConnections } from "./connections";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, createSession, hasModel, interrupt, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
@@ -257,6 +258,15 @@ export class AgentSession extends DurableObject<Env> {
 			snapshot: snapshot ? { id: snapshot.id, at: snapshot.at } : null,
 			streams: [...this.streams.values()],
 		};
+	}
+
+	// Скільки SSH-з'єднань відкрито (за /proc/net/tcp). Контейнер, що спить, не будимо й не продовжуємо його життя через ensureRunning.
+	async connections(): Promise<ConnectionsInfo> {
+		if (!this.ctx.container?.running) return { running: false };
+		const proc = await this.ctx.container.exec(["cat", "/proc/net/tcp", "/proc/net/tcp6"]);
+		const out = await proc.output();
+		if (out.exitCode !== 0) throw new Error(`cannot read /proc/net/tcp (${out.exitCode})`);
+		return { running: true, ...parseConnections(new TextDecoder().decode(out.stdout), OPENCODE_PORT) };
 	}
 
 	// Веб-інтерфейс OpenCode: запити (разом із SSE) проксуються в контейнер.

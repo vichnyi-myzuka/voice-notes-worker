@@ -17,6 +17,12 @@ export type ComputerInfo = {
 	streams: { path: string; openedAt: number }[];
 };
 
+// Порт у контейнері: чи слухає і скільки встановлених з'єднань (SSH, OpenCode).
+export type PortInfo = { listening: boolean; connections: number };
+
+// Підключення до контейнера. Контейнер, що спить, не будиться: тоді лише running=false.
+export type ConnectionsInfo = { running: boolean; ssh?: PortInfo; opencode?: PortInfo };
+
 // Результат ручного знімка диска контейнера.
 export type SnapshotInfo = { id: string; bytes: number; ms: number };
 
@@ -34,6 +40,8 @@ export type Agent = {
 	link(id: string): Promise<string | undefined>;
 	// Внутрішній стан контейнера для діагностики (наприклад, чому він не засинає).
 	info(): Promise<ComputerInfo>;
+	// Скільки SSH-з'єднань (і з'єднань воркера з OpenCode) зараз відкрито; контейнер не будить.
+	connections(): Promise<ConnectionsInfo>;
 	// Примусово зберігає диск контейнера (зміни, зроблені поза сесіями агента, наприклад через SSH).
 	snapshot(): Promise<SnapshotInfo>;
 };

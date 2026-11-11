@@ -17,6 +17,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   POST /api/sessions/<id>/messages {text}   → уточнення в ту саму сесію
 //   POST /api/sessions/<id>/abort             → зупиняє поточну роботу агента
 //   GET  /api/computer                        → стан контейнера для діагностики (чому не засинає, відкриті SSE-потоки)
+//   GET  /api/computer/connections            → скільки SSH-з'єднань відкрито (контейнер не будить)
 //   POST /api/computer/snapshot                      → примусово зберігає диск контейнера (після змін поза сесіями, наприклад через SSH)
 //   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
 //   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)
@@ -48,6 +49,7 @@ export async function handleFetch(req: Request, env: Env, agent: Agent): Promise
 	// до воркера («Unrecognised route»). Підміняємо його порожнім: без fetch-обробника все йде через мережу.
 	if (url.pathname === "/sw.js") return new Response(NEUTRAL_SW, { headers: { "content-type": "text/javascript", "cache-control": "no-store" } });
 
+	if (req.method === "GET" && url.pathname === "/api/computer/connections") return json(await agent.connections());
 	if (req.method === "GET" && url.pathname === "/api/computer") return json(await agent.info());
 
 	if (req.method === "POST" && url.pathname === "/api/computer/snapshot") {
