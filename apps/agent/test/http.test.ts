@@ -4,8 +4,8 @@ import { handleFetch } from "../src/interface/http";
 import { fakeAgent } from "./fake-agent";
 
 // LOCAL_DEV вимикає Access; перевірку токена окремо покриває access.test.ts.
-const env = { LOCAL_DEV: "1", OPENCODE_SERVER_PASSWORD: "pw" } as unknown as Env;
-const accessEnv = { OPENCODE_SERVER_PASSWORD: "pw" } as unknown as Env;
+const env = { LOCAL_DEV: "1", OPENCODE_PASSWORD: "pw" } as unknown as Env;
+const accessEnv = { OPENCODE_PASSWORD: "pw" } as unknown as Env;
 
 const ID = "session-0001";
 const call = (path: string, method = "GET", body?: unknown, headers: HeadersInit = {}) =>
