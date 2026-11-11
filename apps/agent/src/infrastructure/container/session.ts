@@ -6,8 +6,8 @@ import { editChat, sendChat } from "../chat";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
-import { describeActivity, describeForm } from "./activity";
-import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, readEvents, type OpencodeEvent, sessionExists, type ModelRef, type Opencode } from "./opencode";
+import { describeActivity, describeForm, formChoices, type Choice } from "./activity";
+import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, readEvents, type OpencodeEvent, type OpencodeForm, replyForm, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const DEFAULT_INACTIVITY_MS = 60 * 60 * 1000;
@@ -32,6 +32,9 @@ const JOB_ATTEMPTS = 6;
 const JOB_RETRY_MS = 15 * 1000;
 type Job = { id: string; target: WatchTarget; attempts: number } & ({ input: StartInput } | { text: string });
 const jobKey = (id: string) => `job:${id}`;
+// Питання агента, на яке можна відповісти кнопкою: форма й варіанти (callback_data несе лише номер варіанта).
+type PendingForm = { formId: string; ocId: string; key: string; choices: Choice[] };
+const formKey = (id: string) => `form:${id}`;
 const PROGRESS_INTERVAL_MS = 4000; // не частіше: ліміти Telegram на редагування одного повідомлення
 const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096
 const SUMMARY_MAX = 3000; // підсумок у чат: решта обрізається (ліміт повідомлення Telegram — 4096)
@@ -287,15 +290,16 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
-	private async show(w: WatchTarget, status: string, final = false): Promise<boolean> {
+	private async show(w: WatchTarget, status: string, final = false, answers?: string[]): Promise<boolean> {
 		if (!w.postId || !this.env.BOT_TOKEN) return false;
-		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, status, final), w.url, final ? "done" : "working");
+		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, status, final), w.url, final ? "done" : "working", answers);
 	}
 
 	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
 	private async finishWatch(key: string, w: Watch, text: string): Promise<void> {
 		if (!(await this.ctx.storage.get(key))) return; // уже показано (подія й опитування можуть збігтися)
 		await this.ctx.storage.delete(key);
+		await this.ctx.storage.delete(formKey(key.slice("watch:".length))); // питання, що лишилось без відповіді, неактуальне
 		this.lastProgress.delete(w.ocId);
 		await this.postQueue.catch(() => undefined); // проміжна правка вже в дорозі: підсумок іде після неї
 		await this.mark(w, false);
@@ -495,7 +499,7 @@ export class AgentSession extends DurableObject<Env> {
 	private async onEvent(event: OpencodeEvent): Promise<void> {
 		const ocId = event.data?.sessionID;
 		// Агент поставив питання й чекає відповіді: показуємо його одразу, без тротлінгу (далі оновлень не буде).
-		if (event.type === "form.created" && event.data?.form?.sessionID) return this.progress(event.data.form.sessionID, "", undefined, describeForm(event.data.form));
+		if (event.type === "form.created" && event.data?.form?.sessionID) return this.ask(event.data.form);
 		if (ocId && event.type === "session.tool.input.started" && event.data?.id && event.data.name) {
 			if (this.toolNames.size > 500) this.toolNames.clear();
 			this.toolNames.set(event.data.id, event.data.name);
@@ -511,9 +515,31 @@ export class AgentSession extends DurableObject<Env> {
 		await this.finishWatch(key, w, await this.summary(this.opencode(), w));
 	}
 
+	// Питання агента: текст у пост, а для простих (один вибір, так/ні) ще й кнопки-відповіді.
+	private async ask(form: OpencodeForm): Promise<void> {
+		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: "watch:" }))].find(([, w]) => w.ocId === form.sessionID);
+		if (!entry) return;
+		const id = entry[0].slice("watch:".length);
+		const found = form.id ? formChoices(form) : undefined;
+		if (found && form.id) await this.ctx.storage.put(formKey(id), { formId: form.id, ocId: entry[1].ocId, key: found.key, choices: found.choices } satisfies PendingForm);
+		await this.progress(entry[1].ocId, "", undefined, describeForm(form), found?.choices.map((c) => c.label));
+	}
+
+	// Відповідь кнопкою: передає вибраний варіант агентові й показує його в пості. undefined — питання вже неактуальне.
+	async answer(id: string, choice: number): Promise<string | undefined> {
+		const form = await this.ctx.storage.get<PendingForm>(formKey(id));
+		const picked = form?.choices[choice];
+		if (!form || !picked) return undefined;
+		await replyForm(this.opencode(), form.ocId, form.formId, { [form.key]: picked.value });
+		await this.ctx.storage.delete(formKey(id));
+		const w = await this.ctx.storage.get<Watch>(watchKey(id));
+		if (w) await this.show(w, `${WORKING} · відповідь: ${picked.label}`).catch(() => {});
+		return picked.label;
+	}
+
 	// «⏳ Працює · редагує README.md»: пост оновлюється на місці, не частіше за PROGRESS_INTERVAL_MS (проміжні дії між оновленнями пропускаються).
 	// announcement: готовий текст (питання агента) замість підпису дії; показується завжди, навіть частіше за інтервал.
-	private async progress(ocId: string, tool: string, input: Record<string, unknown> | undefined, announcement?: string): Promise<void> {
+	private async progress(ocId: string, tool: string, input: Record<string, unknown> | undefined, announcement?: string, answers?: string[]): Promise<void> {
 		if ((!tool && !announcement) || !this.env.BOT_TOKEN) return;
 		const now = Date.now();
 		if (!announcement && now - (this.lastProgress.get(ocId) ?? 0) < (positiveInt(this.env.AGENT_PROGRESS_MS) ?? PROGRESS_INTERVAL_MS)) return;
@@ -523,7 +549,7 @@ export class AgentSession extends DurableObject<Env> {
 		const w = entry[1];
 		const text = announcement ?? `${WORKING} · ${describeActivity(tool, input)}`;
 		const job = this.postQueue.catch(() => undefined).then(async () => {
-			if (await this.ctx.storage.get(entry[0])) await this.show(w, text); // спостереження могло закінчитись, поки чекали в черзі
+			if (await this.ctx.storage.get(entry[0])) await this.show(w, text, false, answers); // спостереження могло закінчитись, поки чекали в черзі
 		});
 		this.postQueue = job;
 		await job;
@@ -545,6 +571,7 @@ export class AgentSession extends DurableObject<Env> {
 	// Видалення сесії: історія в OpenCode, worktree (або порожня тека) і записи в сховищі. Гілка agent/<назва> видаляється, якщо роботу не
 	// втрачено (див. CLEANUP); незакомічене зникає. Невідома сесія: нічого не робимо.
 	async remove(id: string): Promise<void> {
+		await this.ctx.storage.delete(formKey(id));
 		await this.ctx.storage.delete(jobKey(id)); // завдання, яке ще не запустилось, скасовується
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked) return;

@@ -11,6 +11,7 @@ export function fakeAgent(origin = "https://agent.example") {
 	const snapshots: string[] = [];
 	const resets: string[] = [];
 	const watches: { id: string; target: WatchTarget }[] = [];
+	const choices = new Map<string, string[]>(); // id сесії → підписи варіантів поточного питання (тест задає)
 	let snapshotError = "";
 	const get = (id: string) => {
 		const s = sessions.get(id);
@@ -22,6 +23,10 @@ export function fakeAgent(origin = "https://agent.example") {
 		async begin(id, input, target) {
 			await agent.start(id, input);
 			await agent.watch(id, target);
+		},
+		async answer(id, choice) {
+			get(id);
+			return choices.get(id)?.[choice];
 		},
 		async resume(id, text, target) {
 			await agent.followUp(id, text);
@@ -80,5 +85,5 @@ export function fakeAgent(origin = "https://agent.example") {
 			return { id: `snap${snapshots.length}`, bytes: 1, ms: 2 };
 		},
 	};
-	return { agent, sessions, served, snapshots, resets, watches, failSnapshot: (message: string) => void (snapshotError = message) };
+	return { agent, choices, sessions, served, snapshots, resets, watches, failSnapshot: (message: string) => void (snapshotError = message) };
 }

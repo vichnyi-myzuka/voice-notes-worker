@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeActivity, describeForm } from "../src/infrastructure/container/activity";
+import { describeActivity, describeForm, formChoices } from "../src/infrastructure/container/activity";
 
 describe("describeActivity", () => {
 	it("файли: шлях без теки сесії", () => {
@@ -32,5 +32,22 @@ describe("describeForm", () => {
 		expect(describeForm({})).toContain("Агент питає");
 		expect(describeForm({ title: "x".repeat(3000) }).length).toBeLessThanOrEqual(1201);
 		expect(describeActivity("question", {})).toBe("ставить питання");
+	});
+});
+
+describe("formChoices", () => {
+	const opts = [{ value: "a", label: "A" }, { value: "b", label: "B" }];
+	it("одне поле: варіанти, так/ні, одиночний multiselect; значення — як чекає форма", () => {
+		expect(formChoices({ fields: [{ key: "k", type: "string", options: opts }] })).toEqual({ key: "k", choices: [{ label: "A", value: "a" }, { label: "B", value: "b" }] });
+		expect(formChoices({ fields: [{ key: "k", type: "boolean" }] })?.choices.map((c) => c.value)).toEqual([true, false]);
+		expect(formChoices({ fields: [{ key: "k", type: "multiselect", maxItems: 1, options: opts }] })?.choices[1].value).toEqual(["b"]);
+	});
+
+	it("без кнопок: кілька видимих полів, вільний текст, множинний вибір; прихованих полів не враховує", () => {
+		expect(formChoices({ fields: [{ key: "a", type: "string", options: opts }, { key: "b", type: "string" }] })).toBeUndefined();
+		expect(formChoices({ fields: [{ key: "a", type: "string" }] })).toBeUndefined();
+		expect(formChoices({ fields: [{ key: "a", type: "multiselect", options: opts }] })).toBeUndefined();
+		expect(formChoices({ fields: [{ key: "a", type: "string", options: opts }, { key: "h", type: "string", hidden: true }] })).toBeDefined();
+		expect(formChoices({ fields: [{ key: "a", type: "string", options: Array.from({ length: 20 }, (_, i) => ({ value: `${i}`, label: `L${i}` })) }] })?.choices).toHaveLength(8);
 	});
 });

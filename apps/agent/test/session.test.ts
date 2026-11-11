@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], formReplies: [] as { path: string; body: unknown }[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -96,6 +96,10 @@ function fakeContainer() {
 				}
 				if (req.method === "POST" && path === "/api/integration/claude-agent/connect/external") {
 					opencode.connected = true;
+					return new Response(null, { status: 204 });
+				}
+				if (req.method === "POST" && /^\/api\/session\/[^/]+\/form\/[^/]+\/reply$/.test(path)) {
+					opencode.formReplies.push({ path, body: await req.json() });
 					return new Response(null, { status: 204 });
 				}
 				if (path === "/api/model") return ok(opencode.connected && ++opencode.modelChecks > opencode.modelsAfter ? [{ id: "sonnet", providerID: "claude-agent" }, { id: "opus", providerID: "claude-agent" }] : []);
@@ -711,6 +715,65 @@ describe("AgentSession", () => {
 					await flush();
 					expect(edits()).toHaveLength(2); // дія й питання, без пропуску
 					expect(edits().at(-1)!.text).toContain("❓ Який стиль?\nСтиль\n• Мінімалізм");
+				});
+
+				describe("відповідь кнопкою на питання агента", () => {
+					const SID = "tg-1-1"; // id чату має префікс tg-: з нього береться callback_data
+					const POST_TG = { ...POST, url: "https://agent.example/s/tg-1-1" };
+					const form = (fields: unknown[]) => ({ type: "form.created", data: { form: { id: "form1", sessionID: ocId, title: "Який стиль?", fields } } });
+					const style = { key: "style", type: "string", title: "Стиль", options: [{ value: "min", label: "Мінімалізм" }, { value: "bold", label: "Яскравий" }] };
+					const keyboard = (c: unknown) => ((c as { reply_markup?: { inline_keyboard: { text: string; callback_data: string }[][] } }).reply_markup?.inline_keyboard ?? []).map((row) => row.map((b) => `${b.text}=${b.callback_data}`));
+
+					it("питання з варіантами: кнопки в пості, натискання відповідає на форму й показується в пості", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача" });
+						await t.session.watch(SID, POST_TG);
+						t.opencode.emit(form([style]));
+						await flush();
+						const last = sent.filter((c) => "message_id" in c).at(-1)!;
+						expect(keyboard(last)).toEqual([["Мінімалізм=ans:tg-1-1:0"], ["Яскравий=ans:tg-1-1:1"], ["⏹ Стоп=stop:tg-1-1", "🗑 Видалити=del:tg-1-1"]]);
+						expect(await t.session.answer(SID, 1)).toBe("Яскравий");
+						expect(t.opencode.formReplies).toEqual([{ path: `/api/session/${ocId}/form/form1/reply`, body: { answer: { style: "bold" } } }]);
+						expect(edits().at(-1)!.text).toContain("відповідь: Яскравий");
+						expect(await t.session.answer(SID, 1)).toBeUndefined(); // вже відповіли
+					});
+
+					it("так/ні дає булеві значення; одиночний multiselect — масив", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача" });
+						await t.session.watch(SID, POST_TG);
+						t.opencode.emit(form([{ key: "ok", type: "boolean" }]));
+						await flush();
+						await t.session.answer(SID, 0);
+						t.opencode.emit(form([{ key: "pick", type: "multiselect", maxItems: 1, options: [{ value: "a", label: "A" }] }]));
+						await flush();
+						await t.session.answer(SID, 0);
+						expect(t.opencode.formReplies.map((r) => r.body)).toEqual([{ answer: { ok: true } }, { answer: { pick: ["a"] } }]);
+					});
+
+					it("складна форма (кілька полів) показується текстом без кнопок; відповісти кнопкою не можна", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача" });
+						await t.session.watch(SID, POST_TG);
+						t.opencode.emit(form([style, { key: "extra", type: "string" }]));
+						await flush();
+						const last = sent.filter((c) => "message_id" in c).at(-1)!;
+						expect(keyboard(last)).toEqual([["⏹ Стоп=stop:tg-1-1", "🗑 Видалити=del:tg-1-1"]]);
+						expect(await t.session.answer(SID, 0)).toBeUndefined();
+					});
+
+					it("після завершення сесії питання неактуальне", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача" });
+						await t.session.watch(SID, POST_TG);
+						t.opencode.emit(form([style]));
+						await flush();
+						t.opencode.busy.clear();
+						t.opencode.info[ocId] = { outcome: "succeeded" };
+						t.opencode.emit({ type: "session.execution.succeeded", data: { sessionID: ocId } });
+						await flush();
+						expect(await t.session.answer(SID, 0)).toBeUndefined();
+					});
 				});
 
 				it("чужа сесія, виклик без відомої назви і сесія без поста нічого не редагують", async () => {
