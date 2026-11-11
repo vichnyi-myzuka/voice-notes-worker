@@ -1,4 +1,4 @@
-import type { TgEntity, TgTextLink } from "../../infrastructure/telegram";
+import type { TextLink } from "../channel";
 import { formatTriage, taskUrl, type TriageItem } from "../../infrastructure/todoist";
 import type { Meta } from "./types";
 
@@ -18,8 +18,8 @@ export function buildCaption(
 	triaged: TriageItem[] | null,
 	ts: number,
 	timeZone: string,
-	notice = "",
-	max = CAPTION_MAX,
+	notice: string,
+	max: number,
 ): string {
 	const tail = [notice, hashtags(new Date(ts), timeZone, triaged)].filter(Boolean).join("\n\n");
 	return `${fitCaption(meta, triaged, max - tail.length - 2)}\n\n${tail}`;
@@ -52,22 +52,11 @@ export function fitCaption(meta: Meta, triaged: TriageItem[] | null, room: numbe
 	return truncate(caption(summary, Math.min(1, lines.length)), room);
 }
 
-export function textNote(caption: string, original: string, entities: TgEntity[] = []): { text: string; entities: TgEntity[] } {
-	const room = TEXT_MAX - caption.length - 2;
-	let cut = room - 1;
-	if (/[\uD800-\uDBFF]/.test(original[cut - 1] ?? "")) cut--; // не розрізаємо emoji (сурогатну пару)
-	const quote = original.length > room ? `${original.slice(0, cut)}…` : original;
-	return {
-		text: `${caption}\n\n${quote}`,
-		entities: [...entities, { type: "expandable_blockquote", offset: caption.length + 2, length: quote.length }],
-	};
-}
-
-// Telegram caption_entities: назви задач, що вже в Todoist, стають посиланнями на них.
+// Посилання в підписі: назви задач, що вже в Todoist, стають посиланнями на них.
 // Шукаємо рядки «• <назва> →» по черзі після заголовка задач; обрізане підписом — без посилання.
 // offset/length у UTF-16, як і довжина рядків у JS.
-export function taskLinks(caption: string, triaged: TriageItem[] | null, inTodoist: Record<string, string>) {
-	const links: TgTextLink[] = [];
+export function taskLinks(caption: string, triaged: TriageItem[] | null, inTodoist: Record<string, string>): TextLink[] {
+	const links: TextLink[] = [];
 	let from = caption.indexOf("✅ Задачі:");
 	if (from < 0) return links;
 	for (const i of triaged ?? []) {
@@ -76,21 +65,13 @@ export function taskLinks(caption: string, triaged: TriageItem[] | null, inTodoi
 		const at = caption.indexOf(`\n• ${i.title} →`, from); // після назви завжди «→ проєкт»
 		if (at < 0) continue;
 		const offset = at + "\n• ".length;
-		links.push({ type: "text_link", offset, length: i.title.length, url: taskUrl(id) });
+		links.push({ offset, length: i.title.length, url: taskUrl(id) });
 		from = offset + i.title.length;
 	}
 	return links;
 }
 
-export const CAPTION_MAX = 1024; // ліміт підпису до аудіо в Telegram
-
-export const TEXT_CAPTION_MAX = 3500; // текстова нотатка (ліміт повідомлення 4096): решта — під цитату оригіналу
-
 export const SUMMARY_MIN = 150; // коротше summary не ріжемо: далі вже скорочуємо список задач
-
-// Текстова нотатка: підпис, а під ним оригінальний текст у згорнутій цитаті (як аудіо в голосовій нотатці).
-// Ліміт повідомлення Telegram — 4096 символів (UTF-16); довгий оригінал обрізається.
-export const TEXT_MAX = 4096;
 
 // Хештеги для навігації в каналі: місяць, ISO-тиждень (у timeZone) і проєкти нових задач.
 export const MONTHS = ["січень", "лютий", "березень", "квітень", "травень", "червень", "липень", "серпень", "вересень", "жовтень", "листопад", "грудень"];

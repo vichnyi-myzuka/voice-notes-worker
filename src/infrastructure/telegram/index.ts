@@ -1,6 +1,6 @@
-// Bot API і прийом голосових, тексту й фото з вебхука.
+// Telegram: адаптер каналу (Channel), Bot API, прийом голосових, тексту й фото з вебхука.
 
-export { NO_PREVIEW, deleteOriginal, markEditing, tg, tgSendMessage, tgSendNote, tgSendText } from "./api";
+export { CAPTION_MAX, TEXT_CAPTION_MAX, telegramChannel, textNote } from "./channel";
 export { receiveTelegramMessage } from "./receive";
-export type { ReceivedMessage, StoreMessage, TgEntity, TgTextLink, TgUpdate } from "./types";
-export { telegramMessageUrl } from "./api";
+export { telegramMessageUrl, tgSendNote } from "./api";
+export type { ReceivedMessage } from "./types";

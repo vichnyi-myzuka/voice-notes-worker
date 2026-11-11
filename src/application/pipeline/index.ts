@@ -2,3 +2,4 @@
 
 export { processEdit } from "./edit";
 export { processNote } from "./note";
+export { captionNotice, refreshNote, showNote } from "./show";

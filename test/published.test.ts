@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captionNotice, loadNote, noteIdByMessage, refreshNote, removeNote, saveNote, showNote, type Note } from "../src/domain/published";
+import { captionNotice, refreshNote, showNote } from "../src/application/pipeline";
+import { loadNote, noteIdByMessage, removeNote, saveNote, type Note } from "../src/domain/published";
+import { telegramChannel } from "../src/infrastructure/telegram";
 import { fakeEnv } from "./fake-env";
 
 const meta = { title: "Назва", summary: "Коротко.", ideas: [], tasks: [] };
@@ -46,7 +48,7 @@ describe("published note", () => {
 	it("showNote редагує підпис аудіо-нотатки", async () => {
 		const calls = stubTelegram();
 		const env = fakeEnv({ BOT_TOKEN: "t" });
-		await showNote(env, "n1", note(), { meta, triage: null, notice: "" });
+		await showNote(env, telegramChannel(env), "n1", note(), { meta, triage: null, notice: "" });
 		expect(calls).toHaveLength(1);
 		expect(calls[0].method).toBe("editMessageCaption");
 		expect(calls[0].body).toMatchObject({ message_id: 42, caption: expect.stringContaining("Назва") });
@@ -55,7 +57,7 @@ describe("published note", () => {
 	it("showNote редагує текст текстової нотатки без прев'ю посилань", async () => {
 		const calls = stubTelegram();
 		const env = fakeEnv({ BOT_TOKEN: "t" });
-		await showNote(env, "n1", note({ text: true }), { meta, triage: null, notice: "" });
+		await showNote(env, telegramChannel(env), "n1", note({ text: true }), { meta, triage: null, notice: "" });
 		expect(calls[0].method).toBe("editMessageText");
 		expect(calls[0].body).toMatchObject({ link_preview_options: { is_disabled: true } });
 	});
@@ -63,18 +65,18 @@ describe("published note", () => {
 	it("«message is not modified» не є помилкою, інші помилки кидаються", async () => {
 		const env = fakeEnv({ BOT_TOKEN: "t" });
 		stubTelegram("Bad Request: message is not modified");
-		await expect(showNote(env, "n1", note(), { meta, triage: null, notice: "" })).resolves.toBeUndefined();
+		await expect(showNote(env, telegramChannel(env), "n1", note(), { meta, triage: null, notice: "" })).resolves.toBeUndefined();
 		stubTelegram("Bad Request: chat not found");
-		await expect(showNote(env, "n1", note(), { meta, triage: null, notice: "" })).rejects.toThrow("chat not found");
+		await expect(showNote(env, telegramChannel(env), "n1", note(), { meta, triage: null, notice: "" })).rejects.toThrow("chat not found");
 	});
 
 	it("refreshNote без нотатки нічого не робить, зі збоєм Todoist додає попередження", async () => {
 		const calls = stubTelegram();
 		const env = fakeEnv({ BOT_TOKEN: "t" });
-		await refreshNote(env, "n1", false);
+		await refreshNote(env, telegramChannel(env), "n1", false);
 		expect(calls).toHaveLength(0);
 		await saveNote(env, "n1", note());
-		await refreshNote(env, "n1", true);
+		await refreshNote(env, telegramChannel(env), "n1", true);
 		expect(calls[0].body.caption).toContain("Не вдалося оновити Todoist");
 	});
 
