@@ -1,0 +1,8 @@
+# Усе, що виконується з правами деплою чи потрапляє в контейнер агента, переглядає власник.
+/.github/                  @vichnyi-myzuka
+/.githooks/                @vichnyi-myzuka
+/scripts/                  @vichnyi-myzuka
+/package.json              @vichnyi-myzuka
+**/wrangler.toml           @vichnyi-myzuka
+/apps/agent/container/     @vichnyi-myzuka
+/apps/agent/payload/       @vichnyi-myzuka
