@@ -87,8 +87,9 @@ describe("веб-інтерфейс сесії", () => {
 	it("/s/<id> ставить cookie й веде у веб-інтерфейс, а далі запити йдуть у ту саму сесію", async () => {
 		const { agent, served } = fakeAgent();
 		const link = await handleFetch(call(`/s/${ID}`), env, agent);
-		expect(link.status).toBe(302);
-		expect(link.headers.get("location")).toBe("/");
+		expect(link.status).toBe(200);
+		expect(await link.text()).toContain('location.replace("/")');
+		expect(link.headers.get("clear-site-data")).toBe('"storage"'); // нова сесія: стан браузера від попередньої застарів
 		const cookie = link.headers.get("set-cookie") ?? "";
 		expect(cookie).toContain(`agent_session=${ID}`);
 		expect(cookie).toMatch(/HttpOnly/);
@@ -97,6 +98,20 @@ describe("веб-інтерфейс сесії", () => {
 		const page = await handleFetch(call("/", "GET", undefined, { cookie: `x=1; agent_session=${ID}` }), env, agent);
 		expect(await page.text()).toBe(`ui:${ID}`);
 		expect(served).toEqual([ID]);
+	});
+
+	it("/s/<id> тієї самої сесії не чистить стан браузера", async () => {
+		const { agent } = fakeAgent();
+		const link = await handleFetch(call(`/s/${ID}`, "GET", undefined, { cookie: `agent_session=${ID}` }), env, agent);
+		expect(link.headers.get("clear-site-data")).toBeNull();
+	});
+
+	it("/sw.js віддає нейтральний service worker без кешування (не з контейнера)", async () => {
+		const { agent, served } = fakeAgent();
+		const res = await handleFetch(call("/sw.js"), env, agent);
+		expect(res.headers.get("content-type")).toBe("text/javascript");
+		expect(await res.text()).not.toContain("fetch");
+		expect(served).toEqual([]);
 	});
 
 	it("без cookie сесії або з поганою проксі не працює", async () => {
