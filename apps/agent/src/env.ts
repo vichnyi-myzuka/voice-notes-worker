@@ -23,6 +23,7 @@ export interface Env {
 	BOT_TOKEN?: string;
 	TG_WEBHOOK_SECRET?: string;
 	TG_OWNER_ID?: string;
+	CHAT_ID?: string; // канал, у який публікуєш задачі (бот адмін): працює так само, як канал бота нотаток
 	AI: Ai;
 	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access
 }
