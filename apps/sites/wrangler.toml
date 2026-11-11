@@ -12,3 +12,17 @@ enabled = true
 [[r2_buckets]]
 binding = "SITES"
 bucket_name = "agent-sites"
+
+# Публічний хост (share.<BASE_DOMAIN>, домен підключає CI): той самий код, окремий бакет, без Access (змінна PUBLIC, див. README).
+# Прив'язки не успадковуються, тому бакет вказано явно: приватні сайти не можуть потрапити сюди помилкою.
+[env.public]
+name = "voice-notes-sites-public"
+workers_dev = false
+preview_urls = false
+
+[env.public.vars]
+PUBLIC = "1"
+
+[[env.public.r2_buckets]]
+binding = "SITES"
+bucket_name = "agent-sites-public"

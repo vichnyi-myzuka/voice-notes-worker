@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "deploy": "wrangler deploy",
+    "deploy:public": "wrangler deploy --env public",
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src test",

@@ -31,3 +31,9 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Публічний хост сайтів: той самий застосунок, інше середовище wrangler і домен share.<BASE_DOMAIN>
+      - if: inputs.app == 'sites'
+        run: npm run deploy:public -w apps/sites -- --domain "share.${{ secrets.BASE_DOMAIN }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

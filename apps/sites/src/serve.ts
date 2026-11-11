@@ -30,6 +30,14 @@ const TYPES: Record<string, string> = {
 
 const HEADERS = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cache-control": "no-cache" };
 
+// Публічний хост віддає чужим людям контент, який пише модель: лише статика, жодних відправок форм і запитів на чужі сервери
+// (проти фішингу й витоку), ніяких фреймів, без індексації пошуковиками.
+const PUBLIC_HEADERS = {
+	"content-security-policy":
+		"default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'",
+	"x-robots-tag": "noindex, nofollow",
+};
+
 const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 // Шлях запиту → ключ в R2 (`<назва>/<файл>`) або null, якщо шлях небезпечний чи це не сайт.
@@ -63,15 +71,19 @@ async function listing(env: Env): Promise<Response> {
 export async function serveSite(req: Request, env: Env): Promise<Response> {
 	if (req.method !== "GET" && req.method !== "HEAD") return new Response("method not allowed", { status: 405 });
 	const url = new URL(req.url);
-	if (url.pathname === "/") return listing(env);
+	const isPublic = env.PUBLIC === "1";
+	const extra = isPublic ? PUBLIC_HEADERS : {};
+	const notFound = () => new Response("not found", { status: 404, headers: extra });
+	// Публічний хост списку сайтів не показує: посилання знають лише ті, кому їх надіслали.
+	if (url.pathname === "/") return isPublic ? notFound() : listing(env);
 
 	const target = siteKey(url.pathname);
-	if (!target) return new Response("not found", { status: 404 });
+	if (!target) return notFound();
 	if ("redirect" in target) return Response.redirect(new URL(target.redirect, url).toString(), 308);
 
 	const object = await env.SITES.get(target.key);
-	if (!object) return new Response("not found", { status: 404 });
+	if (!object) return notFound();
 	const ext = target.key.split(".").pop()?.toLowerCase() ?? "";
 	const type = TYPES[ext] ?? object.httpMetadata?.contentType ?? "application/octet-stream";
-	return new Response(req.method === "HEAD" ? null : object.body, { headers: { ...HEADERS, "content-type": type, etag: object.httpEtag } });
+	return new Response(req.method === "HEAD" ? null : object.body, { headers: { ...HEADERS, ...extra, "content-type": type, etag: object.httpEtag } });
 }

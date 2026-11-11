@@ -35,6 +35,10 @@ export interface Env {
 	R2_SECRET_ACCESS_KEY?: string;
 	R2_ENDPOINT?: string;
 	SITES_BASE_URL?: string;
+	// Публічні сайти (`publish --public`): окремий токен R2 лише на публічний бакет і адреса публічного хоста
+	PUBLIC_R2_ACCESS_KEY_ID?: string;
+	PUBLIC_R2_SECRET_ACCESS_KEY?: string;
+	PUBLIC_SITES_BASE_URL?: string;
 	// JSON-масив [{repo: "owner/name", about: "як власник його називає"}]: з нього бот вибирає репозиторій за вільною фразою (не секрет, див. wrangler.toml)
 	AGENT_REPOS?: string;
 	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access

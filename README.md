@@ -338,7 +338,7 @@ Whisper (і резервна Gemma 4) працюють через binding `AI`. 
 
 Агент не має доступу до Cloudflare: його токен GitHub пушить у гілки й відкриває PR, але не має права `workflows` (змінити workflow й дістати секрет не вийде).
 
-Домени воркерів у репозиторії не зберігаються: CI підставляє `--domain <застосунок>.$BASE_DOMAIN` (`notes.`, `agent.`, `sites.`). Базовий домен задає секрет `BASE_DOMAIN` в обох environments (саме секрет, а не змінна: GitHub маскує його в публічних логах як `***`). У прикладах цього README `example.com` замінюй на свій домен. Локальний аварійний деплой: `npm run deploy -w apps/<назва> -- --domain <назва>.<домен>`.
+Домени воркерів у репозиторії не зберігаються: CI підставляє `--domain <застосунок>.$BASE_DOMAIN` (`notes.`, `agent.`, `sites.`, а для публічних сайтів `share.`). Базовий домен задає секрет `BASE_DOMAIN` в обох environments (саме секрет, а не змінна: GitHub маскує його в публічних логах як `***`). У прикладах цього README `example.com` замінюй на свій домен. Локальний аварійний деплой: `npm run deploy -w apps/<назва> -- --domain <назва>.<домен>`.
 
 ### Налаштування GitHub (робить власник)
 
@@ -404,9 +404,25 @@ GET  /s/<id>                                           → редірект на
 4. Access для сайтів: Zero Trust → Access → Applications → Self-hosted, hostname `sites.example.com`, політика **Allow** лише твоя пошта. Запиши AUD цього застосунку й виконай у `apps/sites`: `npx wrangler secret put ACCESS_AUD` і `ACCESS_TEAM_DOMAIN` (той самий team domain, що в агента). Без цього воркер відповідає `503`.
 5. Деплой (CI робить це сам; локально з доменом): `npm run deploy -w apps/sites -- --domain sites.<домен>` (домен підключає `--domain`, див. «CI/CD») і `npm run deploy -w apps/agent` (`publish` воркер сам розкладає в контейнер).
 
+#### Публічні сайти (`share.<домен>`)
+
+Щоб ділитися з іншими людьми, агент публікує сайт командою `publish --public <тека> <назва>`; він відкривається без входу на `https://share.<домен>/<назва>/`. Агент робить це **лише за явною вказівкою** в завданні (так написано в його `AGENTS.md`), за замовчуванням усе приватне.
+
+- Це той самий воркер `apps/sites`, розгорнутий у wrangler-середовищі `public` (`npm run deploy:public -w apps/sites`; CI робить це разом із `sites`, домен `share.$BASE_DOMAIN`). Змінна `PUBLIC=1` вимикає перевірку Access. Бакет окремий, `agent-sites-public`, і прив'язаний явно, тож приватні сайти не можуть потрапити на публічний хост помилкою.
+- Захист публічного хоста: лише статика; `Content-Security-Policy` (без відправки форм, без запитів на чужі сервери, без фреймів), `X-Robots-Tag: noindex, nofollow`, список сайтів не показується (посилання знають лише ті, кому їх надіслали); окремий піддомен, cookie приватних сайтів сюди не потрапляють. Ліміти розміру ті самі.
+- Публічні сайти **не належать сесії**: `/delete` їх не видаляє (посилання, яким уже поділились, не ламаються). Зняти публікацію: `publish --public --delete <назва>` (скажи агентові).
+- Окремий ключ R2 лише на публічний бакет: змінні агента `PUBLIC_R2_ACCESS_KEY_ID`, `PUBLIC_R2_SECRET_ACCESS_KEY`, `PUBLIC_SITES_BASE_URL` (endpoint спільний, `R2_ENDPOINT`).
+
+Налаштування (кроки в Cloudflare лише твої):
+
+1. `npx wrangler r2 bucket create agent-sites-public`.
+2. R2 → Manage API tokens → ще один токен, **Object Read & Write**, у Specify bucket лише `agent-sites-public`. Потрібні Access Key ID і Secret Access Key.
+3. Секрети агента (`cd apps/agent`): `npx wrangler secret put PUBLIC_R2_ACCESS_KEY_ID`, `PUBLIC_R2_SECRET_ACCESS_KEY`, `PUBLIC_SITES_BASE_URL` (значення `https://share.<домен>`). Access для `share.` **не створюй**: хост відкритий навмисно.
+4. Після мержу CI розгорне `share.` разом із `sites`; токен Cloudflare у CI має право на DNS/маршрути зони (як для решти доменів). Потім `npm run deploy -w apps/agent` (схвалення `production-agent`).
+
 ### Запобіжники агента
 
-- **Секрети.** У контейнер передається лише `OPENCODE_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN` і `CLAUDE_CODE_OAUTH_TOKEN` (білий список `containerEnv`, є тест). Токени Todoist і бота нотаток живуть в іншому воркері й у воркері агента їх немає; секрети чату (`BOT_TOKEN`, `TG_WEBHOOK_SECRET`, `CHAT_ID`) і Access до контейнера не потрапляють.
+- **Секрети.** У контейнер передається лише `OPENCODE_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` і змінні публікації сайтів (`R2_*`, `SITES_BASE_URL`, `PUBLIC_*`; білий список `containerEnv`, є тест). Токени Todoist і бота нотаток живуть в іншому воркері й у воркері агента їх немає; секрети чату (`BOT_TOKEN`, `TG_WEBHOOK_SECRET`, `CHAT_ID`) і Access до контейнера не потрапляють.
 - **Гілки.** У образі системний `core.hooksPath` вказує на теку, куди воркер кладе `pre-push` (з `payload/`), що відхиляє пуш у `main` і `master`; агент працює в `agent/<id>`. Це запобіжник від випадковості (`--no-verify` його обходить), справжній захист налаштовується в GitHub: для кожного репозиторію, яким користується агент, увімкни **rule/branch protection** на `main` (вимагати PR, заборонити прямі пуші й force-push), а токен `GITHUB_TOKEN` зроби fine-grained лише для потрібних репозиторіїв із правами Contents і Pull requests (read/write), без Workflows і Administration. Токен не вміє пушити в захищену гілку.
 - **Сон.** Контейнер засинає через годину без запитів (`AGENT_INACTIVITY_MS`); `exec`, відкриті з'єднання й SSE продовжують його життя (див. `GET /api/computer`).
 - **Ліміти.** Поки хтось працює, alarm кожні 15 с перевіряє всі активні сесії (і з чату, і з веб-інтерфейсу): вартість понад `AGENT_MAX_COST_USD` (за замовчуванням 5) чи токенів (вхід + вихід + reasoning, без кешу) понад `AGENT_MAX_TOKENS` (за замовчуванням 3 млн) перериває сесію, а для сесій із чату приходить `⛔ Сесію зупинено: …`. Перша перевірка сесії з веб-інтерфейсу може відбутись із затримкою до 5 хв (до першого alarm). За підписки Claude `cost` у OpenCode може бути нульовим чи умовним, тож надійніший ліміт за токенами; реальні значення подивись у `/status`.

@@ -79,6 +79,44 @@ describe("publish", () => {
 		expect(res.stderr).toContain("R2_ACCESS_KEY_ID is not set");
 	});
 
+	describe("--public: публічний бакет", () => {
+		const pub = { PUBLIC_R2_ACCESS_KEY_ID: "pk", PUBLIC_R2_SECRET_ACCESS_KEY: "ps", PUBLIC_SITES_BASE_URL: "https://share.example" };
+
+		it("кладе сайт у публічний бакет з окремим ключем і друкує публічну адресу", () => {
+			writeFileSync(log, "");
+			const res = run(["--public", site(), "card"], pub);
+			expect(res.code).toBe(0);
+			expect(res.stdout.trim()).toBe("https://share.example/card/");
+			expect(calls()[0]).toMatch(/ sites:agent-sites-public\/card /);
+			expect(calls().join("\n")).not.toContain("sites:agent-sites/");
+		});
+
+		it("--list і --delete працюють з публічним бакетом", () => {
+			writeFileSync(log, "");
+			expect(run(["--public", "--list"], pub).code).toBe(0);
+			expect(run(["--public", "--delete", "card"], pub).code).toBe(0);
+			expect(calls()).toContain("lsf --dirs-only sites:agent-sites-public");
+			expect(calls()).toContain("purge sites:agent-sites-public/card");
+		});
+
+		it("без публічних змінних не публікує (і не підставляє приватний ключ)", () => {
+			writeFileSync(log, "");
+			const res = run(["--public", site(), "card"]);
+			expect(res.code).toBe(1);
+			expect(res.stderr).toContain("PUBLIC_R2_ACCESS_KEY_ID is not set");
+			expect(readFileSync(log, "utf8")).toBe("");
+		});
+
+		it("публічний сайт не належить сесії: /delete його не зачепить", () => {
+			const root = realpathSync(mkdtempSync(join(tmpdir(), "pub-")));
+			const sessions = join(root, "sessions");
+			const published = join(root, "published");
+			mkdirSync(join(sessions, "docs-1"), { recursive: true });
+			run(["--public", site(), "card"], { ...pub, SESSIONS_ROOT: sessions, PUBLISHED_DIR: published }, join(sessions, "docs-1"));
+			expect(existsSync(published)).toBe(false);
+		});
+	});
+
 	describe("кому належить сайт (для /delete сесії)", () => {
 		// Тека сесій і список належності підміняються змінними, як /workspace у контейнері.
 		const world = () => {
