@@ -1,0 +1,13 @@
+{
+  "name": "@voice-notes/notes",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --var LOCAL_DEV:1 --env-file ../../.env",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings src test",
+    "test": "vitest run"
+  }
+}

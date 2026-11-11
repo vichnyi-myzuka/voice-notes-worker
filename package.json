@@ -1,14 +1,16 @@
 {
-  "name": "voice-notes-worker",
+  "name": "voice-notes-monorepo",
   "private": true,
   "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "wrangler dev --port 8787 --var LOCAL_DEV:1",
-    "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
-    "tail": "wrangler tail",
-    "lint": "oxlint --deny-warnings src test",
-    "test": "vitest run",
+    "dev": "npm run dev -w apps/notes",
+    "deploy": "npm run deploy -w apps/notes",
+    "deploy:all": "npm run deploy --workspaces --if-present",
+    "tail": "npm run tail -w apps/notes",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
     "check": "npm run lint && npm run typecheck && npm run test",
     "prepare": "git config core.hooksPath .githooks"
   },

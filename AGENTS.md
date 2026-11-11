@@ -1,17 +1,17 @@
 # AGENTS.md
 
-Правила роботи з репозиторієм для агентів. Як працює бот, описано в `README.md`; тут лише те, чого з README не видно.
+Правила роботи з репозиторієм для агентів. Репозиторій — моно-репо на npm workspaces: `apps/*` (воркери; зараз `apps/notes`), `packages/*` (спільний код). Застосунки залежать від пакетів, але не один від одного; пакет імпортується лише через свій `index.ts`. Як працює бот, описано в `README.md`; тут лише те, чого з README не видно.
 
 ## Робочий цикл
 
 - Перед комітом: `npm run check` (oxlint + tsc + vitest). Git-хуки однаково запускають pre-commit (lint + typecheck) і pre-push (`npm run check`).
-- **Після коміту одразу `git push origin main` і `npx wrangler deploy`.** Якщо wrangler просить авторизацію, попроси користувача виконати `npx wrangler login`.
-- Зміна поведінки → онови README в тому ж коміті. Нова логіка → unit-тести в `test/` (без мережі й LLM; `fetch` підміняється через `vi.stubGlobal`, R2 — `test/fake-env.ts`). Зміна наскрізної поведінки → перевір `test/e2e.test.ts` (повний цикл на моках, без реальних сервісів).
+- **Після коміту одразу `git push origin main` і деплой змінених воркерів (`npm run deploy -w apps/<назва>`; `npm run deploy` деплоїть нотатки).** Якщо wrangler просить авторизацію, попроси користувача виконати `npx wrangler login`.
+- Зміна поведінки → онови README в тому ж коміті. Нова логіка → unit-тести в `test/` відповідного застосунку (без мережі й LLM; `fetch` підміняється через `vi.stubGlobal`, R2 — `test/fake-env.ts`). Зміна наскрізної поведінки → перевір `apps/notes/test/e2e.test.ts` (повний цикл на моках, без реальних сервісів).
 
 ## Секрети
 
 - Значень секретів ніколи не друкуй і не вигадуй. `source .env` у shell можна, `echo $TOKEN` — ні.
-- Секрети воркера: `wrangler secret put`. Локально wrangler бере їх з `.env`.
+- Секрети воркера: `wrangler secret put` (з теки застосунку). Локально `npm run dev` бере їх з `.env` у корені (`--env-file ../../.env`).
 
 ## Стиль
 
@@ -22,10 +22,10 @@
 
 ## Код
 
-Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../../application/tasks`; в межах шару — `../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`. Ядро (domain, application, interface) нічого не знає про Telegram і Todoist: воно працює з портами `Channel`, `TaskTracker`, `NoteRepository`, `TaskLedger`, `Llm` (у `domain`), адаптери — `infrastructure/{telegram,todoist,r2,llm}`, складання — у `src/index.ts`. Службові дані каналу (`fileId`, `deleteChatId` тощо) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
+Шляхи нижче — всередині `apps/notes/`. Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../../application/tasks`; в межах шару — `../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`. Ядро (domain, application, interface) нічого не знає про Telegram і Todoist: воно працює з портами `Channel`, `TaskTracker`, `NoteRepository`, `TaskLedger`, `Llm` (у `domain`), адаптери — `infrastructure/{telegram,todoist,r2,llm}`, складання — у `src/index.ts`. Службові дані каналу (`fileId`, `deleteChatId` тощо) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
 
 ```
-src/index.ts           entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
+apps/notes/src/index.ts  entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
 src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
   interface/           точки входу
     inbox/             HTTP: вебхук каналу (через Channel) і завантаження з шорткату
@@ -57,7 +57,7 @@ src/<шар>/<модуль>/    шари: interface → application → domain, 
 ## Локальний e2e (справжній канал і Todoist!)
 
 ```sh
-npx wrangler dev --port 8787 --var LOCAL_DEV:1 --var TG_OWNER_ID:111111111 --var TG_WEBHOOK_SECRET:local-webhook-test
+cd apps/notes && npx wrangler dev --port 8787 --var LOCAL_DEV:1 --var TG_OWNER_ID:111111111 --var TG_WEBHOOK_SECRET:local-webhook-test --env-file ../../.env
 ```
 
 - Пост у каналі імітується POST на `localhost:8787/telegram` з заголовком `x-telegram-bot-api-secret-token: local-webhook-test` і тілом `{"channel_post":{"message_id":…,"date":…,"chat":{"id":CHAT_ID,"type":"channel"},"text":"…"}}` (правка — з `"reply_to_message":{"message_id":<id нотатки>}`).
