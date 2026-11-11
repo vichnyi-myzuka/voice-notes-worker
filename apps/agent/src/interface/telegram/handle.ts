@@ -42,6 +42,15 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 
 // Посилання на сесію в пості бота: з нього відповідь (reply) знаходить, до якої сесії належить.
 const SESSION_URL = /https?:\/\/\S+\/s\/(tg-[\w-]+)/;
+// Примусове оновлення: контейнер зупиняється, знімок видаляється; наступне завдання стартує з поточного образу (деплой
+// і так робить це сам при першому зверненні, команда потрібна, коли оновити треба одразу). Працюючих агентів не чіпає без force.
+async function updateContainer(env: BotEnv, chat: number, agent: Agent, force: boolean): Promise<void> {
+	if (!(await agent.resetComputer(!force))) {
+		return void (await tgSendMessage(env, chat, "⏳ Зараз працює агент. Дочекайся завершення або надішли /update force, щоб перервати."));
+	}
+	await tgSendMessage(env, chat, "🔄 Контейнер зупинено: наступне завдання стартує з поточного образу. Старі сесії скинуто (гілки в GitHub лишились).");
+}
+
 const removeMessage = (env: BotEnv, chat: number, messageId: number) =>
 	tg(env, "deleteMessage", { chat_id: chat, message_id: messageId }).catch((err) => console.error("delete message failed:", err));
 
@@ -63,13 +72,14 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 
 	if (!file && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
-		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /delete видаляє сесію.");
+		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /delete видаляє сесію, /update перезапускає контейнер з поточного образу.");
+		else if (command === "/update") await updateContainer(env, chat, agent, /\bforce\b/i.test(text ?? ""));
 		else if (command === "/status" || command === "/stop" || command === "/delete") {
 			if (!replied) await say(`Надішли ${command} відповіддю на пост із сесією.`);
 			else await sessionCommand(env, chat, agent, replied[1], command, msg.reply_to_message?.message_id);
 		}
 		// Команда виконана: саму команду з чату прибираємо (відповідь бота лишається), як і прийняті уточнення.
-		if (command === "/status" || command === "/stop" || command === "/delete") await removeMessage(env, chat, msg.message_id);
+		if (command === "/status" || command === "/stop" || command === "/delete" || command === "/update") await removeMessage(env, chat, msg.message_id);
 		return;
 	}
 	if (file && (file.file_size ?? 0) > DOWNLOAD_MAX_BYTES) {

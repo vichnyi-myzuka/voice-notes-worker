@@ -305,9 +305,11 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Після деплою старий контейнер може ще працювати й зробити знімок старої файлової системи під новим образом;
 	// це єдиний спосіб його позбутися без SSH: знімок видаляється, контейнер зупиняється.
-	async resetComputer(): Promise<void> {
+	async resetComputer(unlessBusy = false): Promise<boolean> {
+		if (unlessBusy && this.ctx.container?.running && (await isAnyBusy(this.opencode()).catch(() => true))) return false;
 		await this.ctx.storage.delete("snapshot");
 		if (this.ctx.container?.running) await this.destroyContainer();
+		return true;
 	}
 
 	// Готує теку сесії в контейнері (клон + worktree або порожня тека) і повертає її шлях. exec не успадковує env контейнера,

@@ -11,7 +11,7 @@ export type SessionObject = {
 	remove(id: string): Promise<void>;
 	link(id: string): Promise<string | undefined>;
 	snapshot(): Promise<SnapshotInfo>;
-	resetComputer(): Promise<void>;
+	resetComputer(unlessBusy?: boolean): Promise<boolean>;
 	info(): Promise<ComputerInfo>;
 	connections(detail: boolean): Promise<ConnectionsInfo>;
 	fetch(req: Request): Promise<Response>;
@@ -37,7 +37,7 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		serve: (req) => computer().fetch(req),
 		link: (id) => computer().link(id),
 		snapshot: () => computer().snapshot(),
-		resetComputer: () => computer().resetComputer(),
+		resetComputer: (unlessBusy) => computer().resetComputer(unlessBusy),
 		info: () => computer().info(),
 		connections: (detail) => computer().connections(detail),
 	};
