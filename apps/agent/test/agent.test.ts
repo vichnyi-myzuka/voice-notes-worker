@@ -11,6 +11,7 @@ describe("durableAgent", () => {
 			link: vi.fn(async () => "ses_oc1"),
 			snapshot: vi.fn(async () => ({ id: "snap1", bytes: 1, ms: 2 })),
 			resetComputer: vi.fn(async () => {}),
+			remove: vi.fn(async () => {}),
 			report: vi.fn(async () => ({ status: "idle" as const })),
 			watch: vi.fn(async () => {}),
 			connections: vi.fn(async () => ({ running: false })),

@@ -195,6 +195,14 @@ describe("вебхук Telegram", () => {
 			expect(replies()).toEqual(["⏳ Працює", "⏹ Зупинено. Відповідь на пост із сесією продовжить роботу.", "Нічого зупиняти: ⏹ Зупинена", "⏹ Зупинена"]);
 		});
 
+		it("/delete видаляє сесію й пост; наступні команди бачать, що її немає", async () => {
+			const { send, sessions, replies } = await withSession();
+			await send(msg({ text: "/delete", reply_to_message: botPost() }, 8));
+			expect(sessions.has(SID)).toBe(false);
+			await send(msg({ text: "/status", reply_to_message: botPost() }, 9));
+			expect(replies()).toEqual(["🗑 Сесію видалено (гілка agent/… у репозиторії, якщо була, лишилась).", "⚠️ Сесію не знайдено."]);
+		});
+
 		it("команда без відповіді на пост просить відповісти на пост із сесією", async () => {
 			const { send, replies } = setup();
 			await send(msg({ text: "/status" }));

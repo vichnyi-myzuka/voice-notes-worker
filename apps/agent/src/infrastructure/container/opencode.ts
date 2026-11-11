@@ -62,6 +62,13 @@ export async function isAnyBusy(oc: Opencode): Promise<boolean> {
 	return Object.keys(await data<Record<string, unknown>>(await oc.fetch("/api/session/active"))).length > 0;
 }
 
+export async function deleteSession(oc: Opencode, sessionId: string): Promise<void> {
+	const res = await oc.fetch(`/api/session/${sessionId}`, { method: "DELETE" });
+	const status = res.status;
+	await res.body?.cancel();
+	if (!res.ok && status !== 404) throw new Error(`opencode delete session: ${status}`);
+}
+
 export async function interrupt(oc: Opencode, sessionId: string): Promise<void> {
 	const res = await oc.fetch(`/api/session/${sessionId}/interrupt`, post());
 	if (!res.ok) throw new Error(`opencode interrupt: ${res.status} ${await res.text()}`);
