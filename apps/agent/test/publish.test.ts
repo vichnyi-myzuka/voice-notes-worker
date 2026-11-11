@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 // `publish` викликає rclone: підставляємо фейковий, що лише записує аргументи й змінні віддаленого сховища.
-const SCRIPT = join(import.meta.dirname, "../container/publish");
+const SCRIPT = join(import.meta.dirname, "../payload/publish.sh");
 let bin: string;
 let log: string;
 

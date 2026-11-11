@@ -20,14 +20,11 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
 
 COPY entrypoint.sh /entrypoint.sh
 COPY git-auth.sh /usr/local/lib/git-auth.sh
-COPY session-prep /usr/local/bin/session-prep
-COPY publish /usr/local/bin/publish
-# Глобальні інструкції агента: OpenCode читає ~/.config/opencode/AGENTS.md, claude (провайдер Claude Agent) — ~/.claude/CLAUDE.md.
-COPY AGENTS.md /root/.config/opencode/AGENTS.md
-COPY AGENTS.md /root/.claude/CLAUDE.md
-# Запобіжник: пуш у main/master відхиляється (див. git-hooks/pre-push).
-COPY git-hooks /usr/local/lib/git-hooks
-RUN chmod +x /entrypoint.sh /usr/local/bin/session-prep /usr/local/bin/publish /usr/local/lib/git-hooks/pre-push \
+# Те, що змінюється часто (AGENTS.md, publish, session-prep, git-хук), в образ не входить: воркер розкладає ці файли сам при
+# кожному старті контейнера й після змін (див. payload/ і src/infrastructure/container/payload.ts). Так оновлення інструкцій
+# чи команд не потребує нового образу, а образ новим сесіям не потрібен; знімки зі старих образів відновлюються з історією.
+RUN mkdir -p /root/.config/opencode /root/.claude /usr/local/lib/git-hooks \
+	&& chmod +x /entrypoint.sh \
 	&& git config --system core.hooksPath /usr/local/lib/git-hooks
 
 WORKDIR /workspace

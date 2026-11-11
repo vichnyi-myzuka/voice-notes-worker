@@ -4,6 +4,7 @@ import type { Env } from "../../env";
 import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { editChat, sendChat } from "../chat";
 import { parseConnections } from "./connections";
+import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
 import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
@@ -95,21 +96,6 @@ export class AgentSession extends DurableObject<Env> {
 		return this.starting;
 	}
 
-	// Контейнер, що працює зі старого образу, після деплою не оновлюється сам: старі файли (AGENTS.md, команди) лишаються, а знімок
-	// з нього підписувався б новим образом. Тому при зверненні перезапускаємо його з нового образу, коли ніхто не працює; якщо
-	// зайнятий, дочекаємось наступного звернення. Сесії при цьому зникають (як завжди при зміні образу).
-	private async stale(): Promise<boolean> {
-		const container = this.ctx.container;
-		return !!container?.running && (await this.ctx.storage.get<string>("launchedImage")) !== container.images.base;
-	}
-
-	private async replaceStale(): Promise<void> {
-		if (!(await this.stale()) || (await isAnyBusy(this.opencode()).catch(() => true))) return;
-		console.log("container runs an older image, restarting from the new one");
-		await this.destroyContainer();
-		await this.ctx.storage.delete("snapshot");
-	}
-
 	// destroy() інколи кидає виняток, хоч контейнер зупиняється: ігноруємо його й чекаємо, поки running стане false.
 	private async destroyContainer(): Promise<void> {
 		const container = this.ctx.container!;
@@ -119,12 +105,13 @@ export class AgentSession extends DurableObject<Env> {
 
 	private async startAndWait(): Promise<void> {
 		const container = this.ctx.container!;
-		await this.replaceStale();
 		const started = !container.running;
 		let restored = false;
 		if (started) {
 			const saved = await this.ctx.storage.get<SavedSnapshot>("snapshot");
-			restored = !!saved && saved.image === container.images.base;
+			// Знімок відновлюємо завжди, навіть якщо образ відтоді змінився: він сам визначає файлову систему (старий образ піднімається
+			// з усією історією). Новий образ застосовується лише командою /update.
+			restored = !!saved;
 			await this.launch(restored ? saved : undefined);
 		}
 		await container.setInactivityTimeout(this.inactivityMs());
@@ -140,6 +127,17 @@ export class AgentSession extends DurableObject<Env> {
 			await container.setInactivityTimeout(this.inactivityMs());
 			await this.waitReady(true);
 		}
+		await this.syncPayload(started);
+	}
+
+	// Розкладає в контейнер файли з payload/ (інструкції агента, publish, session-prep, git-хук): при кожному старті (знімок міг
+	// бути зроблений до останнього деплою) і для працюючого контейнера, якщо вміст змінився. Образ при цьому не чіпається.
+	private async syncPayload(force: boolean): Promise<void> {
+		if (!force && (await this.ctx.storage.get<string>("payloadHash")) === PAYLOAD_HASH) return;
+		const proc = await this.ctx.container!.exec(["node", "-e", WRITER], { cwd: "/", env: { HOME: "/root", PAYLOAD: JSON.stringify(PAYLOAD) } });
+		const out = await proc.output();
+		if (out.exitCode !== 0) throw new Error(`payload sync failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
+		await this.ctx.storage.put("payloadHash", PAYLOAD_HASH);
 	}
 
 	// Запускає контейнер зі знімка диска або з образу.
@@ -192,9 +190,8 @@ export class AgentSession extends DurableObject<Env> {
 		// Поки хтось працює чи за кимось стежать, опитуємо часто (підсумки, ліміти) й знімок відкладаємо.
 		if (await this.tick()) return void (await this.ctx.storage.setAlarm(Date.now() + WATCH_INTERVAL_MS));
 		if (!container?.running) return; // контейнер уже спить: знімати нічого
-		if (await this.stale()) return; // старий образ: знімок був би підписаний новим (див. stale); перезапустимо при зверненні
 		const [activeAt = 0, saved] = await Promise.all([this.ctx.storage.get<number>("activeAt"), this.ctx.storage.get<SavedSnapshot>("snapshot")]);
-		if (saved && saved.image === container.images.base && saved.at >= activeAt) return; // нових змін немає
+		if (saved && saved.at >= activeAt) return; // нових змін немає
 		try {
 			if (await isAnyBusy(this.opencode())) throw new Error("an agent is busy");
 			await this.saveSnapshot();
@@ -287,10 +284,9 @@ export class AgentSession extends DurableObject<Env> {
 
 	private async saveSnapshot(): Promise<SnapshotInfo> {
 		const container = this.ctx.container!;
-		if (await this.stale()) throw new Error("container runs an older image");
 		const startedAt = Date.now();
 		const snapshot = await container.snapshotContainer({ name: "computer" });
-		await this.ctx.storage.put("snapshot", { id: snapshot.id, image: container.images.base, at: startedAt } satisfies SavedSnapshot);
+		await this.ctx.storage.put("snapshot", { id: snapshot.id, image: (await this.ctx.storage.get<string>("launchedImage")) ?? container.images.base, at: startedAt } satisfies SavedSnapshot);
 		const info = { id: snapshot.id, bytes: snapshot.size, ms: Date.now() - startedAt };
 		console.log(`snapshot saved: ${info.id}, ${info.bytes} bytes, ${info.ms} ms`);
 		return info;
