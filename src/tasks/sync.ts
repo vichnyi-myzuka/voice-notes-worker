@@ -1,0 +1,26 @@
+import type { Env } from "../env";
+import type { Steps } from "../steps";
+import type { TriageItem } from "../todoist";
+import { applyOps } from "./apply";
+import { getInTodoist } from "./ledger";
+import { planOps } from "./plan";
+import type { SyncState } from "./types";
+
+export async function syncTasks(
+	env: Env,
+	run: Steps<SyncState>,
+	{ noteId, items, description, messageUrl }: { noteId: string; items: TriageItem[] | null; description: string; messageUrl?: string | null },
+): Promise<boolean | undefined> {
+	const ops = await run.step("ops", async () => (items ? planOps(items, await getInTodoist(env, noteId)) : []));
+	if (!ops.length) return undefined;
+	const runId = await run.step("actionId", async () => crypto.randomUUID());
+	return run.step(
+		"todoistApplied",
+		async () => {
+			const applied = await applyOps(env, { noteId, runId, ops, description, ...(messageUrl && { messageUrl }) });
+			console.log(`todoist ${runId} applied: ${ops.length} ops`);
+			return applied;
+		},
+		{ onFinalFailure: () => false },
+	);
+}
