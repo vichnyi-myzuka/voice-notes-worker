@@ -1,0 +1,15 @@
+{
+  "name": "@voice-notes/sites",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings src test",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@voice-notes/core": "*"
+  }
+}

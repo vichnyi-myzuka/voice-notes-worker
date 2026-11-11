@@ -2,7 +2,7 @@
 FROM node:22-bookworm-slim
 
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends git ca-certificates curl openssh-client \
+	&& apt-get install -y --no-install-recommends git ca-certificates curl openssh-client rclone \
 	&& rm -rf /var/lib/apt/lists/*
 # Лише OpenCode V2 (пакет @opencode/cli); версію зафіксовано, щоб образ збирався відтворювано.
 ARG OPENCODE_VERSION=2.2.7
@@ -21,12 +21,13 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
 COPY entrypoint.sh /entrypoint.sh
 COPY git-auth.sh /usr/local/lib/git-auth.sh
 COPY session-prep /usr/local/bin/session-prep
+COPY publish /usr/local/bin/publish
 # Глобальні інструкції агента: OpenCode читає ~/.config/opencode/AGENTS.md, claude (провайдер Claude Agent) — ~/.claude/CLAUDE.md.
 COPY AGENTS.md /root/.config/opencode/AGENTS.md
 COPY AGENTS.md /root/.claude/CLAUDE.md
 # Запобіжник: пуш у main/master відхиляється (див. git-hooks/pre-push).
 COPY git-hooks /usr/local/lib/git-hooks
-RUN chmod +x /entrypoint.sh /usr/local/bin/session-prep /usr/local/lib/git-hooks/pre-push \
+RUN chmod +x /entrypoint.sh /usr/local/bin/session-prep /usr/local/bin/publish /usr/local/lib/git-hooks/pre-push \
 	&& git config --system core.hooksPath /usr/local/lib/git-hooks
 
 WORKDIR /workspace

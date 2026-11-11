@@ -1,0 +1,14 @@
+name = "voice-notes-sites"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = false
+preview_urls = false
+routes = [{ pattern = "sites.example.com", custom_domain = true }] # за Cloudflare Access (див. README, «Сайти агента»)
+
+[observability]
+enabled = true
+
+# Файли сайтів кладе агент командою `publish` (токен R2 лише на цей бакет); воркер їх тільки віддає.
+[[r2_buckets]]
+binding = "SITES"
+bucket_name = "agent-sites"

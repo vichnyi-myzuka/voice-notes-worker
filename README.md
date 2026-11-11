@@ -353,6 +353,18 @@ GET  /s/<id>                                           → редірект на
 
 Агент не знає свого середовища сам, тому в образ кладеться `apps/agent/container/AGENTS.md`: де він (спільний контейнер, своя тека й гілка `agent/<id>`), що переживає сон, як працювати з git і GitHub (пуш лише у свою гілку, PR через REST API, `gh` немає), чого не друкувати (секрети), як завершувати (короткий підсумок українською, бо він іде в Telegram). Файл копіюється в `~/.config/opencode/AGENTS.md` (читає OpenCode) і `~/.claude/CLAUDE.md` (читає `claude` за провайдером Claude Agent). Це глобальний рівень; `AGENTS.md` самого репозиторію агент читає додатково. Змінюєш файл: новий образ, а знімок прив'язаний до образу, тож історія сесій обнуляється.
 
+### Сайти агента (`apps/sites`)
+
+Агент може опублікувати маленький статичний проєкт (сторінку, звіт, артефакт). У контейнері команда `publish <тека> <назва>` (`rclone` + перевірки назви, `index.html`, ліміти 50 МБ / 1000 файлів / 20 МБ на файл, без прихованих файлів і `node_modules`) синхронізує теку з R2-бакетом `agent-sites`, а воркер `apps/sites` віддає її на `https://sites.example.com/<назва>/` (корінь показує список сайтів, теки віддають `index.html`, `/<назва>` без слеша перенаправляється на `/<назва>/`). Доступ лише через Cloudflare Access, воркер ще й сам перевіряє JWT (`verifyAccess` з `core`). Це лише статика: у контейнері немає ключів Cloudflare для деплою воркерів, бекенди не підтримуються. Про команду агент дізнається з глобального `AGENTS.md` в образі (розділ «Publishing small static sites»). Усі сайти живуть на одному origin, тож сторінки одного сайту технічно можуть читати інший: це нормально для приватного сховища одного власника, але не клади туди чужий код.
+
+Налаштування (кроки в Cloudflare лише твої):
+
+1. Бакет `agent-sites` створено (`npx wrangler r2 bucket create agent-sites`).
+2. **Токен R2 лише на цей бакет**: Cloudflare → R2 → Manage API tokens → Create API token, права **Object Read & Write**, у Specify bucket обери `agent-sites`. З результату потрібні Access Key ID, Secret Access Key і endpoint (`https://<account-id>.r2.cloudflarestorage.com`).
+3. Секрети воркера агента (`cd apps/agent`): `npx wrangler secret put R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `SITES_BASE_URL` (значення `https://sites.example.com`). Вони потрапляють у контейнер, інших секретів там не додається.
+4. Access для сайтів: Zero Trust → Access → Applications → Self-hosted, hostname `sites.example.com`, політика **Allow** лише твоя пошта. Запиши AUD цього застосунку й виконай у `apps/sites`: `npx wrangler secret put ACCESS_AUD` і `ACCESS_TEAM_DOMAIN` (той самий team domain, що в агента). Без цього воркер відповідає `503`.
+5. Деплой: `npm run deploy -w apps/sites` (створює домен `sites.example.com`) і `npm run deploy -w apps/agent` (новий образ з `publish`).
+
 ### Запобіжники агента
 
 - **Секрети.** У контейнер передається лише `OPENCODE_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN` і `CLAUDE_CODE_OAUTH_TOKEN` (білий список `containerEnv`, є тест). Токени Todoist і бота нотаток живуть в іншому воркері й у воркері агента їх немає; секрети чату (`BOT_TOKEN`, `TG_WEBHOOK_SECRET`, `CHAT_ID`) і Access до контейнера не потрапляють.

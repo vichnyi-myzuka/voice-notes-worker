@@ -1,5 +1,5 @@
 // Перевірка JWT від Cloudflare Access (заголовок Cf-Access-Jwt-Assertion): другий рівень захисту поверх самого Access,
-// щоб воркер не відповідав, якщо до workers.dev хтось звернувся повз Access.
+// щоб воркер не відповідав, якщо до нього хтось звернувся повз Access. Спільне для воркерів агента й сайтів.
 
 export type AccessConfig = { teamDomain?: string; aud?: string };
 
