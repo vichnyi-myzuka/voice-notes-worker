@@ -250,6 +250,13 @@ export class AgentSession extends DurableObject<Env> {
 		return this.saveSnapshot();
 	}
 
+	// Після деплою старий контейнер може ще працювати й зробити знімок старої файлової системи під новим образом;
+	// це єдиний спосіб його позбутися без SSH: знімок видаляється, контейнер зупиняється.
+	async resetComputer(): Promise<void> {
+		await this.ctx.storage.delete("snapshot");
+		if (this.ctx.container?.running) await this.ctx.container.destroy();
+	}
+
 	// Готує теку сесії в контейнері (клон + worktree або порожня тека) і повертає її шлях. exec не успадковує env контейнера,
 	// тому токен передаємо явно. Викликається лише всередині serial().
 	private async prepare(id: string, repo: string | undefined): Promise<string> {

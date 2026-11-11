@@ -19,6 +19,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   GET  /api/computer                        → стан контейнера для діагностики (чому не засинає, відкриті SSE-потоки)
 //   GET  /api/computer/connections            → running; з ?detail=1 ще й SSH-з'єднання (exec продовжує життя контейнера)
 //   POST /api/computer/snapshot                      → примусово зберігає диск контейнера (після змін поза сесіями, наприклад через SSH)
+//   DELETE /api/computer/snapshot             → видаляє знімок і зупиняє контейнер: наступний старт з чистого образу (сесії зникають)
 //   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
 //   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)
 export async function handleFetch(req: Request, env: Env, agent: Agent): Promise<Response> {
@@ -57,6 +58,11 @@ export async function handleFetch(req: Request, env: Env, agent: Agent): Promise
 			(info) => json(info),
 			(err: unknown) => json({ error: err instanceof Error ? err.message : String(err) }, 409),
 		);
+	}
+
+	if (req.method === "DELETE" && url.pathname === "/api/computer/snapshot") {
+		await agent.resetComputer();
+		return json({ ok: true });
 	}
 
 	const link = url.pathname.match(/^\/s\/([^/]+)\/?$/);
