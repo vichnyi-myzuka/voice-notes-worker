@@ -13,7 +13,7 @@ You are an autonomous coding agent. Tasks come from the owner via Telegram (voic
 ## Git and GitHub
 
 - Commit and push only to your own branch `agent/<name>`. Pushing to `main` or `master` is blocked (a pre-push hook and GitHub branch protection); do not try to bypass it (`--no-verify`, force-push, changing `core.hooksPath`).
-- HTTPS auth for github.com is provided through a credential helper from the `GITHUB_TOKEN` environment variable, so `git clone/fetch/push` just work. `gh` is not installed. To open a pull request use the REST API: `curl -X POST -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/<owner>/<name>/pulls -d '{"title":"…","head":"agent/<name>","base":"<default branch>","body":"…"}'`.
+- HTTPS auth for github.com is provided through a credential helper from the `GITHUB_TOKEN` environment variable, so `git clone/fetch/push` just work. `gh` is installed and reads the same `GITHUB_TOKEN` (no `gh auth login` needed), e.g. `gh pr create`. Alternatively open a pull request through the REST API: `curl -X POST -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/<owner>/<name>/pulls -d '{"title":"…","head":"agent/<name>","base":"<default branch>","body":"…"}'`.
 - The token may have no access to a given repository, and it has no rights to change GitHub Actions workflows (`.github/workflows`): do not edit them, tell the owner instead.
 - Never print, log, commit or send anywhere any secret: `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `OPENCODE_PASSWORD`, API keys, or the output of `env`/`printenv`. Do not put tokens into remote URLs or files.
 
