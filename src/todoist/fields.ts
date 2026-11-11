@@ -1,5 +1,5 @@
 import type { TodoistSnapshot, TriageItem } from "./types";
-import { isoDate } from "./utils";
+import { isoDate } from "./api";
 
 export const listNames = (snap: TodoistSnapshot) => snap.projects.filter((p) => !p.inbox).map((p) => p.name);
 

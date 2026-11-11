@@ -1,4 +1,4 @@
-import { escapeRe } from "./utils";
+import { escapeRe } from "./plan";
 
 export const SECTION = "[мітки]";
 

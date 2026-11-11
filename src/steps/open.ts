@@ -1,4 +1,4 @@
-import type { Steps } from "./types";
+
 
 export async function openSteps<S extends object>(env: { BUCKET: R2Bucket }, stateKey: string, lastAttempt: boolean): Promise<Steps<S>> {
 	const state: S = (await (await env.BUCKET.get(stateKey))?.json<S>()) ?? ({} as S);
@@ -20,3 +20,12 @@ export async function openSteps<S extends object>(env: { BUCKET: R2Bucket }, sta
 	};
 	return { state, lastAttempt, save, step };
 }
+
+export type Options<V> = { onFinalFailure?: () => V };
+
+export type Steps<S> = {
+	state: S;
+	lastAttempt: boolean;
+	save: () => Promise<unknown>;
+	step: <K extends keyof S>(name: K, fn: () => Promise<Exclude<S[K], undefined>>, opts?: Options<Exclude<S[K], undefined>>) => Promise<Exclude<S[K], undefined>>;
+};

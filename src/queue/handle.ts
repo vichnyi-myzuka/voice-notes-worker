@@ -2,7 +2,6 @@ import type { Env, Job } from "../env";
 import { processEdit, processNote } from "../pipeline";
 import { loadNote } from "../published";
 import { markEditing, tgSendMessage } from "../telegram";
-import { DLQ_NAME, MAX_RETRIES } from "./constants";
 
 export async function handleQueue(batch: MessageBatch<Job>, env: Env): Promise<void> {
 	if (batch.queue === DLQ_NAME) {
@@ -33,3 +32,7 @@ export async function handleQueue(batch: MessageBatch<Job>, env: Env): Promise<v
 		}
 	}
 }
+
+export const DLQ_NAME = "voice-notes-dlq";
+
+export const MAX_RETRIES = 4; // той самий, що max_retries у wrangler.toml

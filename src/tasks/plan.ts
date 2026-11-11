@@ -1,3 +1,4 @@
+import type { Env } from "../env";
 import type { TriageItem } from "../todoist";
 import type { InTodoist, TodoistOp } from "./types";
 
@@ -41,4 +42,20 @@ export function planOps(items: TriageItem[], inTodoist: InTodoist): TodoistOp[] 
 		if (!kept.has(key)) ops.push({ key, item: null, id: prev.id });
 	}
 	return ops;
+}
+
+export const inTodoistKey = (noteId: string) => `notes/${noteId}.todoist.json`;
+
+export async function getInTodoist(env: Env, noteId: string): Promise<InTodoist> {
+	return (await (await env.BUCKET.get(inTodoistKey(noteId)))?.json<InTodoist>()) ?? {};
+}
+
+// Підпис показує повтор лише тих задач, які в Todoist справді з повтором.
+export function withAppliedRecurrence(items: TriageItem[] | null, inTodoist: InTodoist): TriageItem[] | null {
+	return (
+		items?.map((i) => {
+			const applied = i.key ? inTodoist[i.key] : undefined;
+			return i.recurrence && applied && !applied.item.recurrence ? { ...i, recurrence: "", recurrenceLabel: "" } : i;
+		}) ?? null
+	);
 }

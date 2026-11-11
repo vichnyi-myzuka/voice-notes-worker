@@ -2,7 +2,7 @@ import type { Env } from "../env";
 import type { Steps } from "../steps";
 import type { TriageItem } from "../todoist";
 import { applyOps } from "./apply";
-import { getInTodoist } from "./ledger";
+import { getInTodoist } from "./plan";
 import { planOps } from "./plan";
 import type { SyncState } from "./types";
 
