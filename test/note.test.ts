@@ -52,10 +52,10 @@ describe("hashtags", () => {
 			item("c", { project: "Work" }),
 			item("d", { project: "Home", duplicateOf: "x" }),
 		]);
-		expect(tags).toBe("#листопад_2026 #тиждень_46 #Work #Personal_affairs");
+		expect(tags).toBe("#листопад_2026 #тиждень_46 #день_2026_11_09 #Work #Personal_affairs");
 	});
 	it("дата рахується в TIMEZONE: 31.12 23:30 UTC — це вже січень у Києві", () => {
-		expect(hashtags(new Date("2026-12-31T23:30:00Z"), "Europe/Kyiv", null)).toBe("#січень_2027 #тиждень_53");
+		expect(hashtags(new Date("2026-12-31T23:30:00Z"), "Europe/Kyiv", null)).toBe("#січень_2027 #тиждень_53 #день_2027_01_01");
 	});
 });
 
@@ -88,7 +88,7 @@ describe("caption", () => {
 		const long = { ...meta, summary: "дуже ".repeat(400) };
 		const c = buildCaption(long, null, Date.parse("2026-11-09T10:00:00Z"), "Europe/Kyiv", "ℹ️ примітка", 1024);
 		expect(c.length).toBeLessThanOrEqual(1024);
-		expect(c.endsWith("ℹ️ примітка\n\n#листопад_2026 #тиждень_46")).toBe(true);
+		expect(c.endsWith("ℹ️ примітка\n\n#листопад_2026 #тиждень_46 #день_2026_11_09")).toBe(true);
 		expect(c).toContain("…");
 	});
 });

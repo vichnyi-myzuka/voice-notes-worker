@@ -73,14 +73,15 @@ export function taskLinks(caption: string, triaged: TriageItem[] | null, taskIds
 
 export const SUMMARY_MIN = 150; // коротше summary не ріжемо: далі вже скорочуємо список задач
 
-// Хештеги для навігації в каналі: місяць, ISO-тиждень (у timeZone) і проєкти нових задач.
+// Хештеги для навігації в каналі: місяць, ISO-тиждень, день (у timeZone) і проєкти нових задач.
 export const MONTHS = ["січень", "лютий", "березень", "квітень", "травень", "червень", "липень", "серпень", "вересень", "жовтень", "листопад", "грудень"];
 
 export function hashtags(date: Date, timeZone: string, triaged: TriageItem[] | null): string {
 	const [y, m, d] = new Intl.DateTimeFormat("sv-SE", { timeZone }).format(date).split("-").map(Number);
 	const week = isoWeek(y, m, d);
 	const lists = [...new Set((triaged ?? []).filter((i) => !i.duplicateOf && i.project).map((i) => i.project))];
-	return [`#${MONTHS[m - 1]}_${y}`, `#тиждень_${week}`, ...lists.map((l) => `#${l.replace(/[^\p{L}\p{N}_]+/gu, "_")}`)].join(" ");
+	const day = `${y}_${String(m).padStart(2, "0")}_${String(d).padStart(2, "0")}`;
+	return [`#${MONTHS[m - 1]}_${y}`, `#тиждень_${week}`, `#день_${day}`, ...lists.map((l) => `#${l.replace(/[^\p{L}\p{N}_]+/gu, "_")}`)].join(" ");
 }
 
 // ISO-тиждень: номер тижня, що містить четвер цього тижня (тижні з понеділка).
