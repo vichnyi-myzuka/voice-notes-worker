@@ -1,4 +1,7 @@
-import type { TaskOp } from "../../domain/tracker";
+import type { TaskLedger, TaskOp, TaskTracker } from "../../domain/tracker";
+
+// Порти, потрібні для задач нотатки: трекер і книга задач.
+export type TaskPorts = { tracker: TaskTracker; ledger: TaskLedger };
 
 // Виконує операції в трекері й оновлює стан задач нотатки (TrackedTasks).
 // Команди мають сталі id (runId + номер операції), тож ретрай не виконає їх удруге.

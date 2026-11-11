@@ -1,5 +1,5 @@
-import type { Env } from "../../infrastructure/env";
-import { askJson, isJsonObject, parseJsonObject, type Json, type JsonObject } from "../../infrastructure/llm";
+import { isJsonObject, parseJsonObject, type Json, type JsonObject } from "../../domain/json";
+import type { Llm } from "../../domain/llm";
 import { labelRule, setLabelRule } from "./rules";
 import type { SetupChange, SetupPlan, SetupWorld, TaskTracker } from "../../domain/tracker";
 
@@ -39,7 +39,7 @@ export const SETUP_SCHEMA = {
 };
 
 // Команди налаштування з тексту запису чи правки. Збій — виняток (ретрай), на останній спробі — порожній план.
-export async function planSetup(env: Env, tracker: TaskTracker, text: string, lastAttempt: boolean): Promise<SetupPlan> {
+export async function planSetup(llm: Llm, tracker: TaskTracker, text: string, lastAttempt: boolean): Promise<SetupPlan> {
 	const none: SetupPlan = { changes: [] };
 	if (!tracker.enabled || !MENTION.test(text)) return none;
 	try {
@@ -49,7 +49,7 @@ export async function planSetup(env: Env, tracker: TaskTracker, text: string, la
 			`<labels>\n${world.labels.map((l) => l.name).join("\n")}\n</labels>`,
 			`<text>\n${text}\n</text>`,
 		].join("\n\n");
-		const plan = await askJson(env, { name: "todoist_setup", system: SETUP_SYSTEM, user, schema: SETUP_SCHEMA, reasoning: "low" }, (t) => {
+		const plan = await llm.askJson({ name: "todoist_setup", system: SETUP_SYSTEM, user, schema: SETUP_SCHEMA, reasoning: "low" }, (t) => {
 			const raw = parseJsonObject(t).changes;
 			if (!Array.isArray(raw)) throw new Error("no changes");
 			return validateSetup(raw.filter(isJsonObject), world);

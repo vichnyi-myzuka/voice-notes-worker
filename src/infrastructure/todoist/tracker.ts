@@ -1,5 +1,7 @@
 import type { TaskTracker } from "../../domain/tracker";
+import type { Llm } from "../../domain/llm";
 import type { Env } from "../env";
+import { workersLlm } from "../llm";
 import { fetchWorld, trySnapshot } from "./api";
 import { taskFieldsSchema, taskRulesBlock, taskValidator } from "./fields";
 import { EDIT_TASKS_HELP, triage } from "./triage";
@@ -9,11 +11,11 @@ import { applyOps, applySetup, attachFile, deleteOpenTasks } from "./write";
 export const taskUrl = (id: string) => `https://app.todoist.com/app/task/${id}`;
 
 // Адаптер TaskTracker для Todoist.
-export function todoistTracker(env: Env): TaskTracker {
+export function todoistTracker(env: Env, llm: Llm = workersLlm(env)): TaskTracker {
 	return {
 		enabled: !!env.TODOIST_TOKEN,
 		snapshot: () => trySnapshot(env),
-		triage: (transcript, tasks, snap, recordedAt) => triage(env, transcript, tasks, snap, recordedAt, env.TIMEZONE),
+		triage: (transcript, tasks, snap, recordedAt) => triage(llm, transcript, tasks, snap, recordedAt, env.TIMEZONE),
 		prompts: {
 			help: EDIT_TASKS_HELP,
 			rulesBlock: taskRulesBlock,

@@ -1,13 +1,12 @@
 import type { Env, Job } from "../../infrastructure/env";
 import { processEdit, processNote, type Ports } from "../../application/pipeline";
-import { loadNote } from "../../domain/published";
 
 
 export async function handleQueue(batch: MessageBatch<Job>, env: Env, ports: Ports): Promise<void> {
 	if (batch.queue === DLQ_NAME) {
 		for (const msg of batch.messages) {
 			// Правка не вдалася: знімаємо з нотатки статус «редагується».
-			const note = msg.body.edit && (await loadNote(env, msg.body.edit));
+			const note = msg.body.edit && (await ports.notes.load(msg.body.edit));
 			if (note) await ports.channel.setBusy(note.messageId, false);
 			await ports.channel.say(
 				`⚠️ Не вдалося обробити голосовий запис після ${MAX_RETRIES + 1} спроб.\n` +

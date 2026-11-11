@@ -1,5 +1,5 @@
 import { isoDate } from "../../domain/recording";
-import type { Json, JsonObject } from "../llm";
+import type { Json, JsonObject } from "../../domain/json";
 import type { TrackerSnapshot, TriageItem } from "../../domain/tracker";
 
 export const listNames = (snap: TrackerSnapshot) => snap.projects.filter((p) => !p.inbox).map((p) => p.name);

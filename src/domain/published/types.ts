@@ -25,3 +25,12 @@ export type PublishState = {
 	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
 	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено
 };
+
+// Порт збереження нотаток (зараз R2). Повторний save при ретраї нічого не ламає.
+export type NoteRepository = {
+	save(noteId: string, note: Note): Promise<void>;
+	load(noteId: string): Promise<Note | null>;
+	// id нотатки за повідомленням у каналі (відповідь на нотатку = редагування); null, якщо це не наша нотатка.
+	idByMessage(messageId: number | string): Promise<string | null>;
+	remove(noteId: string, note: Note): Promise<void>;
+};

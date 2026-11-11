@@ -1,4 +1,4 @@
-import type { JsonObject } from "../../infrastructure/llm";
+import type { JsonObject } from "../json";
 
 // Що є в трекері задач зараз: воркер читає це перед тріажем.
 export type TrackerSnapshot = {
@@ -26,6 +26,13 @@ export type TriageItem = {
 
 // Що з нотатки вже є в трекері (за ключем задачі).
 export type TrackedTasks = Record<string, { id: string; item: TriageItem; reminderIds?: string[] }>;
+
+// Порт збереження задач нотатки в трекері (зараз R2).
+export type TaskLedger = {
+	get(noteId: string): Promise<TrackedTasks>;
+	save(noteId: string, tracked: TrackedTasks): Promise<void>;
+	remove(noteId: string): Promise<void>;
+};
 
 // Без id — створити; з id і item — оновити (move: змінився проєкт; reminders: перестворити нагадування,
 // oldReminderIds — що видалити; describe: змінились подробиці, переписати опис); з id без item — видалити.

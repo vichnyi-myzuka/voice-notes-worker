@@ -1,4 +1,4 @@
-import type { Env } from "../../infrastructure/env";
+import type { Llm } from "../../domain/llm";
 import type { Steps } from "../../infrastructure/steps";
 import { planSetup } from "./plan";
 import type { SetupPlan, TaskTracker } from "../../domain/tracker";
@@ -21,9 +21,9 @@ export const SETUP_FAILED = "⚠️ Не вдалося змінити проє�
 
 // Команди налаштування з тексту: план зберігається в стані, виконання ідемпотентне (сталі uuid).
 // Повертає рядки звіту для підпису ([] — команд не було).
-export async function runSetup(env: Env, tracker: TaskTracker, text: string, run: Steps<SetupState>): Promise<string[]> {
+export async function runSetup(llm: Llm, tracker: TaskTracker, text: string, run: Steps<SetupState>): Promise<string[]> {
 	const s = await run.step("setup", async () => {
-		const plan = await planSetup(env, tracker, text, run.lastAttempt);
+		const plan = await planSetup(llm, tracker, text, run.lastAttempt);
 		return plan.changes.length ? { id: crypto.randomUUID(), plan } : null;
 	});
 	if (!s) return [];

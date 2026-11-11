@@ -1,6 +1,6 @@
-import { getTrackedTasks, withAppliedRecurrence } from "../tasks";
+import { withAppliedRecurrence } from "../tasks";
 import { buildCaption, taskLinks, type Meta } from "../../domain/note";
-import { loadNote, type Note } from "../../domain/published";
+import type { Note } from "../../domain/published";
 import type { Env } from "../../infrastructure/env";
 import type { Ports } from "./types";
 import type { TriageItem } from "../../domain/tracker";
@@ -15,12 +15,12 @@ export const captionNotice = (setup: string[] | undefined, failed: boolean) =>
 // Текстова нотатка — це текст повідомлення з цитатою оригіналу.
 export async function showNote(
 	env: Env,
-	{ channel, tracker }: Ports,
+	{ channel, tracker, ledger }: Ports,
 	noteId: string,
 	note: Note,
 	{ meta, triage, notice }: { meta: Meta; triage: TriageItem[] | null; notice: string },
 ): Promise<void> {
-	const inTodoist = await getTrackedTasks(env, noteId);
+	const inTodoist = await ledger.get(noteId);
 	const shown = withAppliedRecurrence(triage, inTodoist);
 	const caption = buildCaption(meta, shown, note.recordedTs, env.TIMEZONE, notice, note.text ? channel.limits.textNote : channel.limits.caption);
 	const ids = Object.fromEntries(Object.entries(inTodoist).map(([key, v]) => [key, v.id]));
@@ -29,7 +29,7 @@ export async function showNote(
 
 // Перемальовує збережену нотатку (після виконання задач у Todoist).
 export async function refreshNote(env: Env, ports: Ports, noteId: string, failed: boolean): Promise<void> {
-	const note = await loadNote(env, noteId);
+	const note = await ports.notes.load(noteId);
 	if (!note) return;
 	await showNote(env, ports, noteId, note, { meta: note.meta, triage: note.triage, notice: captionNotice(note.setup, failed) });
 }

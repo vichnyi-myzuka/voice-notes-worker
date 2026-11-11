@@ -1,16 +1,16 @@
 import type { Env } from "../../infrastructure/env";
 import { buildCaption } from "../../domain/note";
-import { saveNote, type Note } from "../../domain/published";
+import type { Note } from "../../domain/published";
 import { TELEGRAM_MAX_BYTES, TRANSCRIBE_MAX_BYTES, captionKey, formatRecordedAt, recordedTs } from "../../domain/recording";
 import { runSetup } from "../setup";
 import { openSteps } from "../../infrastructure/steps";
-import { getTrackedTasks, syncTasks } from "../tasks";
-import { readImage, summarize, transcribe } from "../understand";
+import { syncTasks } from "../tasks";
+import { readImage, summarize } from "../understand";
 import { captionNotice, refreshNote } from "./show";
 import type { Ports, State } from "./types";
 
 export async function processNote(env: Env, ports: Ports, key: string, lastAttempt: boolean): Promise<void> {
-	const { channel, tracker } = ports;
+	const { channel, tracker, notes, ledger, llm } = ports;
 	const obj = await env.BUCKET.get(key);
 	if (!obj) {
 		// Аудіо видаляється лише після успішної відправки, тож це повторна доставка.
@@ -56,10 +56,10 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 		isText
 			? (await obj.text()).trim()
 			: isPhoto
-				? await readImage(env, await read(), contentType, (await (await env.BUCKET.get(captionKey(key)))?.text()) ?? "", lastAttempt)
-				: await transcribe(env, await read(), contentType),
+				? await readImage(llm, await read(), contentType, (await (await env.BUCKET.get(captionKey(key)))?.text()) ?? "", lastAttempt)
+				: await llm.transcribe(await read(), contentType),
 	);
-	const meta = await step("meta", () => summarize(env, transcript, recordedAt, lastAttempt));
+	const meta = await step("meta", () => summarize(llm, transcript, recordedAt, lastAttempt));
 
 	// Тиша, шум або голосове «скасуй»: нічого не публікуємо, прибираємо все, включно з оригіналом у каналі.
 	if (meta.discard) {
@@ -70,7 +70,7 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 	}
 
 	// Команди налаштування Todoist («створи проєкт…») — до тріажу, щоб задачі вже бачили новий проєкт.
-	const setup = await runSetup(env, tracker, transcript, run);
+	const setup = await runSetup(llm, tracker, transcript, run);
 
 	// Тріаж задач для Todoist. Невдалий тріаж не блокує нотатку: вона прийде без кнопки.
 	const triaged = await step("triage", async () => {
@@ -96,11 +96,11 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 		...(isText && { text: true }),
 		...(setup.length && { setup }),
 	};
-	await saveNote(env, noteId, note);
+	await notes.save(noteId, note);
 	console.log(`note ${noteId} published as message ${messageId}`);
 
 	// Задачі одразу в Todoist (з посиланням на повідомлення в описі), потім назви задач у підписі стають посиланнями на них.
-	const applied = await syncTasks(env, tracker, run, {
+	const applied = await syncTasks(ports, run, {
 		noteId,
 		items: triaged,
 		description: `🎙 ${meta.title} (${recordedAt})`,
@@ -116,7 +116,7 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 			await step(
 				"photoAttached",
 				async () => {
-					const ids = Object.values(await getTrackedTasks(env, noteId)).map((t) => t.id);
+					const ids = Object.values(await ledger.get(noteId)).map((t) => t.id);
 					await tracker.attachFile(run.state.actionId!, ids, await source.blob(), `${meta.title.slice(0, 60) || "photo"}.jpg`);
 					console.log(`photo attached to ${ids.length} tasks`);
 					return true;

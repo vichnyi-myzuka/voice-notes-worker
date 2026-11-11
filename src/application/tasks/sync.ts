@@ -1,24 +1,21 @@
-import type { Env } from "../../infrastructure/env";
 import type { Steps } from "../../infrastructure/steps";
-import type { TaskTracker, TriageItem } from "../../domain/tracker";
+import type { TriageItem } from "../../domain/tracker";
 import { applyOps } from "./apply";
-import { getTrackedTasks } from "./plan";
 import { planOps } from "./plan";
-import type { SyncState } from "./types";
+import type { SyncState, TaskPorts } from "./types";
 
 export async function syncTasks(
-	env: Env,
-	tracker: TaskTracker,
+	ports: TaskPorts,
 	run: Steps<SyncState>,
 	{ noteId, items, description, messageUrl }: { noteId: string; items: TriageItem[] | null; description: string; messageUrl?: string | null },
 ): Promise<boolean | undefined> {
-	const ops = await run.step("ops", async () => (items ? planOps(items, await getTrackedTasks(env, noteId)) : []));
+	const ops = await run.step("ops", async () => (items ? planOps(items, await ports.ledger.get(noteId)) : []));
 	if (!ops.length) return undefined;
 	const runId = await run.step("actionId", async () => crypto.randomUUID());
 	return run.step(
 		"tasksApplied",
 		async () => {
-			const applied = await applyOps(env, tracker, { noteId, runId, ops, description, ...(messageUrl && { messageUrl }) });
+			const applied = await applyOps(ports, { noteId, runId, ops, description, ...(messageUrl && { messageUrl }) });
 			console.log(`tasks ${runId} applied: ${ops.length} ops`);
 			return applied;
 		},

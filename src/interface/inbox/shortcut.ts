@@ -1,6 +1,6 @@
 import type { Env } from "../../infrastructure/env";
 import { safeEqual } from "../../infrastructure/security";
-import { enqueueNote } from "./enqueue";
+import { enqueueNote } from "../../application/intake";
 
 // Шорткат: сирий файл у тілі або форма з полем audio (інші поля ігноруються).
 export async function shortcutUpload(req: Request, env: Env): Promise<Response> {

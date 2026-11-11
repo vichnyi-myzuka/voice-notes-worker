@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Channel, Incoming } from "../src/domain/channel";
+import type { Ports } from "../src/application/pipeline";
+import { workersLlm } from "../src/infrastructure/llm";
+import { r2Ledger, r2Notes } from "../src/infrastructure/r2";
+import { todoistTracker } from "../src/infrastructure/todoist";
 import { handleFetch } from "../src/interface/inbox";
 import { fakeEnv } from "./fake-env";
 
@@ -18,25 +22,34 @@ function fakeChannel(incoming?: { key: string; body: ArrayBuffer; incoming: Inco
 	return { channel, calls };
 }
 
+// Inbox потребує лише канал і сховище нотаток; трекер не викликається.
+const ports = (channel: Channel, env: ReturnType<typeof envWith>): Ports => ({
+	channel,
+	tracker: todoistTracker(env),
+	notes: r2Notes(env),
+	ledger: r2Ledger(env),
+	llm: workersLlm(env),
+});
+
 const send = vi.fn(async () => {});
 const envWith = () => ({ ...fakeEnv({ SECRET: "s" }), QUEUE: { send } as unknown as Queue });
 
 describe("handleFetch", () => {
 	it("не-POST → 405", async () => {
 		const { channel } = fakeChannel();
-		const res = await handleFetch(new Request("https://x/hook"), envWith(), channel);
+		const res = await handleFetch(new Request("https://x/hook"), envWith(), ports(channel, envWith()));
 		expect(res.status).toBe(405);
 	});
 
 	it("шлях вебхука каналу віддається каналу", async () => {
 		const { channel } = fakeChannel();
-		const res = await handleFetch(new Request("https://x/hook", { method: "POST" }), envWith(), channel);
+		const res = await handleFetch(new Request("https://x/hook", { method: "POST" }), envWith(), ports(channel, envWith()));
 		expect(await res.text()).toBe("hooked");
 	});
 
 	it("шорткат без налаштованого SECRET → 500", async () => {
 		const { channel } = fakeChannel();
-		const res = await handleFetch(new Request("https://x/", { method: "POST", body: "a" }), { ...envWith(), SECRET: "" }, channel);
+		const res = await handleFetch(new Request("https://x/", { method: "POST", body: "a" }), { ...envWith(), SECRET: "" }, ports(channel, envWith()));
 		expect(res.status).toBe(500);
 	});
 
@@ -47,7 +60,7 @@ describe("handleFetch", () => {
 			body: new ArrayBuffer(1),
 			incoming: { contentType: "audio/ogg", metadata: { kind: "voice" }, origin: { deleteMessageId: "9" } },
 		});
-		await handleFetch(new Request("https://x/hook", { method: "POST" }), env, channel);
+		await handleFetch(new Request("https://x/hook", { method: "POST" }), env, ports(channel, env));
 		expect(calls).toEqual(["kept:true"]);
 		expect(env.store.has("1-a.ogg")).toBe(true);
 	});
@@ -60,7 +73,7 @@ describe("handleFetch", () => {
 			body: new ArrayBuffer(1),
 			incoming: { contentType: "audio/ogg", metadata: { kind: "voice" }, origin: { deleteMessageId: "9" }, replyTo: "5" },
 		});
-		await handleFetch(new Request("https://x/hook", { method: "POST" }), env, channel);
+		await handleFetch(new Request("https://x/hook", { method: "POST" }), env, ports(channel, env));
 		expect(calls).toEqual(["busy:5:true", 'origin:{"deleteMessageId":"9"}', "kept:false"]);
 		expect(send).toHaveBeenLastCalledWith({ key: "1-b.ogg", edit: "note-1" });
 	});

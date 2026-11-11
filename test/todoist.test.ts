@@ -1,22 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyOps, getTrackedTasks, planOps, withAppliedRecurrence, type ApplyParams } from "../src/application/tasks";
+import { applyOps, planOps, withAppliedRecurrence, type ApplyParams } from "../src/application/tasks";
 import { formatTriage } from "../src/domain/note";
 
 import type { TaskOp, TrackedTasks, TrackerSnapshot, TriageItem } from "../src/domain/tracker";
+import { r2Ledger } from "../src/infrastructure/r2";
 import { buildCommands, RULES_PROJECT, todoistTracker } from "../src/infrastructure/todoist";
 import { fetchSnapshot, findRulesProject } from "../src/infrastructure/todoist/api";
 import { taskRulesBlock, taskValidator } from "../src/infrastructure/todoist/fields";
-import type { Json } from "../src/infrastructure/llm";
+import type { Json } from "../src/domain/json";
+import type { Env } from "../src/infrastructure/env";
 import { fakeEnv } from "./fake-env";
 
 // Параметри запуску, які в тестах задаються до виклику applyPrepared (id запуску — з префіксом команд).
+const taskPorts = (env: Env) => ({ tracker: todoistTracker(env), ledger: r2Ledger(env) });
 const prepared = new Map<string, ApplyParams>();
 async function prepare(_env: unknown, ops: TaskOp[], description: string, noteId: string): Promise<string> {
 	const runId = crypto.randomUUID();
 	prepared.set(runId, { noteId, runId, ops, description });
 	return runId;
 }
-const applyPrepared = (env: Parameters<typeof applyOps>[0], id: string) => applyOps(env, todoistTracker(env), prepared.get(id)!);
+const applyPrepared = (env: Env, id: string) => applyOps(taskPorts(env), prepared.get(id)!);
 
 const snap: TrackerSnapshot = {
 	projects: [
@@ -503,7 +506,7 @@ describe("applyOps", () => {
 			{ type: "item_delete", uuid: `${id}-2`, args: { id: "200" } },
 		]);
 
-		const state = await getTrackedTasks(env, "n1");
+		const state = await r2Ledger(env).get("n1");
 		expect(state).toEqual({ t3: { id: "300", item: created }, t1: { id: "100", item: updated } });
 	});
 
@@ -540,7 +543,7 @@ describe("applyOps", () => {
 			temp_id_mapping: { [`tmp-${id}-0`]: "301" },
 		});
 		await expect(applyPrepared(env, id)).rejects.toThrow(/Task tracker commands failed/);
-		expect(await getTrackedTasks(env, "n1")).toEqual({ t1: { id: "301", item: a } });
+		expect(await r2Ledger(env).get("n1")).toEqual({ t1: { id: "301", item: a } });
 
 		const calls = stubFetch({
 			sync_status: { [`${id}-0`]: "ok", [`${id}-1`]: "ok" },
@@ -550,7 +553,7 @@ describe("applyOps", () => {
 		// ретрай надсилає ті самі uuid — Todoist не виконає їх удруге
 		const uuids = JSON.parse(calls[1].body.get("commands")!).map((c: { uuid: string }) => c.uuid);
 		expect(uuids).toEqual([`${id}-0`, `${id}-1`]);
-		expect(await getTrackedTasks(env, "n1")).toEqual({ t1: { id: "301", item: a }, t2: { id: "302", item: b } });
+		expect(await r2Ledger(env).get("n1")).toEqual({ t1: { id: "301", item: a }, t2: { id: "302", item: b } });
 	});
 
 	it("нагадування: ID зберігаються для створення й заміни; оновлення без змін нагадувань лишає попередні", async () => {
@@ -602,7 +605,7 @@ describe("applyOps", () => {
 			"item_update",
 			"item_add",
 		]);
-		expect(await getTrackedTasks(env, "n1")).toEqual({
+		expect(await r2Ledger(env).get("n1")).toEqual({
 			t3: { id: "300", item: withR, reminderIds: ["r300a", "r300b"] },
 			t1: { id: "100", item: replaced, reminderIds: ["new1"] },
 			t2: { id: "200", item: kept, reminderIds: ["old2"] },
@@ -857,7 +860,7 @@ describe("повторювані задачі", () => {
 			expect(retry[1].args.item_id).toBe(`tmp-${id}x-0`);
 			expect(JSON.stringify(retry)).not.toContain("every blah");
 
-			const state = await getTrackedTasks(env, "n1");
+			const state = await r2Ledger(env).get("n1");
 			expect(state.t1).toEqual({ id: "301", item: { ...rec, recurrence: "", recurrenceLabel: "" }, reminderIds: ["r1", "r2"] });
 			expect(state.t2).toEqual({ id: "302", item: plain });
 			expect(err).toHaveBeenCalledTimes(1);
@@ -884,7 +887,7 @@ describe("повторювані задачі", () => {
 				{ sync_status: { [`${id}x-0`]: { error_code: 15, error_tag: "OTHER", error: "x" } }, temp_id_mapping: {} },
 			);
 			await expect(applyPrepared(env, id)).rejects.toThrow(/Task tracker commands failed/);
-			expect(await getTrackedTasks(env, "n1")).toEqual({ t2: { id: "302", item: plain } });
+			expect(await r2Ledger(env).get("n1")).toEqual({ t2: { id: "302", item: plain } });
 			err.mockRestore();
 		});
 	});
@@ -946,12 +949,12 @@ describe("attachFile", () => {
 	});
 });
 
-describe("getTrackedTasks: ключ до перейменування", () => {
+describe("r2Ledger: ключ до перейменування", () => {
 	it("читає старий ключ .todoist.json, якщо нового немає", async () => {
 		const env = fakeEnv();
 		env.store.set("notes/n1.todoist.json", JSON.stringify({ t1: { id: "100", item: item("А") } }));
-		expect(Object.keys(await getTrackedTasks(env, "n1"))).toEqual(["t1"]);
+		expect(Object.keys(await r2Ledger(env).get("n1"))).toEqual(["t1"]);
 		env.store.set("notes/n1.tasks.json", JSON.stringify({ t2: { id: "200", item: item("Б") } }));
-		expect(Object.keys(await getTrackedTasks(env, "n1"))).toEqual(["t2"]);
+		expect(Object.keys(await r2Ledger(env).get("n1"))).toEqual(["t2"]);
 	});
 });

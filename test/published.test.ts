@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { captionNotice, refreshNote, showNote } from "../src/application/pipeline";
-import { loadNote, noteIdByMessage, removeNote, saveNote, type Note } from "../src/domain/published";
+import type { Note } from "../src/domain/published";
+import { workersLlm } from "../src/infrastructure/llm";
+import { r2Ledger, r2Notes } from "../src/infrastructure/r2";
 import { telegramChannel } from "../src/infrastructure/telegram";
 import { todoistTracker } from "../src/infrastructure/todoist";
 import { fakeEnv } from "./fake-env";
@@ -8,7 +10,7 @@ import { fakeEnv } from "./fake-env";
 const meta = { title: "Назва", summary: "Коротко.", ideas: [], tasks: [] };
 const note = (extra: Partial<Note> = {}): Note => ({ transcript: "Оригінал.", edits: [], meta, triage: null, messageId: 42, recordedTs: 1762700000000, ...extra });
 
-const ports = (env: Parameters<typeof telegramChannel>[0]) => ({ channel: telegramChannel(env), tracker: todoistTracker(env) });
+const ports = (env: Parameters<typeof telegramChannel>[0]) => ({ channel: telegramChannel(env), tracker: todoistTracker(env), notes: r2Notes(env), ledger: r2Ledger(env), llm: workersLlm(env) });
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -28,24 +30,25 @@ function stubTelegram(error?: string) {
 describe("published note", () => {
 	it("зберігає нотатку й знаходить її за id та за повідомленням", async () => {
 		const env = fakeEnv();
-		await saveNote(env, "n1", note());
-		expect(await loadNote(env, "n1")).toEqual(note());
-		expect(await noteIdByMessage(env, 42)).toBe("n1");
-		expect(await noteIdByMessage(env, "42")).toBe("n1");
+		await r2Notes(env).save("n1", note());
+		expect(await r2Notes(env).load("n1")).toEqual(note());
+		expect(await r2Notes(env).idByMessage(42)).toBe("n1");
+		expect(await r2Notes(env).idByMessage("42")).toBe("n1");
 	});
 
 	it("невідомі нотатка й повідомлення дають null", async () => {
 		const env = fakeEnv();
-		expect(await loadNote(env, "nope")).toBeNull();
-		expect(await noteIdByMessage(env, 7)).toBeNull();
+		expect(await r2Notes(env).load("nope")).toBeNull();
+		expect(await r2Notes(env).idByMessage(7)).toBeNull();
 	});
 
-	it("removeNote прибирає запис, ключ за повідомленням і стан задач", async () => {
+	it("remove прибирає запис, ключ за повідомленням і стан задач", async () => {
 		const env = fakeEnv();
-		await saveNote(env, "n1", note());
+		await r2Notes(env).save("n1", note());
 		env.store.set("notes/n1.tasks.json", "{}");
 		env.store.set("notes/n1.todoist.json", "{}");
-		await removeNote(env, "n1", note());
+		await r2Notes(env).remove("n1", note());
+		await r2Ledger(env).remove("n1");
 		expect([...env.store.keys()]).toEqual([]);
 	});
 
@@ -79,7 +82,7 @@ describe("published note", () => {
 		const env = fakeEnv({ BOT_TOKEN: "t" });
 		await refreshNote(env, ports(env), "n1", false);
 		expect(calls).toHaveLength(0);
-		await saveNote(env, "n1", note());
+		await r2Notes(env).save("n1", note());
 		await refreshNote(env, ports(env), "n1", true);
 		expect(calls[0].body.caption).toContain("Не вдалося оновити Todoist");
 	});
