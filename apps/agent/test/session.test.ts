@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -49,6 +49,11 @@ function fakeContainer() {
 		setInactivityTimeout: async () => {},
 		// exec не успадковує env контейнера; session-prep друкує шлях теки сесії.
 		async exec(cmd: string[], options?: { env?: Record<string, string> }) {
+			if (cmd[0] === "node") {
+				// розкладання payload/: окремо від решти, щоб не заважати перевіркам session-prep
+				opencode.syncs.push(JSON.parse(options!.env!.PAYLOAD) as { path: string; mode: string; content: string }[]);
+				return { output: async () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }) };
+			}
 			opencode.execs.push({ cmd, env: options?.env });
 			opencode.execMax = Math.max(opencode.execMax, ++opencode.execActive);
 			await Promise.resolve();
@@ -275,6 +280,38 @@ describe("AgentSession", () => {
 		expect(opencode.prompts.at(-1)).toEqual({ id: "ses_oc2", text: "Продовжуй" });
 		expect(await session.link(ID)).toBe("ses_oc2");
 		expect(await session.status(ID)).toBe("working");
+	});
+
+	describe("файли з payload/ розкладаються воркером, а не лежать в образі", () => {
+		it("при старті контейнера: інструкції (обидва шляхи), publish, session-prep і git-хук з правами", async () => {
+			const { session, opencode } = setup();
+			await session.start(ID, { prompt: "Задача" });
+			expect(opencode.syncs).toHaveLength(1);
+			const byPath = Object.fromEntries(opencode.syncs[0].map((f) => [f.path, f]));
+			expect(Object.keys(byPath).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.config/opencode/AGENTS.md", "/usr/local/bin/publish", "/usr/local/bin/session-prep", "/usr/local/lib/git-hooks/pre-push"]);
+			expect(byPath["/usr/local/bin/publish"].mode).toBe("755");
+			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("Publishing small static sites");
+			expect(byPath["/root/.claude/CLAUDE.md"].content).toBe(byPath["/root/.config/opencode/AGENTS.md"].content);
+			expect(byPath["/usr/local/bin/session-prep"].content.startsWith("#!/bin/sh")).toBe(true);
+		});
+
+		it("працюючий контейнер вдруге не оновлюється, якщо вміст той самий; після змін (інший хеш) оновлюється", async () => {
+			const { session, opencode, store } = setup();
+			await session.start(ID, { prompt: "Задача" });
+			await session.followUp(ID, "Ще");
+			expect(opencode.syncs).toHaveLength(1);
+			store.set("payloadHash", "old"); // як після деплою зі зміненим AGENTS.md
+			await session.followUp(ID, "І ще");
+			expect(opencode.syncs).toHaveLength(2);
+		});
+
+		it("після сну (знімок міг бути до деплою) файли розкладаються знову", async () => {
+			const { session, container, opencode } = setup();
+			await session.start(ID, { prompt: "Задача" });
+			container.sleep();
+			await session.followUp(ID, "Продовжуй");
+			expect(opencode.syncs).toHaveLength(2);
+		});
 	});
 
 	it("start з назвою: тека й гілка за змістом задачі (<назва>-<номер>); remove й followUp користуються нею", async () => {
@@ -663,38 +700,25 @@ describe("AgentSession", () => {
 			expect(container.starts).toHaveLength(starts);
 		});
 
-		it("знімок від іншого образу не відновлюється: старт з чистого образу", async () => {
+		it("знімок від іншого образу теж відновлюється (історія не губиться); новий образ лише через resetComputer", async () => {
 			const { session, container, opencode } = await finishedTask();
 			await session.alarm();
 			container.sleep();
+			container.images.base = "image2"; // деплой із новим образом
+			await session.followUp(ID, "Продовжуй");
+			expect(container.starts[1]).toHaveProperty("containerSnapshot");
+			expect(container.starts[1]).not.toHaveProperty("image");
+			expect(opencode.seq).toBe(1); // сесія та сама, історія на місці
+			await session.resetComputer();
+			await session.followUp(ID, "Ще");
+			expect(container.starts[2]).toMatchObject({ image: "image2" }); // новий образ лише після /update
+		});
+
+		it("працюючий контейнер зі старого образу не перезапускається сам після деплою", async () => {
+			const { session, container } = await finishedTask();
 			container.images.base = "image2";
 			await session.followUp(ID, "Продовжуй");
-			expect(container.starts[1]).toMatchObject({ image: "image2" });
-			expect(container.starts[1]).not.toHaveProperty("containerSnapshot");
-			expect(opencode.seq).toBe(2); // стару історію втрачено, сесія нова
-		});
-
-		it("після деплою контейнер зі старого образу перезапускається сам, коли агенти вільні; знімок зі старого образу не робиться", async () => {
-			const { session, container, store, opencode } = await finishedTask();
-			container.images.base = "image2"; // деплой: контейнер ще працює зі старим образом
-			await session.alarm();
-			expect(store.has("snapshot")).toBe(false); // знімок із застарілого контейнера не підписуємо новим образом
-			await expect(session.snapshot()).rejects.toThrow(/older image/);
-			opencode.busy.add("ses_oc1");
-			await session.followUp(ID, "Ще");
-			expect(container.starts).toHaveLength(1); // агент зайнятий: не чіпаємо
-			opencode.busy.clear();
-			await session.followUp(ID, "Продовжуй");
-			expect(container.starts).toHaveLength(2);
-			expect(container.starts[1]).toMatchObject({ image: "image2" });
-			expect(store.get("launchedImage")).toBe("image2");
-		});
-
-		it("контейнер, запущений до появи запису про образ, вважається застарілим", async () => {
-			const { session, container, store } = await finishedTask();
-			store.delete("launchedImage");
-			await session.followUp(ID, "Продовжуй");
-			expect(container.starts).toHaveLength(2);
+			expect(container.starts).toHaveLength(1);
 		});
 
 		it("якщо знімок не відновився, видаляє його й стартує з чистого образу", async () => {
