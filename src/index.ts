@@ -4,23 +4,15 @@ import { applySetup, planSetup, setupReport, type SetupPlan } from "./setup";
 import { captionNotice, loadNote, noteIdByMessage, refreshNote, removeNote, saveNote, showNote, type Note } from "./published";
 import { openSteps, type Steps } from "./steps";
 import { receiveTelegramVoice, telegramMessageUrl, tg, tgSendMessage, tgSendNote, tgSendText } from "./telegram";
+import { attachFile, deleteOpenTasks, getInTodoist, syncTasks, type TodoistOp } from "./tasks";
 import {
-	applyAction,
-	attachFile,
-	createAction,
-	deleteAction,
-	deleteOpenTasks,
 	EDIT_TASKS_HELP,
 	fetchSnapshot,
-	getInTodoist,
-	planOps,
 	promptDate,
-	setActionMessage,
 	taskFieldsSchema,
 	taskRulesBlock,
 	taskValidator,
 	triage,
-	type TodoistOp,
 	type TodoistSnapshot,
 	type TriageItem,
 } from "./todoist";
@@ -52,12 +44,12 @@ type State = {
 	transcript?: string;
 	meta?: Meta;
 	triage?: TriageItem[] | null; // null: тріаж не вдався або не потрібен
-	actionId?: string; // дія в Todoist ("" — робити нічого)
-	todoistApplied?: boolean; // дію виконано (false — не вдалося навіть на останній спробі)
+	ops?: TodoistOp[]; // план змін у Todoist (syncTasks)
+	actionId?: string; // id запуску: з нього uuid команд Todoist (syncTasks)
+	todoistApplied?: boolean; // задачі виконано (false — не вдалося навіть на останній спробі)
 	todoistMarked?: boolean; // підпис з посиланнями на задачі оновлено після виконання
 	audioSent?: boolean;
 	messageId?: number; // id повідомлення з аудіо в Telegram
-	messageLinked?: boolean; // посилання на повідомлення дописане в дію
 	originalDeleted?: boolean; // оригінальне голосове з каналу видалене
 	noteId?: string; // id нотатки для редагування й дії Todoist, створюється до відправки
 	captionEdited?: boolean; // (редагування) підпис нотатки вже оновлено
@@ -266,16 +258,6 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 		return snap ? await triage(env, transcript, meta.tasks, snap, new Date(recordedTs(key)), env.TIMEZONE) : null;
 	});
 	const noteId = await step("noteId", async () => crypto.randomUUID());
-	// "" — нових задач немає, робити в Todoist нічого.
-	const actionId = await step("actionId", async () => {
-		const newTasks = triaged?.filter((i) => !i.duplicateOf) ?? [];
-		if (!newTasks.length) return "";
-		const ops: TodoistOp[] = newTasks.map((item) => ({ key: item.key ?? "", item }));
-		const id = await createAction(env, ops, `🎙 ${meta.title} (${recordedAt})`, noteId);
-		console.log(`todoist action ${id}: ${newTasks.length} new, ${triaged!.length - newTasks.length} duplicates`);
-		return id;
-	});
-
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	const messageId = await step("messageId", async () => {
 		const max = isText ? TEXT_CAPTION_MAX : CAPTION_MAX;
@@ -285,22 +267,12 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 			: await tgSendNote(env, source, meta.title, caption);
 	});
 
-	// Посилання на повідомлення в описі задач Todoist (лише для каналів і супергруп).
-	const messageUrl = telegramMessageUrl(env.CHAT_ID, messageId);
-	if (actionId && messageUrl) {
-		await step("messageLinked", async () => {
-			await setActionMessage(env, actionId, messageUrl);
-			return true;
-		});
-	}
-
 	// Зберігаємо нотатку для редагування (повторний запис при ретраї нічого не ламає).
 	const note: Note = {
 		transcript,
 		edits: [],
 		meta,
 		triage: triaged,
-		actionId: actionId || undefined,
 		messageId,
 		recordedTs: recordedTs(key),
 		...(isText && { text: true }),
@@ -309,9 +281,14 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 	await saveNote(env, noteId, note);
 	console.log(`note ${noteId} published as message ${messageId}`);
 
-	if (actionId) {
-		// Задачі одразу в Todoist (посилання на повідомлення вже в описі), потім назви задач у підписі стають посиланнями на них.
-		const applied = await step("todoistApplied", () => applyOnce(env, actionId), { onFinalFailure: () => false });
+	// Задачі одразу в Todoist (з посиланням на повідомлення в описі), потім назви задач у підписі стають посиланнями на них.
+	const applied = await syncTasks(env, run, {
+		noteId,
+		items: triaged,
+		description: `🎙 ${meta.title} (${recordedAt})`,
+		messageUrl: telegramMessageUrl(env.CHAT_ID, messageId),
+	});
+	if (applied !== undefined) {
 		await step("todoistMarked", async () => {
 			await refreshNote(env, noteId, !applied);
 			return true;
@@ -322,7 +299,7 @@ async function processNote(env: Env, key: string, lastAttempt: boolean): Promise
 				"photoAttached",
 				async () => {
 					const ids = Object.values(await getInTodoist(env, noteId)).map((t) => t.id);
-					await attachFile(env, actionId, ids, await source.blob(), `${meta.title.slice(0, 60) || "photo"}.jpg`);
+					await attachFile(env, run.state.actionId!, ids, await source.blob(), `${meta.title.slice(0, 60) || "photo"}.jpg`);
 					console.log(`photo attached to ${ids.length} tasks`);
 					return true;
 				},
@@ -395,7 +372,6 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		await tg(env, "deleteMessage", { chat_id: env.CHAT_ID, message_id: note.messageId }).catch((err) =>
 			console.error("delete note message failed:", err),
 		);
-		if (note.actionId) await deleteAction(env, note.actionId);
 		await removeNote(env, noteId, note);
 		console.log(`note ${noteId} deleted by request: ${deleted} open tasks deleted in Todoist`);
 		await cleanup();
@@ -408,20 +384,12 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 	}
 
 	// Порівнюємо з тим, що вже є в Todoist: змінені задачі оновлюємо, нові створюємо, прибрані видаляємо.
-	// "" — змін у Todoist немає.
-	const actionId = await step("actionId", async () => {
-		const ops = triaged ? planOps(triaged, await getInTodoist(env, noteId)) : [];
-		if (!ops.length) return "";
-		const recorded = formatRecordedAt(String(note.recordedTs), env.TIMEZONE);
-		const id = await createAction(env, ops, `🎙 ${meta.title} (${recorded})`, noteId);
-		const messageUrl = telegramMessageUrl(env.CHAT_ID, note.messageId);
-		if (messageUrl) await setActionMessage(env, id, messageUrl);
-		const n = (f: (op: TodoistOp) => boolean) => ops.filter(f).length;
-		console.log(`todoist action ${id}: ${n((o) => !o.id)} create, ${n((o) => !!o.id && !!o.item)} update, ${n((o) => !o.item)} delete`);
-		return id;
+	const applied = await syncTasks(env, run, {
+		noteId,
+		items: triaged,
+		description: `🎙 ${meta.title} (${formatRecordedAt(String(note.recordedTs), env.TIMEZONE)})`,
+		messageUrl: telegramMessageUrl(env.CHAT_ID, note.messageId),
 	});
-
-	const applied = actionId ? await step("todoistApplied", () => applyOnce(env, actionId), { onFinalFailure: () => false }) : undefined;
 
 	const allSetup = [...(note.setup ?? []), ...setup];
 	await step("captionEdited", async () => {
@@ -435,12 +403,9 @@ async function processEdit(env: Env, key: string, noteId: string, lastAttempt: b
 		edits: [...note.edits, instruction],
 		meta,
 		triage: triaged,
-		actionId: actionId || undefined,
 		...(allSetup.length && { setup: allSetup }),
 	};
 	await saveNote(env, noteId, updated);
-	// Стара дія (з часів кнопки, якщо її не натиснули) більше не актуальна.
-	if (note.actionId && note.actionId !== actionId) await deleteAction(env, note.actionId);
 	console.log(`note ${noteId} edited`);
 	await cleanup(note.messageId);
 }
@@ -467,13 +432,6 @@ async function runSetup(env: Env, text: string, run: Steps<State>): Promise<stri
 	);
 	return ok ? setupReport(s.plan) : [SETUP_FAILED];
 }
-// Виконує дію в Todoist (повторний uuid Todoist ігнорує, тож ретраї не дублюють задачі).
-async function applyOnce(env: Env, actionId: string): Promise<true> {
-	const res = await applyAction(env, actionId);
-	if (res.status === "applied") console.log(`todoist action ${actionId} applied: ${res.count} ops`);
-	return true;
-}
-
 // Видаляє оригінальне голосове з каналу (якщо запис прийшов звідти). Збій не критичний.
 async function deleteOriginal(env: Env, meta: Record<string, string> | undefined): Promise<void> {
 	const { deleteChatId, deleteMessageId } = meta ?? {};

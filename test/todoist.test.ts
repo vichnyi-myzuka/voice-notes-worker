@@ -1,25 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { applyOps, attachFile, buildCommands, deleteOpenTasks, getInTodoist, planOps, withAppliedRecurrence, type ApplyParams, type InTodoist, type TodoistOp } from "../src/tasks";
 import {
-	applyAction,
-	attachFile,
-	buildCommands,
-	createAction,
-	deleteOpenTasks,
 	fetchSnapshot,
 	findRulesProject,
 	formatTriage,
-	getInTodoist,
-	planOps,
 	RULES_PROJECT,
-	setActionMessage,
 	taskRulesBlock,
 	taskValidator,
-	withAppliedRecurrence,
-	type InTodoist,
 	type TodoistSnapshot,
 	type TriageItem,
 } from "../src/todoist";
 import { fakeEnv } from "./fake-env";
+
+// Параметри запуску, які в тестах задаються до виклику applyPrepared (id запуску — з префіксом команд).
+const prepared = new Map<string, ApplyParams>();
+async function prepare(_env: unknown, ops: TodoistOp[], description: string, noteId: string): Promise<string> {
+	const runId = crypto.randomUUID();
+	prepared.set(runId, { noteId, runId, ops, description });
+	return runId;
+}
+const applyPrepared = (env: Parameters<typeof applyOps>[0], id: string) => applyOps(env, prepared.get(id)!);
 
 const snap: TodoistSnapshot = {
 	projects: [
@@ -441,7 +441,7 @@ describe("deleteOpenTasks", () => {
 	});
 });
 
-describe("applyAction", () => {
+describe("applyOps", () => {
 	afterEach(() => vi.unstubAllGlobals());
 
 	const raw = {
@@ -477,17 +477,17 @@ describe("applyAction", () => {
 	const seed = (env: ReturnType<typeof fakeEnv>) =>
 		env.store.set("notes/n1.todoist.json", JSON.stringify({ t1: { id: "100", item: prev }, t2: { id: "200", item: item("В", { key: "t2" }) } }));
 
-	it("надсилає команди, зберігає id створених задач, позначає дію виконаною", async () => {
+	it("надсилає команди й зберігає id створених задач", async () => {
 		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
 		seed(env);
-		const id = await createAction(env, ops, "опис", "n1");
-		await setActionMessage(env, id, "https://t.me/c/1/2");
+		const id = await prepare(env, ops, "опис", "n1");
+		prepared.get(id)!.messageUrl = "https://t.me/c/1/2";
 		const calls = stubFetch({
 			sync_status: { [`${id}-0`]: "ok", [`${id}-1`]: "ok", [`${id}-1m`]: "ok", [`${id}-2`]: "ok" },
 			temp_id_mapping: { [`tmp-${id}-0`]: "300" },
 		});
 
-		expect(await applyAction(env, id)).toEqual({ status: "applied", noteId: "n1", count: 3 });
+		expect(await applyPrepared(env, id)).toBe(true);
 
 		expect(calls).toHaveLength(2);
 		expect(calls[0].url).toBe("https://api.todoist.com/api/v1/sync");
@@ -510,43 +510,26 @@ describe("applyAction", () => {
 		expect(state).toEqual({ t3: { id: "300", item: created }, t1: { id: "100", item: updated } });
 	});
 
-	it("повторний виклик → already, без запитів до Todoist", async () => {
-		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
-		const id = await createAction(env, [{ key: "t3", item: created }], "о", "n1");
-		const calls = stubFetch({ sync_status: {}, temp_id_mapping: { [`tmp-${id}-0`]: "300" } });
-		await applyAction(env, id);
-		expect(await applyAction(env, id)).toEqual({ status: "already" });
-		expect(calls).toHaveLength(2);
-	});
-
-	it("невідома дія → missing", async () => {
-		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
-		const calls = stubFetch({});
-		expect(await applyAction(env, "нема")).toEqual({ status: "missing" });
-		expect(calls).toHaveLength(0);
-	});
-
-	it("неуспішний sync_status → помилка, дію не позначено виконаною, стан нотатки не змінено", async () => {
+	it("неуспішний sync_status → помилка, стан нотатки не змінено", async () => {
 		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
 		seed(env);
 		const before = env.store.get("notes/n1.todoist.json");
-		const id = await createAction(env, ops, "опис", "n1");
+		const id = await prepare(env, ops, "опис", "n1");
 		stubFetch({ sync_status: { [`${id}-0`]: "ok", [`${id}-1`]: { error_code: 22, error: "Invalid" } }, temp_id_mapping: {} });
 
-		await expect(applyAction(env, id)).rejects.toThrow(/Todoist commands failed/);
-		expect(JSON.parse(env.store.get(`todoist/${id}.json`)!).appliedAt).toBeUndefined();
+		await expect(applyPrepared(env, id)).rejects.toThrow(/Todoist commands failed/);
 		expect(env.store.get("notes/n1.todoist.json")).toBe(before);
 
-		// після помилки можна натиснути ще раз
+		// після помилки ретрай проходить
 		stubFetch({ sync_status: {}, temp_id_mapping: { [`tmp-${id}-0`]: "300" } });
-		expect((await applyAction(env, id)).status).toBe("applied");
+		expect(await applyPrepared(env, id)).toBe(true);
 	});
 
-	it("частковий збій: id успішно створеної задачі зберігається, дія не виконана, ретрай завершує", async () => {
+	it("частковий збій: id успішно створеної задачі зберігається, ретрай завершує", async () => {
 		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
 		const a = item("Перша", { key: "t1" });
 		const b = item("Друга", { key: "t2" });
-		const id = await createAction(
+		const id = await prepare(
 			env,
 			[
 				{ key: "t1", item: a },
@@ -559,20 +542,18 @@ describe("applyAction", () => {
 			sync_status: { [`${id}-0`]: "ok", [`${id}-1`]: { error_code: 15, error: "Fail" } },
 			temp_id_mapping: { [`tmp-${id}-0`]: "301" },
 		});
-		await expect(applyAction(env, id)).rejects.toThrow(/Todoist commands failed/);
+		await expect(applyPrepared(env, id)).rejects.toThrow(/Todoist commands failed/);
 		expect(await getInTodoist(env, "n1")).toEqual({ t1: { id: "301", item: a } });
-		expect(JSON.parse(env.store.get(`todoist/${id}.json`)!).appliedAt).toBeUndefined();
 
 		const calls = stubFetch({
 			sync_status: { [`${id}-0`]: "ok", [`${id}-1`]: "ok" },
 			temp_id_mapping: { [`tmp-${id}-0`]: "301", [`tmp-${id}-1`]: "302" },
 		});
-		expect(await applyAction(env, id)).toEqual({ status: "applied", noteId: "n1", count: 2 });
+		expect(await applyPrepared(env, id)).toBe(true);
 		// ретрай надсилає ті самі uuid — Todoist не виконає їх удруге
 		const uuids = JSON.parse(calls[1].body.get("commands")!).map((c: { uuid: string }) => c.uuid);
 		expect(uuids).toEqual([`${id}-0`, `${id}-1`]);
 		expect(await getInTodoist(env, "n1")).toEqual({ t1: { id: "301", item: a }, t2: { id: "302", item: b } });
-		expect(JSON.parse(env.store.get(`todoist/${id}.json`)!).appliedAt).toBeDefined();
 	});
 
 	it("нагадування: ID зберігаються для створення й заміни; оновлення без змін нагадувань лишає попередні", async () => {
@@ -588,7 +569,7 @@ describe("applyAction", () => {
 				t2: { id: "200", item: { ...kept, title: "Було" }, reminderIds: ["old2"] },
 			}),
 		);
-		const id = await createAction(
+		const id = await prepare(
 			env,
 			[
 				{ key: "t3", item: withR },
@@ -611,7 +592,7 @@ describe("applyAction", () => {
 				[`tmp-${id}-3`]: "400",
 			},
 		});
-		await applyAction(env, id);
+		await applyPrepared(env, id);
 
 		const types = JSON.parse(calls[1].body.get("commands")!).map((c: { type: string }) => c.type);
 		expect(types).toEqual([
@@ -634,9 +615,9 @@ describe("applyAction", () => {
 
 	it("HTTP-помилка Todoist → виняток", async () => {
 		const env = fakeEnv({ TODOIST_TOKEN: "tok" });
-		const id = await createAction(env, [{ key: "t3", item: created }], "о", "n1");
+		const id = await prepare(env, [{ key: "t3", item: created }], "о", "n1");
 		vi.stubGlobal("fetch", async () => ({ ok: false, status: 401, text: async () => "forbidden" }));
-		await expect(applyAction(env, id)).rejects.toThrow(/401/);
+		await expect(applyPrepared(env, id)).rejects.toThrow(/401/);
 	});
 });
 
@@ -822,7 +803,7 @@ describe("повторювані задачі", () => {
 		});
 	});
 
-	describe("applyAction: запасний шлях без повтору", () => {
+	describe("applyOps: запасний шлях без повтору", () => {
 		afterEach(() => vi.unstubAllGlobals());
 		const raw = {
 			projects: [
@@ -859,7 +840,7 @@ describe("повторювані задачі", () => {
 		it("INVALID_DATE для повтору → другий sync лише з командами повтору (uuid з x), стан без повтору", async () => {
 			const env = fakeEnv({ TODOIST_TOKEN: "tok" });
 			const err = vi.spyOn(console, "error").mockImplementation(() => {});
-			const id = await createAction(env, ops, "о", "n1");
+			const id = await prepare(env, ops, "о", "n1");
 			const calls = stub(
 				{ sync_status: { [`${id}-0`]: invalid, [`${id}-1`]: "ok" }, temp_id_mapping: { [`tmp-${id}-1`]: "302" } },
 				{
@@ -868,7 +849,7 @@ describe("повторювані задачі", () => {
 				},
 			);
 
-			expect(await applyAction(env, id)).toEqual({ status: "applied", noteId: "n1", count: 2 });
+			expect(await applyPrepared(env, id)).toBe(true);
 
 			expect(calls).toHaveLength(3);
 			const first = JSON.parse(calls[1].body.get("commands")!);
@@ -882,31 +863,30 @@ describe("повторювані задачі", () => {
 			const state = await getInTodoist(env, "n1");
 			expect(state.t1).toEqual({ id: "301", item: { ...rec, recurrence: "", recurrenceLabel: "" }, reminderIds: ["r1", "r2"] });
 			expect(state.t2).toEqual({ id: "302", item: plain });
-			expect(JSON.parse(env.store.get(`todoist/${id}.json`)!).appliedAt).toBeDefined();
 			expect(err).toHaveBeenCalledTimes(1);
 			err.mockRestore();
 		});
 
 		it("INVALID_DATE у задачі без повтору або інша помилка → кидає, без повторного sync", async () => {
 			const env = fakeEnv({ TODOIST_TOKEN: "tok" });
-			const id = await createAction(env, ops, "о", "n1");
+			const id = await prepare(env, ops, "о", "n1");
 			const calls = stub({
 				sync_status: { [`${id}-0`]: { error_code: 15, error_tag: "SOMETHING", error: "x" }, [`${id}-1`]: invalid },
 				temp_id_mapping: {},
 			});
-			await expect(applyAction(env, id)).rejects.toThrow(/Todoist commands failed/);
+			await expect(applyPrepared(env, id)).rejects.toThrow(/Todoist commands failed/);
 			expect(calls).toHaveLength(2);
 		});
 
 		it("помилка в самому ретраї → кидає; успішні задачі зберігаються", async () => {
 			const env = fakeEnv({ TODOIST_TOKEN: "tok" });
 			const err = vi.spyOn(console, "error").mockImplementation(() => {});
-			const id = await createAction(env, ops, "о", "n1");
+			const id = await prepare(env, ops, "о", "n1");
 			stub(
 				{ sync_status: { [`${id}-0`]: invalid, [`${id}-1`]: "ok" }, temp_id_mapping: { [`tmp-${id}-1`]: "302" } },
 				{ sync_status: { [`${id}x-0`]: { error_code: 15, error_tag: "OTHER", error: "x" } }, temp_id_mapping: {} },
 			);
-			await expect(applyAction(env, id)).rejects.toThrow(/Todoist commands failed/);
+			await expect(applyPrepared(env, id)).rejects.toThrow(/Todoist commands failed/);
 			expect(await getInTodoist(env, "n1")).toEqual({ t2: { id: "302", item: plain } });
 			err.mockRestore();
 		});
