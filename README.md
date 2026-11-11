@@ -336,6 +336,7 @@ POST /api/sessions {prompt, repo?: "owner/name", id?}  → {id, url}   ство�
 GET  /api/sessions/<id>                                → {status}: working | idle | stopped
 POST /api/sessions/<id>/messages {text}                → уточнення в ту саму сесію
 POST /api/sessions/<id>/abort                          → зупинити поточну роботу агента (сесія лишається)
+GET  /api/computer                                      → стан контейнера: running, час активності, alarm, знімок, відкриті SSE-потоки
 POST /api/computer/snapshot                            → примусово зберегти диск контейнера (після змін поза сесіями, наприклад SSH)
 GET  /s/<id>                                           → редірект на сторінку цієї сесії: /server/<base64url origin>/session/<id OpenCode>
 будь-який інший шлях                                   → проксі у веб-інтерфейс OpenCode
@@ -377,7 +378,7 @@ npm run deploy
 
 ### Відкриті питання прототипу
 
-Покрито тестами на фейках (`apps/agent/test`), але не перевірено на Cloudflare: ціна й холодний старт `standard-1`; чи проходять WebSocket-запити (термінал у веб-інтерфейсі) через `getTcpPort().fetch`; чи збігається ключ сервера в `/server/<key>/session/<id>` (ми кодуємо origin у base64url за кодом інтерфейсу); чи працює `authorized_keys` для політики `durable_object`. Варіант без контейнера (OpenCode SDK у Durable Object) прибрано: без файлової системи, shell і git він не вміє клонувати репозиторії (є в історії git).
+Перевірено на Cloudflare: кілька сесій в одному контейнері (worktree, порожня тека), прямі посилання `/s/<id>`, веб-термінал (WebSocket через проксі, потрібне прибирання `Origin`), SSH, ручний знімок, сон і відновлення зі знімком зі збереженням змін, зроблених через SSH. Не виміряно: ціна й холодний старт `standard-1`, час відновлення на великих репо. Відкрита вкладка, термінал чи SSH тримають контейнер від сну: стан дивись у `GET /api/computer`. Варіант без контейнера (OpenCode SDK у Durable Object) прибрано: без файлової системи, shell і git він не вміє клонувати репозиторії (є в історії git).
 
 ### Знімки диска (стан сесії між снами)
 
