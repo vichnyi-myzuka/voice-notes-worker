@@ -159,7 +159,7 @@ describe("вебхук Telegram", () => {
 		it("нова сесія береться під спостереження: після завершення підсумок прийде в той самий чат", async () => {
 			const { send, watches } = setup();
 			await send(msg({ text: "Поправ README" }));
-			expect(watches).toEqual([{ id: SID, target: { chatId: OWNER, url: `https://agent.example/s/${SID}` } }]);
+			expect(watches).toEqual([{ id: SID, target: { chatId: OWNER, url: `https://agent.example/s/${SID}`, postId: 1 } }]); // postId — пост бота (його id віддає sendMessage)
 		});
 
 		it("відповідь текстом на пост із сесією — уточнення в ту саму сесію, нової сесії немає", async () => {
@@ -168,7 +168,14 @@ describe("вебхук Telegram", () => {
 			expect(sessions.size).toBe(1);
 			expect(sessions.get(SID)?.messages).toEqual(["Поправ README", "Ще й CHANGELOG"]);
 			expect(watches).toHaveLength(2); // стежимо за новою роботою
+			expect(watches[1].target).toMatchObject({ chatId: OWNER, postId: 100 }); // 👨‍💻 піде на пост, на який відповіли
 			expect(replies()).toEqual([]);
+		});
+
+		it("уточнення після прийняття видаляється з чату (як правка нотатки)", async () => {
+			const { send, calls } = await withSession();
+			await send(msg({ text: "Ще й CHANGELOG", reply_to_message: botPost() }, 8));
+			expect(calls.filter((c) => c.method === "deleteMessage").map((c) => c.body)).toEqual([{ chat_id: OWNER, message_id: 8 }]);
 		});
 
 		it("відповідь голосом: розпізнається й іде в ту саму сесію", async () => {

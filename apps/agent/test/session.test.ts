@@ -416,6 +416,31 @@ describe("AgentSession", () => {
 			expect(sent).toHaveLength(1); // спостереження знято
 		});
 
+		it("👨‍💻 стоїть на пості, поки сесія працює, і знімається по завершенню (і коли її зупинили вручну)", async () => {
+			const reactions = () => sent.filter((c) => "reaction" in c) as unknown as { message_id: number; reaction: unknown[] }[];
+			for (const outcome of ["succeeded", "interrupted"]) {
+				sent.length = 0;
+				const t = setup({ BOT_TOKEN: "bot" });
+				await t.session.start(ID, { prompt: "Задача" });
+				await t.session.watch(ID, { ...TARGET, postId: 77 });
+				expect(reactions()).toEqual([{ chat_id: 5, message_id: 77, reaction: [{ type: "emoji", emoji: "👨‍💻" }] }]);
+				await t.session.alarm();
+				t.opencode.busy.clear();
+				t.opencode.info[ocId] = { outcome };
+				await t.session.alarm();
+				expect(reactions().at(-1)).toEqual({ chat_id: 5, message_id: 77, reaction: [] });
+			}
+		});
+
+		it("уточнення на інший пост переносить 👨‍💻: на старому реакція знімається", async () => {
+			const t = setup({ BOT_TOKEN: "bot" });
+			await t.session.start(ID, { prompt: "Задача" });
+			await t.session.watch(ID, { ...TARGET, postId: 10 });
+			await t.session.watch(ID, { ...TARGET, postId: 11 });
+			const reactions = sent.filter((c) => "reaction" in c).map((c) => [(c as unknown as { message_id: number }).message_id, (c as unknown as { reaction: unknown[] }).reaction.length]);
+			expect(reactions).toEqual([[10, 1], [10, 0], [11, 1]]);
+		});
+
 		it("помилка сесії: у чат іде причина", async () => {
 			const { session, opencode } = await watched();
 			await session.alarm(); // бачимо, що працює

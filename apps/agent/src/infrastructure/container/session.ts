@@ -25,7 +25,7 @@ const SUMMARY_MAX = 3000; // підсумок у чат: решта обріза
 
 // За сесією стежать, щоб повідомити в чат про завершення. seenBusy: чи бачили ми її працюючою (щойно запущена сесія ще може
 // не з'явитись серед активних, тому без цього «вільна» означало б «ще не почала»).
-type Watch = { ocId: string; chatId: number; url: string; since: number; seenBusy: boolean };
+type Watch = WatchTarget & { ocId: string; since: number; seenBusy: boolean };
 
 // Знімок прив'язаний до образу, з якого створений: після зміни образу його відновити не можна.
 type SavedSnapshot = { id: string; image: string; at: number };
@@ -209,7 +209,7 @@ export class AgentSession extends DurableObject<Env> {
 
 		for (const [ocId, [key, w]] of byOc) {
 			if (active.has(ocId) && (await this.ctx.storage.get(key))) {
-				if (Date.now() - w.since > WATCH_MAX_MS) await this.ctx.storage.delete(key);
+				if (Date.now() - w.since > WATCH_MAX_MS) await this.finishWatch(key, w, "");
 				continue;
 			}
 			if (!(await this.ctx.storage.get(key))) continue; // уже оброблено вище (ліміт)
@@ -229,9 +229,16 @@ export class AgentSession extends DurableObject<Env> {
 		return `✅ Готово${text ? `\n\n${text}` : ""}`;
 	}
 
+	// 👨‍💻 на пості сесії, поки вона працює (як на нотатці, що редагується); збій не критичний.
+	private async mark(w: WatchTarget, on: boolean): Promise<void> {
+		if (!w.postId || !this.env.BOT_TOKEN) return;
+		await tg({ BOT_TOKEN: this.env.BOT_TOKEN }, "setMessageReaction", { chat_id: w.chatId, message_id: w.postId, reaction: on ? [{ type: "emoji", emoji: "👨‍💻" }] : [] }).catch((err) => console.error("reaction failed:", err));
+	}
+
 	// Забирає спостереження (щоб не повідомити двічі) і шле текст у чат; порожній текст — мовчки.
 	private async finishWatch(key: string, w: Watch, text: string): Promise<void> {
 		await this.ctx.storage.delete(key);
+		await this.mark(w, false);
 		if (!text || !this.env.BOT_TOKEN) return;
 		await tg({ BOT_TOKEN: this.env.BOT_TOKEN }, "sendMessage", { chat_id: w.chatId, text: `${text}\n\n🔗 ${w.url}`, link_preview_options: { is_disabled: true } }).catch((err) => console.error("notify failed:", err));
 	}
@@ -338,7 +345,10 @@ export class AgentSession extends DurableObject<Env> {
 	async watch(id: string, target: WatchTarget): Promise<void> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked) throw new Error(`unknown session ${id}`);
+		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
+		if (previous?.postId && previous.postId !== target.postId) await this.mark(previous, false); // реакція не лишається на старому пості
 		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...target, since: Date.now(), seenBusy: false } satisfies Watch);
+		await this.mark(target, true);
 		await this.scheduleSoon();
 	}
 
