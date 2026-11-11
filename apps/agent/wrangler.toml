@@ -8,6 +8,10 @@ routes = [{ pattern = "agent.valentyi.dev", custom_domain = true }]
 [ai]
 binding = "AI" # Whisper для голосових у Telegram
 
+[vars]
+# Репозиторії, які бот розпізнає з вільної мови («працюй над нашим ботом»): repo = owner/name, about = як власник його називає.
+AGENT_REPOS = '''[{"repo":"vichnyi-myzuka/voice-notes-worker","about":"The owner's own project: the voice-notes Telegram bot and this coding-agent platform itself (Cloudflare Workers monorepo: notes, agent, sites). The owner calls it \"our bot\", \"our repository\", \"this project\", \"the notes bot\", \"the agent\" or says you should work on yourself."}]'''
+
 [observability]
 enabled = true
 

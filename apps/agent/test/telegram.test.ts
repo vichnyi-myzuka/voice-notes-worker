@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Llm } from "@voice-notes/core";
 import type { Env } from "../src/env";
-import { handleTelegram } from "../src/interface/telegram";
+import { handleTelegram, parseRepos } from "../src/interface/telegram";
 import { describe as describeReport } from "../src/interface/telegram/handle";
 import { fakeAgent } from "./fake-agent";
 
@@ -13,7 +13,7 @@ const OWNER = 42;
 const CHANNEL = -1001;
 
 // Telegram Bot API на підміненому fetch: запам'ятовує виклики методів і віддає файл для getFile.
-function setup(transcript = "Поправ README") {
+function setup(transcript = "Поправ README", pick?: (user: string) => string | null) {
 	const agent = fakeAgent();
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
 	vi.stubGlobal(
@@ -25,9 +25,14 @@ function setup(transcript = "Поправ README") {
 			return Response.json({ ok: true, result: method === "getFile" ? { file_path: "voice/a.oga" } : { message_id: 1 } });
 		}),
 	);
-	const llm: Llm = { askJson: async () => null, transcribe: vi.fn(async () => transcript) };
+	const llm: Llm = {
+		askJson: (async (req: { user: string }, parse: (t: string) => unknown) => {
+			const repo = pick?.(req.user);
+			return repo ? parse(JSON.stringify({ repo })) : null;
+		}) as Llm["askJson"],
+		transcribe: vi.fn(async () => transcript) };
 	const pending: Promise<unknown>[] = [];
-	const deps = { agent: agent.agent, llm, defer: (w: Promise<unknown>) => void pending.push(w) };
+	const deps = { agent: agent.agent, llm, repos: parseRepos(JSON.stringify([{ repo: "me/bot", about: "our bot" }, { repo: "me/site", about: "the website" }])), defer: (w: Promise<unknown>) => void pending.push(w) };
 	const send = async (message: unknown, headers: HeadersInit = { "x-telegram-bot-api-secret-token": "secret" }) => {
 		const channel = (message as { chat: { type: string } }).chat.type === "channel";
 		const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers, body: JSON.stringify({ update_id: 1, ...(channel ? { channel_post: message } : { message }) }) }), env, deps);
@@ -201,6 +206,38 @@ describe("вебхук Telegram", () => {
 			expect(sessions.has(SID)).toBe(false);
 			await send(msg({ text: "/status", reply_to_message: botPost() }, 9));
 			expect(replies()).toEqual(["🗑 Сесію видалено (гілка agent/… у репозиторії, якщо була, лишилась).", "⚠️ Сесію не знайдено."]);
+		});
+
+		describe("репозиторій з вільної мови", () => {
+			it("модель вибрала репозиторій зі списку: сесія з repo, у пості видно 📦; промпт без змін", async () => {
+				const { send, sessions, replies } = setup("Давай попрацюємо над нашим ботом, додай тести", (user) => (user.includes("our bot") ? "me/bot" : null));
+				await send(msg({ text: "Давай попрацюємо над нашим ботом, додай тести" }));
+				expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Давай попрацюємо над нашим ботом, додай тести", repo: "me/bot" }]);
+				expect(replies()[0]).toContain("📦 me/bot");
+			});
+
+			it("«none», відповідь поза списком чи збій моделі: сесія без репозиторію", async () => {
+				for (const pick of [() => "none", () => "evil/repo", () => null]) {
+					const { send, sessions } = setup("", pick);
+					await send(msg({ text: "Зроби щось нове" }));
+					expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Зроби щось нове" }]);
+				}
+			});
+
+			it("явний префікс сильніший і моделі не питає", async () => {
+				const pick = vi.fn(() => "me/site");
+				const { send, sessions } = setup("", pick);
+				await send(msg({ text: "other/repo: Поправ README" }));
+				expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Поправ README", repo: "other/repo" }]);
+				expect(pick).not.toHaveBeenCalled();
+			});
+
+			it("parseRepos ігнорує сміття й некоректні елементи", () => {
+				expect(parseRepos(undefined)).toEqual([]);
+				expect(parseRepos("not json")).toEqual([]);
+				expect(parseRepos('{"repo":"a/b"}')).toEqual([]);
+				expect(parseRepos('[{"repo":"a/b","about":"x"},{"repo":"bad","about":"x"},{"repo":"c/d"},null]')).toEqual([{ repo: "a/b", about: "x" }]);
+			});
 		});
 
 		it("команда без відповіді на пост просить відповісти на пост із сесією", async () => {

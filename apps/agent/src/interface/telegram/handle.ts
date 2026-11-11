@@ -1,11 +1,13 @@
 import { DOWNLOAD_MAX_BYTES, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import type { Agent, SessionReport } from "../../domain/agent";
 import type { Env } from "../../env";
+import { pickRepo, type KnownRepo } from "./repo";
 
 export const TELEGRAM_PATH = "/telegram";
 
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
-export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void };
+// repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. repo.ts); без них репозиторій задає лише префікс.
+export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[] };
 
 const POST_MAX = 3500; // запас до ліміту повідомлення Telegram (4096): решта — посилання
 
@@ -42,7 +44,7 @@ const SESSION_URL = /https?:\/\/\S+\/s\/(tg-[\w-]+)/;
 // «owner/name: задача» на початку тексту — репозиторій для сесії.
 const REPO_PREFIX = /^([\w-][\w.-]*\/[\w-][\w.-]*)\s*:\s*([\s\S]+)$/;
 
-async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm }: TelegramDeps): Promise<void> {
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [] }: TelegramDeps): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const text = msg.text?.trim();
@@ -82,7 +84,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const transcript = await transcribe(env, llm, file, text);
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	const withRepo = REPO_PREFIX.exec(transcript);
-	const [repo, prompt] = withRepo ? [withRepo[1], withRepo[2].trim()] : [undefined, transcript];
+	// Явний префікс сильніший; інакше репозиторій вгадуємо з фрази («працюй над нашим ботом»). У пості видно, що вибрано.
+	const [repo, prompt] = withRepo ? [withRepo[1], withRepo[2].trim()] : [await pickRepo(llm, repos, transcript), transcript];
 
 	const { url } = await agent.start(id, { prompt, ...(repo && { repo }) });
 	await agent.watch(id, { chatId: chat, url }).catch((err) => console.error("watch failed:", err));

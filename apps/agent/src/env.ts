@@ -34,5 +34,7 @@ export interface Env {
 	R2_SECRET_ACCESS_KEY?: string;
 	R2_ENDPOINT?: string;
 	SITES_BASE_URL?: string;
+	// JSON-масив [{repo: "owner/name", about: "як власник його називає"}]: з нього бот вибирає репозиторій за вільною фразою (не секрет, див. wrangler.toml)
+	AGENT_REPOS?: string;
 	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access
 }
