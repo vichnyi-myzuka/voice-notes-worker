@@ -19,7 +19,8 @@ export function parseRepos(raw: string | undefined): KnownRepo[] {
 const SYSTEM = `You route tasks for a coding agent. The owner dictates a task (usually in Ukrainian). Answer with:
 - "type": the kind of work, like a conventional-commit type: feat (new capability), fix (bug), docs, refactor, test, chore (tooling, config, maintenance).
 - "name": a short English kebab-case name for the task without the type, 2-4 words, only a-z, 0-9 and "-", e.g. "session-delete" or "readme-typos". Together with the type it becomes the folder and git branch name ("feat-session-delete"), so describe the work, not the wording of the request.
-- "repo" (only if asked): decide whether the task is about working inside one of the known repositories. Pick one only when the owner clearly refers to it: by name, by a description from the list ("our bot", "this project", "yourself"), or because the task obviously changes that code. When the task is generic, about something new, or you are not sure, answer "none".`;
+- "evidence" (only if asked): an exact quote copied from the task where the owner explicitly refers to one of the known repositories (its name, or a phrase from its description such as "our bot" or "yourself", or a named file or feature of that project). Empty string if there is no such quote.
+- "repo" (only if asked): the repository the evidence refers to, otherwise "none". Default to "none". Creating something new and standalone (a page, a site, a script, a prototype, a report) is NEVER about a known repository, even if the topic sounds related; neither is a generic or ambiguous task.`;
 
 export type Route = { repo?: string; name?: string };
 
@@ -38,7 +39,8 @@ export function cleanName(raw: unknown): string | undefined {
 export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Promise<Route> {
 	const names = repos.map((r) => r.repo);
 	const list = repos.length ? `Known repositories:\n${repos.map((r) => `- ${r.repo}: ${r.about}`).join("\n")}\n\n` : "";
-	const properties = { type: { type: "string", enum: [...TYPES] }, name: { type: "string" }, ...(repos.length && { repo: { type: "string", enum: [...names, "none"] } }) };
+	// evidence перед repo: модель спершу наводить цитату, а потім вирішує; порядок властивостей зберігається.
+	const properties = { type: { type: "string", enum: [...TYPES] }, name: { type: "string" }, ...(repos.length && { evidence: { type: "string" }, repo: { type: "string", enum: [...names, "none"] } }) };
 	const picked = await llm.askJson(
 		{
 			name: "agent_route",
@@ -47,11 +49,14 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 			schema: { type: "object", properties, required: Object.keys(properties), additionalProperties: false },
 			reasoning: "none",
 		},
-		(text) => JSON.parse(text) as { repo?: string; type?: string; name?: string },
+		(text) => JSON.parse(text) as { repo?: string; evidence?: string; type?: string; name?: string },
 	);
 	if (!picked) return {};
 	// Тип іде префіксом (feat-…, fix-…): з гілки одразу видно, що це за робота; без придатного типу — лише назва.
 	const type = TYPES.find((t) => t === picked.type);
 	const name = cleanName(type && picked.name ? `${type}-${picked.name}` : picked.name);
-	return { ...(picked.repo && names.includes(picked.repo) && { repo: picked.repo }), ...(name && { name }) };
+	// Репозиторій приймається лише з цитатою, що справді є у фразі: вигадане моделлю відкидається.
+	const quote = picked.evidence?.trim().toLowerCase() ?? "";
+	const grounded = quote.length >= 3 && task.toLowerCase().includes(quote);
+	return { ...(grounded && picked.repo && names.includes(picked.repo) && { repo: picked.repo }), ...(name && { name }) };
 }

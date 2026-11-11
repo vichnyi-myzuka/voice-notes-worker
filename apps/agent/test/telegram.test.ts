@@ -225,10 +225,18 @@ describe("вебхук Telegram", () => {
 
 		describe("репозиторій і назва з вільної мови", () => {
 			it("модель вибрала репозиторій і назву: сесія з repo та name, у пості видно 📦; промпт без змін", async () => {
-				const { send, sessions, replies } = setup("", (user) => (user.includes("our bot") ? { repo: "me/bot", type: "test", name: "session-tests" } : null));
+				const { send, sessions, replies } = setup("", (user) => (user.includes("our bot") ? { repo: "me/bot", evidence: "нашим ботом", type: "test", name: "session-tests" } : null));
 				await send(msg({ text: "Давай попрацюємо над нашим ботом, додай тести" }));
 				expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Давай попрацюємо над нашим ботом, додай тести", repo: "me/bot", name: "test-session-tests" }]);
 				expect(replies()[0]).toContain("📦 me/bot");
+			});
+
+			it("репозиторій без цитати з фрази (вигаданий моделлю) відкидається, назва лишається", async () => {
+				for (const evidence of ["", "ботом тут не пахне", "ab"]) {
+					const { send, sessions } = setup("", () => ({ repo: "me/bot", evidence, type: "feat", name: "business-card" }));
+					await send(msg({ text: "Зроби сайт-візитку з привітанням і опублікуй її як HelloTest" }));
+					expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Зроби сайт-візитку з привітанням і опублікуй її як HelloTest", name: "feat-business-card" }]);
+				}
 			});
 
 			it("«none», репозиторій поза списком чи збій моделі: без репозиторію; назва лишається, якщо придатна", async () => {
