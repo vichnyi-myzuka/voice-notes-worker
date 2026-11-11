@@ -1,0 +1,24 @@
+name = "voice-notes-agent"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = true     # захищається Cloudflare Access (див. README, «Агент»)
+preview_urls = false
+
+[observability]
+enabled = true
+
+# Сесія агента = Durable Object, що керує власним контейнером з OpenCode.
+[[containers]]
+class_name = "AgentSession"
+scheduling_policy = "durable_object"
+
+[containers.images.base]
+dockerfile = "./container/Dockerfile"
+
+[[durable_objects.bindings]]
+name = "AGENT_SESSION"
+class_name = "AgentSession"
+
+[exports.AgentSession]
+type = "durable-object"
+storage = "sqlite"
