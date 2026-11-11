@@ -42,6 +42,9 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 
 // Посилання на сесію в пості бота: з нього відповідь (reply) знаходить, до якої сесії належить.
 const SESSION_URL = /https?:\/\/\S+\/s\/(tg-[\w-]+)/;
+const removeMessage = (env: BotEnv, chat: number, messageId: number) =>
+	tg(env, "deleteMessage", { chat_id: chat, message_id: messageId }).catch((err) => console.error("delete message failed:", err));
+
 // Текст повідомлення разом з адресами клікабельних слів: посилання на сесію в пості тепер сховане під «Відкрити сесію».
 function textWithLinks(m: TgMessage["reply_to_message"]): string {
 	const entities = [...(m?.entities ?? []), ...(m?.caption_entities ?? [])];
@@ -65,6 +68,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 			if (!replied) await say(`Надішли ${command} відповіддю на пост із сесією.`);
 			else await sessionCommand(env, chat, agent, replied[1], command, msg.reply_to_message?.message_id);
 		}
+		// Команда виконана: саму команду з чату прибираємо (відповідь бота лишається), як і прийняті уточнення.
+		if (command === "/status" || command === "/stop" || command === "/delete") await removeMessage(env, chat, msg.message_id);
 		return;
 	}
 	if (file && (file.file_size ?? 0) > DOWNLOAD_MAX_BYTES) {
@@ -82,7 +87,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		await agent.followUp(id, followUp);
 		await agent.watch(id, { chatId: chat, url, postId: msg.reply_to_message?.message_id }).catch((err) => console.error("watch failed:", err));
 		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), робота видна за 👨‍💻 на пості, на який відповіли.
-		await tg(env, "deleteMessage", { chat_id: chat, message_id: msg.message_id }).catch((err) => console.error("delete follow-up failed:", err));
+		await removeMessage(env, chat, msg.message_id);
 		return;
 	}
 

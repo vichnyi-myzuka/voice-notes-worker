@@ -268,6 +268,16 @@ describe("вебхук Telegram", () => {
 			});
 		});
 
+		it("команди /status, /stop, /delete видаляються з чату після виконання; відповідь бота лишається", async () => {
+			const { send, calls } = await withSession();
+			await send(msg({ text: "/status", reply_to_message: botPost() }, 8));
+			await send(msg({ text: "/stop", reply_to_message: botPost() }, 9));
+			const deleted = () => calls.filter((c) => c.method === "deleteMessage").map((c) => c.body.message_id);
+			expect(deleted()).toEqual([8, 9]);
+			await send(msg({ text: "/delete", reply_to_message: botPost() }, 10));
+			expect(deleted()).toEqual([8, 9, 100, 10]); // пост сесії й сама команда
+		});
+
 		it("команда без відповіді на пост просить відповісти на пост із сесією", async () => {
 			const { send, replies } = setup();
 			await send(msg({ text: "/status" }));
