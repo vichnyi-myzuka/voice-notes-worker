@@ -1,65 +1,108 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { handleFetch } from "../src/interface/http";
+import { fakeAgent } from "./fake-agent";
 
 // LOCAL_DEV вимикає Access; перевірку токена окремо покриває access.test.ts.
-function envWith(stub: { start?: ReturnType<typeof vi.fn>; fetch?: ReturnType<typeof vi.fn> } = {}, extra: Partial<Env> = {}) {
-	const names: string[] = [];
-	const env = {
-		LOCAL_DEV: "1",
-		OPENCODE_SERVER_PASSWORD: "pw",
-		AGENT_SESSION: { getByName: (name: string) => (names.push(name), { start: stub.start ?? vi.fn(), fetch: stub.fetch ?? vi.fn(async () => new Response("ui")) }) },
-		...extra,
-	} as unknown as Env;
-	return { env, names };
-}
+const env = { LOCAL_DEV: "1", OPENCODE_SERVER_PASSWORD: "pw" } as unknown as Env;
+const accessEnv = { OPENCODE_SERVER_PASSWORD: "pw" } as unknown as Env;
 
-const post = (body: unknown) => new Request("https://agent.example/api/sessions", { method: "POST", body: JSON.stringify(body) });
+const ID = "session-0001";
+const call = (path: string, method = "GET", body?: unknown, headers: HeadersInit = {}) =>
+	new Request(`https://agent.example${path}`, body === undefined ? { method, headers } : { method, headers, body: JSON.stringify(body) });
 
-describe("handleFetch", () => {
+describe("захист", () => {
 	it("без налаштованого Access відповідає 503, з чужим токеном — 403", async () => {
-		const { env } = envWith({}, { LOCAL_DEV: undefined });
-		expect((await handleFetch(new Request("https://agent.example/"), env)).status).toBe(503);
-		const configured = envWith({}, { LOCAL_DEV: undefined, ACCESS_TEAM_DOMAIN: "t.cloudflareaccess.com", ACCESS_AUD: "aud" }).env;
-		expect((await handleFetch(new Request("https://agent.example/"), configured)).status).toBe(403);
+		const { agent } = fakeAgent();
+		expect((await handleFetch(call("/"), accessEnv, agent)).status).toBe(503);
+		const configured = { ...accessEnv, ACCESS_TEAM_DOMAIN: "t.cloudflareaccess.com", ACCESS_AUD: "aud" } as Env;
+		expect((await handleFetch(call("/"), configured, agent)).status).toBe(403);
+		expect((await handleFetch(call("/api/sessions", "POST", { prompt: "x" }), configured, agent)).status).toBe(403);
+	});
+});
+
+describe("сесія від створення до зупинки", () => {
+	it("створення → статус → уточнення → зупинка → уточнення після зупинки", async () => {
+		const { agent, sessions } = fakeAgent();
+
+		const created = await handleFetch(call("/api/sessions", "POST", { prompt: "Поправ README", repo: "me/app", id: ID }), env, agent);
+		expect(created.status).toBe(200);
+		expect(await created.json()).toEqual({ id: ID, url: `https://agent.example/s/${ID}` });
+		expect(sessions.get(ID)?.input).toEqual({ prompt: "Поправ README", repo: "me/app" });
+
+		expect(await (await handleFetch(call(`/api/sessions/${ID}`), env, agent)).json()).toEqual({ status: "working" });
+
+		const follow = await handleFetch(call(`/api/sessions/${ID}/messages`, "POST", { text: "Ще й CHANGELOG" }), env, agent);
+		expect(follow.status).toBe(200);
+		expect(sessions.get(ID)?.messages).toEqual(["Поправ README", "Ще й CHANGELOG"]);
+
+		expect((await handleFetch(call(`/api/sessions/${ID}/abort`, "POST"), env, agent)).status).toBe(200);
+		expect(await (await handleFetch(call(`/api/sessions/${ID}`), env, agent)).json()).toEqual({ status: "idle" });
+
+		await handleFetch(call(`/api/sessions/${ID}/messages`, "POST", { text: "Продовжуй" }), env, agent);
+		expect(await (await handleFetch(call(`/api/sessions/${ID}`), env, agent)).json()).toEqual({ status: "working" });
 	});
 
-	it("POST /api/sessions стартує сесію й повертає посилання", async () => {
-		const start = vi.fn(async () => ({ sessionId: "oc1" }));
-		const { env, names } = envWith({ start });
-		const res = await handleFetch(post({ prompt: "Поправ README", repo: "me/app", id: "session-0001" }), env);
-		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({ id: "session-0001", url: "https://agent.example/s/session-0001" });
-		expect(names).toEqual(["session-0001"]);
-		expect(start).toHaveBeenCalledWith({ prompt: "Поправ README", repo: "me/app" });
+	it("повторне створення з тим самим id не дублює сесію", async () => {
+		const { agent, sessions } = fakeAgent();
+		const first = await handleFetch(call("/api/sessions", "POST", { prompt: "Перша", id: ID }), env, agent);
+		const again = await handleFetch(call("/api/sessions", "POST", { prompt: "Друга", id: ID }), env, agent);
+		expect(await again.json()).toEqual(await first.json());
+		expect(sessions.size).toBe(1);
+		expect(sessions.get(ID)?.messages).toEqual(["Перша"]);
 	});
 
-	it("відхиляє порожній промпт, погані id і repo", async () => {
-		const { env } = envWith();
-		expect((await handleFetch(post({ prompt: "  " }), env)).status).toBe(400);
-		expect((await handleFetch(post({ prompt: "x", id: "BAD ID" }), env)).status).toBe(400);
-		expect((await handleFetch(post({ prompt: "x", repo: "../etc" }), env)).status).toBe(400);
+	it("статус невідомої сесії — stopped", async () => {
+		const { agent } = fakeAgent();
+		expect(await (await handleFetch(call("/api/sessions/session-9999"), env, agent)).json()).toEqual({ status: "stopped" });
 	});
 
+	it("без id у запиті створюється сесія з випадковим id", async () => {
+		const { agent, sessions } = fakeAgent();
+		const res = await handleFetch(call("/api/sessions", "POST", { prompt: "Задача" }), env, agent);
+		const { id, url } = await res.json<{ id: string; url: string }>();
+		expect(sessions.has(id)).toBe(true);
+		expect(url).toBe(`https://agent.example/s/${id}`);
+	});
+});
+
+describe("перевірка входу", () => {
+	it("відхиляє порожній промпт і текст, погані id та repo", async () => {
+		const { agent, sessions } = fakeAgent();
+		expect((await handleFetch(call("/api/sessions", "POST", { prompt: "  " }), env, agent)).status).toBe(400);
+		expect((await handleFetch(call("/api/sessions", "POST", { prompt: "x", id: "BAD ID" }), env, agent)).status).toBe(400);
+		expect((await handleFetch(call("/api/sessions", "POST", { prompt: "x", repo: "../etc" }), env, agent)).status).toBe(400);
+		expect((await handleFetch(call(`/api/sessions/${ID}/messages`, "POST", { text: " " }), env, agent)).status).toBe(400);
+		expect((await handleFetch(call("/api/sessions/BAD", "GET"), env, agent)).status).toBe(400);
+		expect(sessions.size).toBe(0);
+	});
+
+	it("невідомий метод або дія — 404", async () => {
+		const { agent } = fakeAgent();
+		expect((await handleFetch(call(`/api/sessions/${ID}/abort`, "GET"), env, agent)).status).toBe(404);
+	});
+});
+
+describe("веб-інтерфейс сесії", () => {
 	it("/s/<id> ставить cookie й веде у веб-інтерфейс, а далі запити йдуть у ту саму сесію", async () => {
-		const fetchStub = vi.fn(async () => new Response("ui"));
-		const { env, names } = envWith({ fetch: fetchStub });
-		const link = await handleFetch(new Request("https://agent.example/s/session-0001"), env);
+		const { agent, served } = fakeAgent();
+		const link = await handleFetch(call(`/s/${ID}`), env, agent);
 		expect(link.status).toBe(302);
 		expect(link.headers.get("location")).toBe("/");
 		const cookie = link.headers.get("set-cookie") ?? "";
-		expect(cookie).toContain("agent_session=session-0001");
+		expect(cookie).toContain(`agent_session=${ID}`);
 		expect(cookie).toMatch(/HttpOnly/);
 		expect(cookie).toMatch(/Secure/);
 
-		const page = await handleFetch(new Request("https://agent.example/", { headers: { cookie: "x=1; agent_session=session-0001" } }), env);
-		expect(await page.text()).toBe("ui");
-		expect(names).toEqual(["session-0001"]);
+		const page = await handleFetch(call("/", "GET", undefined, { cookie: `x=1; agent_session=${ID}` }), env, agent);
+		expect(await page.text()).toBe(`ui:${ID}`);
+		expect(served).toEqual([ID]);
 	});
 
-	it("без cookie сесії проксі не працює", async () => {
-		const { env } = envWith();
-		expect((await handleFetch(new Request("https://agent.example/"), env)).status).toBe(404);
-		expect((await handleFetch(new Request("https://agent.example/", { headers: { cookie: "agent_session=../x" } }), env)).status).toBe(404);
+	it("без cookie сесії або з поганою проксі не працює", async () => {
+		const { agent, served } = fakeAgent();
+		expect((await handleFetch(call("/"), env, agent)).status).toBe(404);
+		expect((await handleFetch(call("/", "GET", undefined, { cookie: "agent_session=../x" }), env, agent)).status).toBe(404);
+		expect(served).toEqual([]);
 	});
 });
