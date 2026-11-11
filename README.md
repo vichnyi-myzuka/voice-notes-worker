@@ -90,7 +90,7 @@ npx wrangler secret put TODOIST_TOKEN   # Todoist → Settings → Integrations 
 npx wrangler deploy
 ```
 
-Після деплою wrangler покаже URL на кшталт `https://voice-notes-worker.<subdomain>.workers.dev`.
+Після деплою wrangler покаже URL на кшталт `https://notes.example.com`.
 
 Логи: `npx wrangler tail` або Workers Logs у дашборді.
 
@@ -100,7 +100,7 @@ npx wrangler deploy
 
 1. **Record Audio**: Audio Quality: Normal, Start Recording: Immediately, Finish Recording: On Tap.
 2. **Get Contents of URL**:
-   - URL: `https://voice-notes-worker.<subdomain>.workers.dev`
+   - URL: `https://notes.example.com`
    - Method: **POST**
    - Headers: `x-secret` = значення `SECRET`
    - Request Body: **Form**, поле `audio`: тип **File** → **Recorded Audio**
@@ -158,7 +158,7 @@ curl -X POST http://localhost:8787 -H "x-secret: local-test" \
 | `mixed-tasks.m4a` | задачі в різних проєктах, пріоритет (p1), мітка `Pending`, дедлайн, «колись» → Want |
 
 ```sh
-source .env && curl -X POST https://voice-notes-worker.<subdomain>.workers.dev -H "x-secret: $SECRET" \
+source .env && curl -X POST https://notes.example.com -H "x-secret: $SECRET" \
   -F "audio=@apps/notes/test-audio/shopping-list.m4a;type=audio/mp4"
 ```
 
@@ -177,7 +177,7 @@ source .env && curl -X POST https://voice-notes-worker.<subdomain>.workers.dev -
 
 ```sh
 source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
-  -d url=https://voice-notes-worker.<subdomain>.workers.dev/telegram \
+  -d url=https://notes.example.com/telegram \
   -d secret_token=$TG_WEBHOOK_SECRET \
   --data-urlencode 'allowed_updates=["message","channel_post"]' -d drop_pending_updates=true
 ```
@@ -371,7 +371,7 @@ npx wrangler secret put GITHUB_TOKEN               # необов'язково: 
 npm run deploy
 ```
 
-4. У Cloudflare Zero Trust створити застосунок Access (Self-hosted) для `voice-notes-agent.<subdomain>.workers.dev` (або в налаштуваннях воркера увімкнути Cloudflare Access), політика: ваша пошта. З застосунку взяти **Application Audience (AUD) tag**, а team domain — `<team>.cloudflareaccess.com`.
+4. У Cloudflare Zero Trust створити застосунок Access (Self-hosted) для `agent.example.com` (або в налаштуваннях воркера увімкнути Cloudflare Access), політика: ваша пошта. З застосунку взяти **Application Audience (AUD) tag**, а team domain — `<team>.cloudflareaccess.com`.
 5. `npx wrangler secret put ACCESS_AUD` і `npx wrangler secret put ACCESS_TEAM_DOMAIN`.
 6. Перевірка (після входу через Access у браузері): `POST /api/sessions` з тілом `{"prompt":"…"}` (наприклад, з DevTools або `curl` із токеном Access Service Token) → відкрити `url` з відповіді з телефона.
 
