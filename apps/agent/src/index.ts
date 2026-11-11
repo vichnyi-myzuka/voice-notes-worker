@@ -1,3 +1,4 @@
+// Розгортається через GitHub Actions після мержу в main зі схваленням (environment production-agent, див. README, «CI/CD»).
 import type { Env } from "./env";
 import { durableAgent } from "./infrastructure/container";
 import { workersLlm } from "@voice-notes/core";
