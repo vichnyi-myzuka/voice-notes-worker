@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], execFails: false, origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], execs: [] as { cmd: string[]; env?: Record<string, string> }[], execFails: false, procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -56,7 +56,7 @@ function fakeContainer() {
 			return {
 				output: async () => ({
 					exitCode: opencode.execFails ? 1 : 0,
-					stdout: new TextEncoder().encode(`/workspace/sessions/${cmd[1]}\n`),
+					stdout: new TextEncoder().encode(cmd[0] === "cat" ? opencode.procNet : `/workspace/sessions/${cmd[1]}\n`),
 					stderr: new TextEncoder().encode(opencode.execFails ? "fatal: repository not found" : ""),
 				}),
 			};
@@ -298,6 +298,23 @@ describe("AgentSession", () => {
 		await session.fetch(new Request("https://agent.example/api/experimental/persistent-pty/p1/connect-token", { method: "POST", headers: { origin: "https://agent.example", "x-opencode-ticket": "1" } }));
 		expect(opencode.origins).toEqual([]);
 		expect(opencode.tickets).toEqual(["1"]); // решта заголовків лишається
+	});
+
+	it("connections: рахує SSH-з'єднання з /proc/net/tcp, сплячий контейнер не будить", async () => {
+		const { session, container, opencode } = setup();
+		expect(await session.connections()).toEqual({ running: false });
+		expect(opencode.execs).toEqual([]);
+		container.running = true;
+		opencode.procNet = [
+			"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   ui",
+			"   0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000",
+			"   1: 00000000:1000 00000000:0000 0A 00000000:00000000 00:00000000 00000000",
+			"   2: 0100000A:1000 0000010A:849E 01 00000000:00000000 00:00000000 00000000",
+			"   3: 0100000A:0016 0000010A:8CE4 01 00000000:00000000 00:00000000 00000000",
+			"   4: 0100000A:0016 0000010A:8CE5 01 00000000:00000000 00:00000000 00000000",
+			"   5: 0100000A:C102 420A1268:01BB 01 00000000:00000000 02:0000012C 00000000",
+		].join("\n");
+		expect(await session.connections()).toEqual({ running: true, ssh: { listening: true, connections: 2 }, opencode: { listening: true, connections: 1 } });
 	});
 
 	describe("знімки диска", () => {

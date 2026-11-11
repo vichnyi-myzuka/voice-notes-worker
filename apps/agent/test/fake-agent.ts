@@ -38,6 +38,9 @@ export function fakeAgent(origin = "https://agent.example") {
 		async link(id) {
 			return sessions.has(id) ? `ses_${id}` : undefined;
 		},
+		async connections() {
+			return { running: true, ssh: { listening: true, connections: 1 }, opencode: { listening: true, connections: 2 } };
+		},
 		async info() {
 			return { running: true, activeAt: 1, alarmAt: null, snapshot: null, streams: [] };
 		},
