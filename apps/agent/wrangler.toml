@@ -5,6 +5,9 @@ workers_dev = false
 preview_urls = false
 routes = [{ pattern = "agent.example.com", custom_domain = true }]
 
+[ai]
+binding = "AI" # Whisper для голосових у Telegram
+
 [observability]
 enabled = true
 

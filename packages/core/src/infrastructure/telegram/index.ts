@@ -1,7 +1,7 @@
 // Telegram: адаптер каналу (Channel), Bot API, прийом голосових, тексту й фото з вебхука.
 
 export { CAPTION_MAX, TEXT_CAPTION_MAX, telegramChannel, textNote } from "./channel";
-export { receiveTelegramMessage } from "./receive";
-export { telegramMessageUrl, tgSendNote } from "./api";
-export type { ReceivedMessage } from "./types";
-export type { TelegramEnv } from "./env";
+export { DOWNLOAD_MAX_BYTES, react, receiveTelegramMessage } from "./receive";
+export { telegramMessageUrl, tg, tgSendMessage, tgSendNote } from "./api";
+export type { ReceivedMessage, TgMessage, TgUpdate } from "./types";
+export type { BotEnv, TelegramEnv } from "./env";

@@ -1,10 +1,18 @@
 import type { Env } from "./env";
 import { durableAgent } from "./infrastructure/container";
+import { workersLlm } from "@voice-notes/core";
 import { handleFetch } from "./interface/http";
+import { TELEGRAM_PATH, handleTelegram } from "./interface/telegram";
 
 export { AgentSession } from "./infrastructure/container";
 export type { Env } from "./env";
 
 export default {
-	fetch: (req, env) => handleFetch(req, env, durableAgent(env.AGENT_SESSION, new URL(req.url).origin)),
+	fetch: (req, env, ctx) => {
+		const url = new URL(req.url);
+		const agent = durableAgent(env.AGENT_SESSION, url.origin);
+		// Вебхук Telegram стоїть повз Access (див. README), решта — за Access.
+		if (url.pathname === TELEGRAM_PATH) return handleTelegram(req, env, { agent, llm: workersLlm(env), defer: (w) => ctx.waitUntil(w) });
+		return handleFetch(req, env, agent);
+	},
 } satisfies ExportedHandler<Env>;
