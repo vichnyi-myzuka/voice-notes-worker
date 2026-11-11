@@ -52,8 +52,9 @@ export type Agent = {
 	resume(id: string, text: string, target: WatchTarget): Promise<void>;
 	// Ідемпотентно за ключем: повторний виклик з тим самим id не створює другу сесію.
 	start(id: string, input: StartInput): Promise<SessionRef>;
-	// Відповідь кнопкою на питання агента: варіант за номером. Повертає підпис вибраного варіанта; undefined, якщо питання вже неактуальне.
-	answer(id: string, choice: number): Promise<string | undefined>;
+	// Кнопка під питанням агента: номер варіанта (одиночний вибір — це відповідь, множинний — перемикає варіант) чи "ok" (підтвердити
+	// множинний вибір). Повертає текст підказки для користувача; undefined, якщо питання вже неактуальне.
+	answer(id: string, choice: number | "ok"): Promise<string | undefined>;
 	// Уточнення в ту саму сесію (голос чи текст після транскрипції).
 	followUp(id: string, text: string): Promise<void>;
 	status(id: string): Promise<AgentStatus>;

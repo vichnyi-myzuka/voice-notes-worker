@@ -26,7 +26,8 @@ export function fakeAgent(origin = "https://agent.example") {
 		},
 		async answer(id, choice) {
 			get(id);
-			return choices.get(id)?.[choice];
+			const label = typeof choice === "number" ? choices.get(id)?.[choice] : undefined;
+			return label && `Відповідь: ${label}`;
 		},
 		async resume(id, text, target) {
 			await agent.followUp(id, text);

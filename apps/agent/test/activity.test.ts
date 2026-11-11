@@ -43,10 +43,11 @@ describe("formChoices", () => {
 		expect(formChoices({ fields: [{ key: "k", type: "multiselect", maxItems: 1, options: opts }] })?.choices[1].value).toEqual(["b"]);
 	});
 
-	it("без кнопок: кілька видимих полів, вільний текст, множинний вибір; прихованих полів не враховує", () => {
+	it("без кнопок: кілька видимих полів, вільний текст, порожній multiselect; прихованих полів не враховує", () => {
 		expect(formChoices({ fields: [{ key: "a", type: "string", options: opts }, { key: "b", type: "string" }] })).toBeUndefined();
 		expect(formChoices({ fields: [{ key: "a", type: "string" }] })).toBeUndefined();
-		expect(formChoices({ fields: [{ key: "a", type: "multiselect", options: opts }] })).toBeUndefined();
+		expect(formChoices({ fields: [{ key: "a", type: "multiselect", options: opts }] })).toMatchObject({ key: "a", multiple: true, choices: [{ label: "A", value: "a" }, { label: "B", value: "b" }] });
+		expect(formChoices({ fields: [{ key: "a", type: "multiselect", options: [] }] })).toBeUndefined();
 		expect(formChoices({ fields: [{ key: "a", type: "string", options: opts }, { key: "h", type: "string", hidden: true }] })).toBeDefined();
 		expect(formChoices({ fields: [{ key: "a", type: "string", options: Array.from({ length: 20 }, (_, i) => ({ value: `${i}`, label: `L${i}` })) }] })?.choices).toHaveLength(8);
 	});
