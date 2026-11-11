@@ -17,6 +17,7 @@ Telegram ──відповідь (голос/текст) на нотатку─
 ```
 packages/core/        спільне ядро, імпортується як `@voice-notes/core` (лише через `src/index.ts`):
                        порти Channel і Llm, JSON-типи, адаптери Telegram і Llm (Workers AI / OpenAI), openSteps, safeEqual
+apps/agent/            воркер агента (прототип): сесії OpenCode у контейнерах Cloudflare, див. «Агент»
 apps/notes/            воркер нотаток (цей бот); команди wrangler запускай із цієї теки
 apps/notes/wrangler.toml  bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE
 apps/notes/test/       тести воркера нотаток
@@ -325,3 +326,42 @@ Whisper (і резервна Gemma 4) працюють через binding `AI`. 
 Один запис коштує близько 3–5 операцій Queues, тож Free вистачає з великим запасом. Код майже не використовує CPU (здебільшого чекає на мережу), тому 10 ms на Free має вистачати. Але якщо в логах з'являться `exceededCpu`, допоможе перехід на Paid.
 
 Джерела: [Queues limits](https://developers.cloudflare.com/queues/platform/limits/), [Queues pricing](https://developers.cloudflare.com/queues/platform/pricing/), [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [Batching & retries](https://developers.cloudflare.com/queues/configuration/batching-retries/).
+
+## Агент (`apps/agent`, прототип)
+
+Окремий воркер: кожна **сесія** агента — Durable Object з власним контейнером Cloudflare, у якому працює `opencode web` (веб-інтерфейс + API). Воркер створює сесію, ставить агенту задачу і повертає посилання на веб-інтерфейс. Доступ — лише через Cloudflare Access.
+
+```
+POST /api/sessions {prompt, repo?: "owner/name", id?}  → {id, url}   створити сесію й одразу поставити задачу
+GET  /s/<id>                                           → cookie з id сесії + редирект у веб-інтерфейс OpenCode
+будь-який інший шлях                                   → проксі у веб-інтерфейс сесії з cookie
+```
+
+Веб-інтерфейс OpenCode використовує абсолютні шляхи (`/assets/…`), тому сесію вибирає cookie, а не префікс шляху. Наслідок: у браузері одночасно відкрита одна сесія.
+
+Захист у два шари: Cloudflare Access перед воркером і перевірка його JWT (`Cf-Access-Jwt-Assertion`: підпис RS256 за ключами команди, `aud`, `iss`, `exp`) у самому воркері; без `ACCESS_TEAM_DOMAIN`/`ACCESS_AUD` воркер відповідає 503. Пароль OpenCode (basic auth) підставляє воркер, у браузері його вводити не треба.
+
+### Налаштування (потрібні ваші дії)
+
+```sh
+# 1. Docker (Docker Desktop або Colima) має працювати: wrangler збирає образ із apps/agent/container/Dockerfile
+cd apps/agent
+
+# 2. Секрети
+npx wrangler secret put OPENCODE_SERVER_PASSWORD   # довгий випадковий рядок
+npx wrangler secret put ANTHROPIC_API_KEY          # або OPENAI_API_KEY: ключ моделі для OpenCode
+npx wrangler secret put GITHUB_TOKEN               # необов'язково: для приватних репозиторіїв і пушу гілок
+
+# 3. Деплой (перші хвилини після нього контейнери ще розгортаються)
+npm run deploy
+```
+
+4. У Cloudflare Zero Trust створити застосунок Access (Self-hosted) для `voice-notes-agent.<subdomain>.workers.dev` (або в налаштуваннях воркера увімкнути Cloudflare Access), політика: ваша пошта. З застосунку взяти **Application Audience (AUD) tag**, а team domain — `<team>.cloudflareaccess.com`.
+5. `npx wrangler secret put ACCESS_AUD` і `npx wrangler secret put ACCESS_TEAM_DOMAIN`.
+6. Перевірка (після входу через Access у браузері): `POST /api/sessions` з тілом `{"prompt":"…"}` (наприклад, з DevTools або `curl` із токеном Access Service Token) → відкрити `url` з відповіді з телефона.
+
+Локально: `npm run dev -w apps/agent` (потрібен Docker; `LOCAL_DEV` вимикає перевірку Access).
+
+### Відкриті питання прототипу
+
+Не перевірені без розгорнутого контейнера: ціна й холодний старт `standard-1`; чи проходять WebSocket-запити (термінал у веб-інтерфейсі) через `getTcpPort().fetch`; чи достатньо cookie-маршрутизації для SSE (`/event`); точний URL, що відкриває саме сесію агента, а не головну сторінку. Результати записати в issue #3.
