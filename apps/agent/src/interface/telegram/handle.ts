@@ -1,7 +1,7 @@
 import { DOWNLOAD_MAX_BYTES, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import type { Agent, SessionReport } from "../../domain/agent";
 import type { Env } from "../../env";
-import { pickRepo, type KnownRepo } from "./repo";
+import { routeTask, type KnownRepo } from "./repo";
 
 export const TELEGRAM_PATH = "/telegram";
 
@@ -83,11 +83,13 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 
 	const transcript = await transcribe(env, llm, file, text);
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
+	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
 	const withRepo = REPO_PREFIX.exec(transcript);
-	// Явний префікс сильніший; інакше репозиторій вгадуємо з фрази («працюй над нашим ботом»). У пості видно, що вибрано.
-	const [repo, prompt] = withRepo ? [withRepo[1], withRepo[2].trim()] : [await pickRepo(llm, repos, transcript), transcript];
+	const prompt = withRepo ? withRepo[2].trim() : transcript;
+	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
+	const repo = withRepo ? withRepo[1] : route.repo;
 
-	const { url } = await agent.start(id, { prompt, ...(repo && { repo }) });
+	const { url } = await agent.start(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }) });
 	await agent.watch(id, { chatId: chat, url }).catch((err) => console.error("watch failed:", err));
 	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
 	const shown = inChannel || file ? `${file ? "🗣 " : ""}${prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt}\n\n` : "";
