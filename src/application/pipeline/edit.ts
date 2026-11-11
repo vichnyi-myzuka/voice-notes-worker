@@ -1,21 +1,22 @@
 import type { Env } from "../../infrastructure/env";
-import { captionNotice, loadNote, removeNote, saveNote, showNote, type Note } from "../../domain/published";
+import type { Channel } from "../../domain/channel";
+import { loadNote, removeNote, saveNote, type Note } from "../../domain/published";
 import { formatRecordedAt } from "../../domain/recording";
 import { runSetup } from "../setup";
 import { openSteps } from "../../infrastructure/steps";
 import { deleteOpenTasks, getInTodoist, syncTasks } from "../tasks";
-import { deleteOriginal, markEditing, telegramMessageUrl, tg, tgSendMessage } from "../../infrastructure/telegram";
 import { trySnapshot } from "../../infrastructure/todoist";
 import { editNote, transcribe } from "../understand";
+import { captionNotice, showNote } from "./show";
 import type { State } from "./types";
 
-export async function processEdit(env: Env, key: string, noteId: string, lastAttempt: boolean): Promise<void> {
+export async function processEdit(env: Env, channel: Channel, key: string, noteId: string, lastAttempt: boolean): Promise<void> {
 	const obj = await env.BUCKET.get(key);
 	if (!obj) return; // уже оброблено
 	const stateKey = `${key}.state.json`;
 	const cleanup = async (messageId?: number) => {
-		if (messageId) await markEditing(env, messageId, false);
-		await deleteOriginal(env, obj.customMetadata); // інструкцію з каналу прибираємо
+		if (messageId) await channel.setBusy(messageId, false);
+		await channel.removeOrigin(obj.customMetadata); // інструкцію з каналу прибираємо
 		await env.BUCKET.delete([key, stateKey]);
 	};
 	const run = await openSteps<State>(env, stateKey, lastAttempt);
@@ -23,13 +24,13 @@ export async function processEdit(env: Env, key: string, noteId: string, lastAtt
 
 	const note = await loadNote(env, noteId);
 	if (!note) {
-		await tgSendMessage(env, env.CHAT_ID, "⚠️ Не вдалося відредагувати: нотатку не знайдено (редагувати можна протягом 7 днів).");
+		await channel.say("⚠️ Не вдалося відредагувати: нотатку не знайдено (редагувати можна протягом 7 днів).");
 		await cleanup();
 		return;
 	}
 
 	const instruction = await step("transcript", async () => {
-		await markEditing(env, note.messageId, true);
+		await channel.setBusy(note.messageId, true);
 		// Текстова відповідь на нотатку — без Whisper.
 		const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
 		return contentType.startsWith("text/") ? (await obj.text()).trim() : await transcribe(env, await obj.arrayBuffer(), contentType);
@@ -52,9 +53,7 @@ export async function processEdit(env: Env, key: string, noteId: string, lastAtt
 		// «Видали нотатку»: відкриті задачі в Todoist, саму нотатку в каналі й записи в R2.
 		const ids = Object.values(await getInTodoist(env, noteId)).map((t) => t.id);
 		const deleted = env.TODOIST_TOKEN ? await deleteOpenTasks(env, ids) : 0;
-		await tg(env, "deleteMessage", { chat_id: env.CHAT_ID, message_id: note.messageId }).catch((err) =>
-			console.error("delete note message failed:", err),
-		);
+		await channel.remove(note.messageId);
 		await removeNote(env, noteId, note);
 		console.log(`note ${noteId} deleted by request: ${deleted} open tasks deleted in Todoist`);
 		await cleanup();
@@ -71,13 +70,13 @@ export async function processEdit(env: Env, key: string, noteId: string, lastAtt
 		noteId,
 		items: triaged,
 		description: `🎙 ${meta.title} (${formatRecordedAt(String(note.recordedTs), env.TIMEZONE)})`,
-		messageUrl: telegramMessageUrl(env.CHAT_ID, note.messageId),
+		messageUrl: channel.linkTo(note.messageId),
 	});
 
 	const allSetup = [...(note.setup ?? []), ...setup];
 	await step("captionEdited", async () => {
 		const notice = captionNotice(allSetup, applied === false);
-		await showNote(env, noteId, note, { meta, triage: triaged, notice });
+		await showNote(env, channel, noteId, note, { meta, triage: triaged, notice });
 		return true;
 	});
 

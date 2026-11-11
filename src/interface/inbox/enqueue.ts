@@ -12,10 +12,3 @@ export async function enqueueNote(
 	await env.BUCKET.put(key, body, { httpMetadata: { contentType }, customMetadata });
 	await env.QUEUE.send(edit ? { key, edit } : { key });
 }
-
-// Порівняння секретів за сталий час.
-export async function safeEqual(a: string, b: string): Promise<boolean> {
-	const enc = new TextEncoder();
-	const [ha, hb] = await Promise.all([crypto.subtle.digest("SHA-256", enc.encode(a)), crypto.subtle.digest("SHA-256", enc.encode(b))]);
-	return crypto.subtle.timingSafeEqual(ha, hb);
-}

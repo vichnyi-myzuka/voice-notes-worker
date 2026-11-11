@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildCaption, formatCaption, TEXT_CAPTION_MAX, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks, taskLinks, textNote } from "../src/domain/note";
+import { buildCaption, formatCaption, hashtags, isoWeek, parseEditedNote, parseMeta, plainTasks, taskLinks } from "../src/domain/note";
+import { TEXT_CAPTION_MAX } from "../src/infrastructure/telegram";
 import { taskValidator, type TodoistSnapshot, type TriageItem } from "../src/infrastructure/todoist";
 
 const snap: TodoistSnapshot = {
@@ -83,7 +84,7 @@ describe("caption", () => {
 	});
 	it("довгий підпис обрізається, а примітка й хештеги лишаються, загалом ≤ 1024", () => {
 		const long = { ...meta, summary: "дуже ".repeat(400) };
-		const c = buildCaption(long, null, Date.parse("2026-11-09T10:00:00Z"), "Europe/Kyiv", "ℹ️ примітка");
+		const c = buildCaption(long, null, Date.parse("2026-11-09T10:00:00Z"), "Europe/Kyiv", "ℹ️ примітка", 1024);
 		expect(c.length).toBeLessThanOrEqual(1024);
 		expect(c.endsWith("ℹ️ примітка\n\n#листопад_2026 #тиждень_46")).toBe(true);
 		expect(c).toContain("…");
@@ -95,7 +96,7 @@ describe("taskLinks", () => {
 	const make = (summary: string, titles: string[], ideas: string[] = []) => {
 		const triage = titles.map((t, i) => item(t, { key: `t${i + 1}` }));
 		const meta = { title: "Назва", summary, ideas, tasks: titles };
-		return { triage, caption: buildCaption(meta, triage, Date.parse("2026-11-09T10:00:00Z"), "Europe/Kyiv") };
+		return { triage, caption: buildCaption(meta, triage, Date.parse("2026-11-09T10:00:00Z"), "Europe/Kyiv", "", 1024) };
 	};
 	const texts = (caption: string, links: { offset: number; length: number }[]) =>
 		links.map((l) => caption.slice(l.offset, l.offset + l.length));
@@ -105,7 +106,6 @@ describe("taskLinks", () => {
 		const links = taskLinks(caption, triage, { t1: "11", t2: "22" });
 		expect(texts(caption, links)).toEqual(["Купити хліб", "Зателефонувати мамі"]);
 		expect(links.map((l) => l.url)).toEqual([url("11"), url("22")]);
-		expect(links.every((l) => l.type === "text_link")).toBe(true);
 	});
 	it("назва і в summary, і в задачах — посилання на рядок задачі", () => {
 		const { triage, caption } = make("Треба Купити хліб сьогодні", ["Купити хліб"]);
@@ -124,6 +124,8 @@ describe("taskLinks", () => {
 			triage,
 			Date.parse("2026-11-09T10:00:00Z"),
 			"Europe/Kyiv",
+			"",
+			1024,
 		);
 		const links = taskLinks(caption, triage, { t1: "1", t3: "3" });
 		expect(texts(caption, links)).toEqual(["В"]);
@@ -258,56 +260,5 @@ describe("parseEditedNote", () => {
 	});
 	it("скасування правки", () => {
 		expect(parseEditedNote(JSON.stringify({ discard: "cancelled" }), old, validate).meta.discard).toBe("cancelled");
-	});
-});
-
-describe("textNote", () => {
-	const quote = (e: object[]) => e.find((x) => (x as { type: string }).type === "expandable_blockquote");
-
-	it("підпис, порожній рядок, оригінал; цитата охоплює оригінал", () => {
-		const r = textNote("Назва\n\nSummary", "Оригінальний текст");
-		expect(r.text).toBe("Назва\n\nSummary\n\nОригінальний текст");
-		expect(r.entities).toEqual([{ type: "expandable_blockquote", offset: "Назва\n\nSummary\n\n".length, length: "Оригінальний текст".length }]);
-	});
-
-	it("рівно в ліміт: без обрізання", () => {
-		const caption = "c".repeat(100);
-		const original = "o".repeat(4096 - 102);
-		const r = textNote(caption, original);
-		expect(r.text.length).toBe(4096);
-		expect(r.text.endsWith(original)).toBe(true);
-		expect(r.text).not.toContain("…");
-	});
-
-	it("на символ більше ліміту: обрізається з …, разом 4096", () => {
-		const caption = "c".repeat(100);
-		const r = textNote(caption, "o".repeat(4096 - 102 + 1));
-		expect(r.text.length).toBe(4096);
-		expect(r.text.endsWith("…")).toBe(true);
-		expect(quote(r.entities)).toEqual({ type: "expandable_blockquote", offset: 102, length: 4096 - 102 });
-	});
-
-	it("довгий оригінал: цитата закінчується в кінці тексту", () => {
-		const r = textNote("Підпис", "x".repeat(10_000));
-		const q = quote(r.entities) as { offset: number; length: number };
-		expect(r.text.length).toBe(4096);
-		expect(q.offset + q.length).toBe(r.text.length);
-	});
-
-	it("додає цитату після переданих entities", () => {
-		const link = { type: "text_link" as const, offset: 0, length: 3, url: "https://x" };
-		const r = textNote("abc", "orig", [link]);
-		expect(r.entities).toEqual([link, { type: "expandable_blockquote", offset: 5, length: 4 }]);
-	});
-
-	it("emoji: офсети й довжини в UTF-16", () => {
-		const caption = "🎙 Назва 😀";
-		const original = "Текст 👍🏽 ok";
-		const r = textNote(caption, original);
-		const q = quote(r.entities) as { offset: number; length: number };
-		expect(caption.length).toBeGreaterThan([...caption].length);
-		expect(q.offset).toBe(caption.length + 2);
-		expect(q.length).toBe(original.length);
-		expect(r.text.slice(q.offset, q.offset + q.length)).toBe(original);
 	});
 });

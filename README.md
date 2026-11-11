@@ -17,22 +17,24 @@ wrangler.toml          bindings: R2, Queue producer/consumer, DLQ, AI; vars TIME
 src/index.ts           entrypoint: лише підключає fetch (inbox) і queue (queue)
 src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
   interface/           точки входу
-    inbox/             прийом записів: вебхук Telegram і завантаження з шорткату → R2 + черга
+    inbox/             прийом записів: вебхук каналу (через Channel) і завантаження з шорткату → R2 + черга
     queue/             споживачі черги й DLQ
   application/         сценарії
-    pipeline/          processNote / processEdit — кроки обробки запису; State зі слайсів модулів
+    pipeline/          processNote / processEdit — кроки обробки запису, showNote; State зі слайсів модулів
     understand/        transcribe (Whisper), readImage (vision), summarize, editNote — промпти й схеми
     setup/             команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»), runSetup
     tasks/             задачі нотатки в Todoist: syncTasks (ops → actionId → todoistApplied), planOps / buildCommands / applyOps, стан InTodoist, вкладення
   domain/              правила й дані предметної області
+    channel/           порт каналу (Channel): як записи приходять і нотатки публікуються; Telegram — лише адаптер
     note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
-    published/         опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / showNote / removeNote
+    published/         опублікована нотатка: Note, ключі R2 notes/…, saveNote / loadNote / removeNote
     recording/         ключі запису в R2, ліміти розміру, час запису
   infrastructure/      зовнішні сервіси й сховище
     env/               Env і Job
     steps/             openSteps: крок = поле стану, результат у R2, onFinalFailure для деградації на lastAttempt
     llm/               askJson: structured output gpt-6-luna → fallback Gemma 4 (Workers AI)
-    telegram/          Bot API, прийом голосових / тексту / фото з вебхука, реакції
+    telegram/          адаптер Channel для Telegram: Bot API, вебхук, прийом голосових / тексту / фото, реакції, сутності тексту
+    security/          safeEqual (порівняння секретів)
     todoist/           знімок Todoist, валідація полів задач, тріаж
 AGENTS.md              правила роботи з репозиторієм для агентів
 .dev.vars.example      шаблон секретів для локального запуску
@@ -89,7 +91,7 @@ npx wrangler deploy
 
 - `npm run lint` — oxlint (`src`, `test`).
 - `npm run typecheck` — `tsc --noEmit`.
-- `npm test` — vitest: unit-тести кроків обробки (`test/steps.test.ts`), наскрізні `processNote` і `processEdit` з підміненими OpenAI і Telegram (`test/process-note.test.ts`: публікація, правка й повтор після збою без повторного LLM), чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyOps` і `syncTasks` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `test/todoist.test.ts` і `test/sync-tasks.test.ts`. Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
+- `npm test` — vitest: unit-тести кроків обробки (`test/steps.test.ts`), маршрутизація `handleFetch` із каналом-заглушкою (`test/inbox.test.ts`), наскрізні `processNote` і `processEdit` з підміненими OpenAI і Telegram (`test/process-note.test.ts`: публікація, правка й повтор після збою без повторного LLM), чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyOps` і `syncTasks` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `test/todoist.test.ts` і `test/sync-tasks.test.ts`. Без мережі й без LLM — у `test/fake-env.ts` R2 у пам'яті.
 - `npm run check` — усе разом (lint + typecheck + test).
 
 Git-хуки лежать в `.githooks/` і вмикаються автоматично після `npm install` (скрипт `prepare` ставить `core.hooksPath`):
