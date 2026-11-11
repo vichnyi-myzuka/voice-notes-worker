@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import type { AgentStatus, StartInput } from "../../domain/agent";
-import { OPENCODE_PORT, basicAuth, createSession, interrupt, isBusy, isReady, prompt, sessionExists, type Opencode } from "./opencode";
+import { OPENCODE_PORT, basicAuth, connectClaudeAgent, createSession, interrupt, isBusy, isReady, prompt, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
@@ -36,6 +36,11 @@ export class AgentSession extends DurableObject<Env> {
 		return (await this.ctx.storage.get<string>("repo")) ? "/workspace/repo" : "/workspace";
 	}
 
+	// Із токеном підписки сесії йдуть через Claude Agent; без нього — модель за замовчуванням OpenCode (ключі з env).
+	private model(): ModelRef | undefined {
+		return this.env.CLAUDE_CODE_OAUTH_TOKEN ? { providerID: "claude-agent", id: this.env.CLAUDE_MODEL || "sonnet" } : undefined;
+	}
+
 	// Стартує контейнер (якщо ще не працює) і чекає, поки OpenCode відповість.
 	private ensureRunning(): Promise<void> {
 		this.starting ??= this.startAndWait().finally(() => void (this.starting = undefined));
@@ -44,7 +49,8 @@ export class AgentSession extends DurableObject<Env> {
 
 	private async startAndWait(): Promise<void> {
 		const container = this.ctx.container!;
-		if (!container.running) {
+		const started = !container.running;
+		if (started) {
 			const repo = await this.ctx.storage.get<string>("repo");
 			container.start({
 				image: container.images.base,
@@ -57,7 +63,11 @@ export class AgentSession extends DurableObject<Env> {
 		await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
 		for (let attempt = 0; attempt < READY_ATTEMPTS; attempt++) {
 			try {
-				if (await isReady(this.opencode())) return;
+				if (await isReady(this.opencode())) {
+					// Диск контейнера свіжий після кожного старту: підключаємо Claude Agent знову.
+					if (started && this.env.CLAUDE_CODE_OAUTH_TOKEN) await connectClaudeAgent(this.opencode());
+					return;
+				}
 			} catch {
 				// порт ще не слухає
 			}
@@ -72,7 +82,7 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ensureRunning();
 		const existing = await this.ctx.storage.get<string>("sessionId");
 		if (existing) return { sessionId: existing };
-		const sessionId = await createSession(this.opencode(), input.prompt.slice(0, 80), await this.directory());
+		const sessionId = await createSession(this.opencode(), input.prompt.slice(0, 80), await this.directory(), this.model());
 		await this.ctx.storage.put("sessionId", sessionId);
 		await prompt(this.opencode(), sessionId, input.prompt);
 		return { sessionId };
@@ -83,7 +93,7 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ensureRunning();
 		let sessionId = await this.ctx.storage.get<string>("sessionId");
 		if (!sessionId || !(await sessionExists(this.opencode(), sessionId))) {
-			sessionId = await createSession(this.opencode(), text.slice(0, 80), await this.directory());
+			sessionId = await createSession(this.opencode(), text.slice(0, 80), await this.directory(), this.model());
 			await this.ctx.storage.put("sessionId", sessionId);
 		}
 		await prompt(this.opencode(), sessionId, text);
@@ -120,6 +130,7 @@ function containerEnv(env: Env, repo: string | undefined): Record<string, string
 		ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
 		OPENAI_API_KEY: env.OPENAI_API_KEY,
 		GITHUB_TOKEN: env.GITHUB_TOKEN,
+		CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN,
 		REPO: repo,
 	};
 	return Object.fromEntries(Object.entries(vars).filter((e): e is [string, string] => !!e[1]));

@@ -12,5 +12,9 @@ export interface Env {
 	ANTHROPIC_API_KEY?: string;
 	OPENAI_API_KEY?: string;
 	GITHUB_TOKEN?: string;
+	// Підписка Claude замість API-ключа: токен з `claude setup-token`; тоді сесії йдуть через провайдер Claude Agent
+	CLAUDE_CODE_OAUTH_TOKEN?: string;
+	// Модель Claude Agent (opus, sonnet, haiku, fable); за замовчуванням sonnet
+	CLAUDE_MODEL?: string;
 	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access
 }

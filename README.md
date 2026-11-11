@@ -355,6 +355,7 @@ cd apps/agent
 # 2. Секрети
 npx wrangler secret put OPENCODE_PASSWORD          # довгий випадковий рядок (пароль OpenCode V2, користувач завжди `opencode`)
 npx wrangler secret put ANTHROPIC_API_KEY          # або OPENAI_API_KEY: ключ моделі для OpenCode
+npx wrangler secret put CLAUDE_CODE_OAUTH_TOKEN    # або замість ключа: токен підписки Claude (див. «Підписка Claude»)
 npx wrangler secret put GITHUB_TOKEN               # необов'язково: для приватних репозиторіїв і пушу гілок
 
 # 3. Деплой (перші хвилини після нього контейнери ще розгортаються)
@@ -384,6 +385,19 @@ curl -X POST localhost:8789/api/sessions -H 'content-type: application/json' -d 
 Перевірено локально: сесія створюється, задача ставиться (агент `build`, модель за замовчуванням `opencode/big-pickle`), `status` → `working`, `abort` перериває крок, `status` → `idle`, повторний `start` ідемпотентний, історія віддається JSON-ом на `/` (з cookie сесії).
 
 Обмеження профілю workerd (за типами й документацією SDK): `FileSystem`, `Pty` і shell — заглушки («fail until a remote sandbox backs them»), `Vcs` і `Snapshot` — no-op. Тож такий агент **не може клонувати репозиторій, читати файли й запускати команди**; корисний для розмов і для інструментів, які дають плагіни (наприклад, через GitHub API). Веб-інтерфейсу немає. Бандл 24,9 МБ (3,9 МБ gzip): потрібен платний план Workers.
+
+### Підписка Claude замість API-ключа
+
+З OpenCode 2.2.3 є провайдер **Claude Agent**: OpenCode запускає встановлений у контейнері незмінений `claude` (Claude Code) через Agent SDK і дає йому свої інструменти (файли, shell). Образ ставить `@anthropic-ai/claude-code` (`CLAUDE_CODE_VERSION` у Dockerfile).
+
+1. На своєму комп'ютері: `claude setup-token` (вхід у браузері, токен видається приблизно на рік).
+2. `npx wrangler secret put CLAUDE_CODE_OAUTH_TOKEN` (з теки `apps/agent`). Необов'язково `CLAUDE_MODEL` (`opus`, `sonnet`, `haiku`, `fable`; за замовчуванням `sonnet`).
+
+Із токеном воркер передає його в контейнер, після старту підключає інтеграцію `claude-agent` (інтеграції завантажуються трохи пізніше за `/api/info`, тож підключення повторюється в циклі очікування) і створює сесії з моделлю `claude-agent/<модель>`. Без токена працюють ключі `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`.
+
+Перевірено локально в Docker: сесія на `claude-agent/sonnet` відповідає, агент створює файли й запускає команди (інструменти `write`, `shell`).
+
+**Ризик.** Anthropic забороняє пропускати чужі запити через підписку й пропонувати вхід через claude.ai іншим; вхід власника в незмінений Claude Code на власному хості її умови не забороняють, але публічно провайдер OpenCode вона не схвалювала, і умови можуть змінитись без попередження. Довгі автономні запуски можуть швидко вичерпати ліміти підписки. Токен дає доступ до підписки: зберігай лише в `.env` і `wrangler secret`.
 
 ### Версії OpenCode
 

@@ -12,6 +12,12 @@ RUN npm install -g @opencode/cli@${OPENCODE_VERSION} \
 	&& rm -rf /usr/local/lib/node_modules/@opencode/cli/node_modules/@opencode/cli-* \
 	&& npm cache clean --force
 
+# Claude Code для провайдера Claude Agent (сесії за підпискою Claude): OpenCode запускає незмінений `claude`.
+# Токен підписки приходить зі змінної CLAUDE_CODE_OAUTH_TOKEN (див. README).
+ARG CLAUDE_CODE_VERSION=2.1.322
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+	&& npm cache clean --force
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

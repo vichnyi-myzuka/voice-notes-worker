@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[] };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], models: [] as unknown[] };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -42,12 +42,14 @@ function fakeContainer() {
 				const ok = (data: unknown) => Response.json({ data });
 				if (path === "/api/info") return Response.json({ version: "2.2.7" });
 				if (req.method === "POST" && path === "/api/session") {
-					const body = await req.json<{ title: string; location: { directory: string } }>();
+					const body = await req.json<{ title: string; location: { directory: string }; model?: unknown }>();
+					opencode.models.push(body.model);
 					const id = `ses_oc${++opencode.seq}`;
 					opencode.sessions.add(id);
 					opencode.directories.push(body.location.directory);
 					return ok({ id });
 				}
+				if (req.method === "POST" && path === "/api/integration/claude-agent/connect/external") return new Response(null, { status: 204 });
 				if (path === "/api/session/active") return ok(Object.fromEntries([...opencode.busy].map((id) => [id, { type: "running" }])));
 				const m = path.match(/^\/api\/session\/([^/]+)(?:\/(prompt|interrupt))?$/);
 				if (m && !opencode.sessions.has(m[1])) return new Response("not found", { status: 404 });
@@ -69,7 +71,7 @@ function fakeContainer() {
 	return { container, opencode };
 }
 
-function setup() {
+function setup(extraEnv: Record<string, string> = {}) {
 	const { container, opencode } = fakeContainer();
 	const store = new Map<string, unknown>();
 	const ctx = {
@@ -78,7 +80,7 @@ function setup() {
 		blockConcurrencyWhile: (fn: () => Promise<void>) => fn(),
 		waitUntil: () => {},
 	};
-	const env = { OPENCODE_PASSWORD: "pw", ANTHROPIC_API_KEY: "ak", GITHUB_TOKEN: undefined };
+	const env = { OPENCODE_PASSWORD: "pw", ANTHROPIC_API_KEY: "ak", GITHUB_TOKEN: undefined, ...extraEnv };
 	const session = new AgentSession(ctx as unknown as DurableObjectState, env as never);
 	return { session, container, opencode, store };
 }
@@ -97,6 +99,24 @@ describe("AgentSession", () => {
 		expect(opencode.prompts).toEqual([{ id: "ses_oc1", text: "Поправ README" }]);
 		expect(opencode.directories).toEqual(["/workspace/repo"]); // клон репозиторію
 		expect(opencode.auths).toEqual(new Set([`Basic ${btoa("opencode:pw")}`]));
+	});
+
+	it("з токеном підписки: токен іде в контейнер, Claude Agent підключається один раз за старт, сесії — з його моделлю", async () => {
+		const { session, container, opencode } = setup({ CLAUDE_CODE_OAUTH_TOKEN: "tok", CLAUDE_MODEL: "opus" });
+		await session.start({ prompt: "Задача" });
+		expect(container.starts[0].env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: "tok" });
+		expect(opencode.requests.filter((r) => r.includes("connect/external"))).toHaveLength(1);
+		expect(opencode.models).toEqual([{ providerID: "claude-agent", id: "opus" }]);
+		container.sleep();
+		await session.followUp("Ще раз"); // новий старт контейнера → підключення знову
+		expect(opencode.requests.filter((r) => r.includes("connect/external"))).toHaveLength(2);
+	});
+
+	it("без токена підписки модель не задається й Claude Agent не підключається", async () => {
+		const { session, opencode } = setup();
+		await session.start({ prompt: "Задача" });
+		expect(opencode.models).toEqual([undefined]);
+		expect(opencode.requests.some((r) => r.includes("connect/external"))).toBe(false);
 	});
 
 	it("start без репозиторію працює в порожній /workspace", async () => {
