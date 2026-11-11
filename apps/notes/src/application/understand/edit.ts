@@ -1,5 +1,5 @@
 import type { Env } from "../../infrastructure/env";
-import type { Llm } from "../../domain/llm";
+import type { Llm } from "@voice-notes/core";
 import { parseEditedNote, plainTasks, type Meta } from "../../domain/note";
 import type { Note } from "../../domain/published";
 import { promptDate } from "../../domain/recording";

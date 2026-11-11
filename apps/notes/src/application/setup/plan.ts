@@ -1,5 +1,4 @@
-import { isJsonObject, parseJsonObject, type Json, type JsonObject } from "../../domain/json";
-import type { Llm } from "../../domain/llm";
+import { isJsonObject, parseJsonObject, type Json, type JsonObject, type Llm } from "@voice-notes/core";
 import { labelRule, setLabelRule } from "./rules";
 import type { SetupChange, SetupPlan, SetupWorld, TaskTracker } from "../../domain/tracker";
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { openSteps } from "../src/infrastructure/steps";
+import { openSteps } from "@voice-notes/core";
 import { syncTasks, type SyncState } from "../src/application/tasks";
 import type { TriageItem } from "../src/domain/tracker";
 import { r2Ledger } from "../src/infrastructure/r2";

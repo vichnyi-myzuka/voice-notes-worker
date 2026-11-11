@@ -1,8 +1,8 @@
-import type { Env } from "../env";
+import type { TelegramEnv } from "./env";
 import type { TgEntity, TgMethods } from "./types";
 
 // Викликає метод Bot API і повертає його result. FormData — для завантаження файлів.
-export async function tg<M extends keyof TgMethods>(env: Env, method: M, body: TgMethods[M]["params"] | FormData): Promise<TgMethods[M]["result"]> {
+export async function tg<M extends keyof TgMethods>(env: TelegramEnv, method: M, body: TgMethods[M]["params"] | FormData): Promise<TgMethods[M]["result"]> {
 	const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
 		method: "POST",
 		headers: body instanceof FormData ? undefined : { "content-type": "application/json" },
@@ -12,14 +12,14 @@ export async function tg<M extends keyof TgMethods>(env: Env, method: M, body: T
 	return (await res.json<{ result: TgMethods[M]["result"] }>()).result;
 }
 
-export async function tgSendMessage(env: Env, chatId: string | number, text: string): Promise<void> {
+export async function tgSendMessage(env: TelegramEnv, chatId: string | number, text: string): Promise<void> {
 	await tg(env, "sendMessage", { chat_id: chatId, text });
 }
 
 // Надсилає нотатку в CHAT_ID і повертає message_id.
 // Аудіо з Telegram пересилаємо за file_id (без повторного завантаження), з шорткату — завантажуємо.
 export async function tgSendNote(
-	env: Env,
+	env: TelegramEnv,
 	audio: { blob: () => Promise<Blob>; fileId?: string; kind?: string },
 	title: string,
 	caption: string,
@@ -46,14 +46,14 @@ export async function tgSendNote(
 export const NO_PREVIEW = { is_disabled: true };
 
 // Текстова нотатка: звичайне повідомлення (без аудіо). Повертає message_id.
-export async function tgSendText(env: Env, text: string, entities: TgEntity[]): Promise<number> {
+export async function tgSendText(env: TelegramEnv, text: string, entities: TgEntity[]): Promise<number> {
 	// Без прев'ю посилань: інакше Telegram показує картку першої задачі Todoist («This content is private»).
 	const sent = await tg(env, "sendMessage", { chat_id: env.CHAT_ID, text, entities, link_preview_options: NO_PREVIEW });
 	return sent.message_id;
 }
 
 // Поки нотатка редагується, на ній стоїть 👨‍💻 (✏ серед реакцій для ботів немає).
-export const markEditing = (env: Env, messageId: number, on: boolean) =>
+export const markEditing = (env: TelegramEnv, messageId: number, on: boolean) =>
 	tg(env, "setMessageReaction", {
 		chat_id: env.CHAT_ID,
 		message_id: messageId,
@@ -61,7 +61,7 @@ export const markEditing = (env: Env, messageId: number, on: boolean) =>
 	}).catch((err) => console.error("reaction failed:", err));
 
 // Видаляє оригінальне голосове з каналу (якщо запис прийшов звідти). Збій не критичний.
-export async function deleteOriginal(env: Env, meta: Record<string, string> | undefined): Promise<void> {
+export async function deleteOriginal(env: TelegramEnv, meta: Record<string, string> | undefined): Promise<void> {
 	const { deleteChatId, deleteMessageId } = meta ?? {};
 	if (!deleteChatId || !deleteMessageId) return;
 	await tg(env, "deleteMessage", { chat_id: deleteChatId, message_id: Number(deleteMessageId) }).catch((err) =>

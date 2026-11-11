@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { labelRule, planSetup, setLabelRule, setupReport, validateSetup } from "../src/application/setup";
 import type { SetupPlan, SetupWorld } from "../src/domain/tracker";
-import { workersLlm } from "../src/infrastructure/llm";
+import { workersLlm } from "@voice-notes/core";
 import { RULES_PROJECT, setupCommands, todoistTracker } from "../src/infrastructure/todoist";
 import { fakeEnv } from "./fake-env";
 

@@ -9,5 +9,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --deny-warnings src test",
     "test": "vitest run"
+  },
+  "dependencies": {
+    "@voice-notes/core": "*"
   }
 }

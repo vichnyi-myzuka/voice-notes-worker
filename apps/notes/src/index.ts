@@ -1,7 +1,6 @@
 import type { Env, Job } from "./infrastructure/env";
-import { workersLlm } from "./infrastructure/llm";
+import { telegramChannel, workersLlm } from "@voice-notes/core";
 import { r2Ledger, r2Notes } from "./infrastructure/r2";
-import { telegramChannel } from "./infrastructure/telegram";
 import { todoistTracker } from "./infrastructure/todoist";
 import { handleFetch } from "./interface/inbox";
 import { handleQueue } from "./interface/queue";

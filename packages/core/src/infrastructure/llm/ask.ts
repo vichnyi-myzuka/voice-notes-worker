@@ -1,11 +1,11 @@
 import type { Json } from "../../domain/json";
 import type { JsonRequest } from "../../domain/llm";
-import type { Env } from "../env";
+import type { LlmEnv } from "./env";
 
 // Один запит зі structured output: спершу gpt-6-luna, при будь-якій помилці
 // (API, немає кредитів/ключа, невалідна відповідь) — Gemma 4 у Workers AI.
-export async function askJson<T>(env: Env, req: JsonRequest, parse: (text: string) => T): Promise<T | null> {
-	const models: [string, (env: Env, req: JsonRequest) => Promise<string>][] = [
+export async function askJson<T>(env: LlmEnv, req: JsonRequest, parse: (text: string) => T): Promise<T | null> {
+	const models: [string, (env: LlmEnv, req: JsonRequest) => Promise<string>][] = [
 		["gpt-6-luna", askLuna],
 		["gemma-4", askGemma],
 	];
@@ -34,7 +34,7 @@ export function toBase64(data: ArrayBuffer): string {
 export const dataUrl = (image: NonNullable<JsonRequest["image"]>) => `data:${image.type};base64,${toBase64(image.data)}`;
 
 // Витягує перший JSON-об'єкт з відповіді моделі.
-export async function askLuna(env: Env, req: JsonRequest): Promise<string> {
+export async function askLuna(env: LlmEnv, req: JsonRequest): Promise<string> {
 	if (!env.OPENAI_KEY) throw new Error("OPENAI_KEY is not set");
 	const res = await fetch("https://api.openai.com/v1/responses", {
 		method: "POST",
@@ -68,7 +68,7 @@ export async function askLuna(env: Env, req: JsonRequest): Promise<string> {
 		.join("");
 }
 
-export async function askGemma(env: Env, req: JsonRequest): Promise<string> {
+export async function askGemma(env: LlmEnv, req: JsonRequest): Promise<string> {
 	const res = await env.AI.run("@cf/google/gemma-4-26b-a4b-it", {
 		messages: [
 			{ role: "system", content: req.system },

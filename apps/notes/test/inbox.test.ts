@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Channel, Incoming } from "../src/domain/channel";
+import { workersLlm, type Channel, type Incoming } from "@voice-notes/core";
 import type { Ports } from "../src/application/pipeline";
-import { workersLlm } from "../src/infrastructure/llm";
 import { r2Ledger, r2Notes } from "../src/infrastructure/r2";
 import { todoistTracker } from "../src/infrastructure/todoist";
 import { handleFetch } from "../src/interface/inbox";

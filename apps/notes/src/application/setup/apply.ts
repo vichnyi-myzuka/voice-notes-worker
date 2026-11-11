@@ -1,5 +1,4 @@
-import type { Llm } from "../../domain/llm";
-import type { Steps } from "../../infrastructure/steps";
+import { type Llm, type Steps } from "@voice-notes/core";
 import { planSetup } from "./plan";
 import type { SetupPlan, TaskTracker } from "../../domain/tracker";
 import type { SetupState } from "./types";

@@ -1,4 +1,4 @@
-import type { Steps } from "../../infrastructure/steps";
+import type { Steps } from "@voice-notes/core";
 import type { TriageItem } from "../../domain/tracker";
 import { applyOps } from "./apply";
 import { planOps } from "./plan";

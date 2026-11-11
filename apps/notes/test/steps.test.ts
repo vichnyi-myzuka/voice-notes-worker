@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { openSteps } from "../src/infrastructure/steps";
+import { openSteps } from "@voice-notes/core";
 import { fakeEnv } from "./fake-env";
 
 type S = { a?: string; ok?: boolean; n?: number | null };

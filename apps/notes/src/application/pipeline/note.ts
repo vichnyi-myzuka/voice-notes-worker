@@ -3,7 +3,7 @@ import { buildCaption } from "../../domain/note";
 import type { Note } from "../../domain/published";
 import { TELEGRAM_MAX_BYTES, TRANSCRIBE_MAX_BYTES, captionKey, formatRecordedAt, recordedTs } from "../../domain/recording";
 import { runSetup } from "../setup";
-import { openSteps } from "../../infrastructure/steps";
+import { openSteps } from "@voice-notes/core";
 import { syncTasks } from "../tasks";
 import { readImage, summarize } from "../understand";
 import { captionNotice, refreshNote } from "./show";

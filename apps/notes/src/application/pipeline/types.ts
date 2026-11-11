@@ -1,6 +1,5 @@
-import type { Channel } from "../../domain/channel";
+import { type Channel, type Llm } from "@voice-notes/core";
 import type { ContentState } from "../../domain/note";
-import type { Llm } from "../../domain/llm";
 import type { NoteRepository, PublishState } from "../../domain/published";
 import type { TaskLedger, TaskTracker } from "../../domain/tracker";
 import type { SetupState } from "../setup";

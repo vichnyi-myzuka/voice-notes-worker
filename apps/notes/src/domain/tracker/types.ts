@@ -1,4 +1,4 @@
-import type { JsonObject } from "../json";
+import type { JsonObject } from "@voice-notes/core";
 
 // Що є в трекері задач зараз: воркер читає це перед тріажем.
 export type TrackerSnapshot = {

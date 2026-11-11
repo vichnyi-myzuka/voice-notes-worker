@@ -1,11 +1,11 @@
-import type { Env } from "../env";
+import type { TelegramEnv } from "./env";
 import { tg, tgSendMessage } from "./api";
 import type { StoreMessage, TgMessage } from "./types";
 
 export const DOWNLOAD_MAX_BYTES = 20_000_000; // ліміт Bot API на getFile
 
 // ✍ (саме без U+FE0F, інакше REACTION_INVALID): запис прийнято. Не критично, якщо реакції вимкнені.
-export async function react(env: Env, msg: TgMessage): Promise<void> {
+export async function react(env: TelegramEnv, msg: TgMessage): Promise<void> {
 	await tg(env, "setMessageReaction", {
 		chat_id: msg.chat.id,
 		message_id: msg.message_id,
@@ -18,7 +18,7 @@ export async function react(env: Env, msg: TgMessage): Promise<void> {
 // Особистий чат: лише від TG_OWNER_ID. В обох випадках ставимо ✍.
 // Помилки повідомляє в чат сам; Telegram завжди отримує 200, щоб не повторював запит без кінця.
 export async function receiveTelegramMessage(
-	env: Env,
+	env: TelegramEnv,
 	msg: TgMessage,
 	store: StoreMessage,
 ): Promise<void> {
