@@ -1,3 +1,3 @@
-// Збереження в R2: адаптери портів NoteRepository і TaskLedger.
+// Збереження в R2: адаптери портів NoteRepository, TaskLedger і IssueLedger.
 
-export { r2Ledger, r2Notes } from "./store";
+export { r2IssueLedger, r2Ledger, r2Notes } from "./store";

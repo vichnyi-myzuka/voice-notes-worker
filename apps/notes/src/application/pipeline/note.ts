@@ -4,6 +4,7 @@ import type { Note } from "../../domain/published";
 import { TELEGRAM_MAX_BYTES, TRANSCRIBE_MAX_BYTES, captionKey, formatRecordedAt, recordedTs } from "../../domain/recording";
 import { runSetup } from "../setup";
 import { openSteps } from "@voice-notes/core";
+import { syncIssues } from "../issues";
 import { syncTasks } from "../tasks";
 import { readImage, summarize } from "../understand";
 import { captionNotice, refreshNote } from "./show";
@@ -106,11 +107,20 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 		description: `🎙 ${meta.title} (${recordedAt})`,
 		messageUrl: channel.linkTo(messageId),
 	});
-	if (applied !== undefined) {
+	// Задачі, що є роботою над проєктом, — ще й issues у GitHub.
+	const issuesApplied = await syncIssues(ports, run, {
+		noteId,
+		items: triaged,
+		description: `${meta.title} (${recordedAt})`,
+		messageUrl: channel.linkTo(messageId),
+	});
+	if (applied !== undefined || issuesApplied !== undefined) {
 		await step("tasksMarked", async () => {
-			await refreshNote(env, ports, noteId, !applied);
+			await refreshNote(env, ports, noteId, applied === false, issuesApplied === false);
 			return true;
 		});
+	}
+	if (applied !== undefined) {
 		// Фото — коментарем-вкладенням до кожної створеної задачі. Збій на останній спробі не блокує нотатку.
 		if (isPhoto && applied) {
 			await step(

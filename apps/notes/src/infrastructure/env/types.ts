@@ -11,8 +11,10 @@ export interface Env {
 	TG_WEBHOOK_SECRET?: string; // секрет вебхука Telegram
 	TG_OWNER_ID?: string; // Telegram user id власника: голосові в приваті й натискання кнопок
 	TODOIST_TOKEN?: string; // без нього нотатки йдуть без тріажу задач
+	GITHUB_ISSUES_TOKEN?: string; // fine-grained PAT з Issues: write на репозиторії з ISSUE_REPOS; без нього issues не створюються
 	// vars
 	TIMEZONE: string;
+	ISSUE_REPOS?: string; // JSON: репозиторії для issues з описами, [{"repo":"власник/назва","description":"…"}]
 	LOCAL_DEV?: string; // ставиться лише в `npm run dev`
 }
 
