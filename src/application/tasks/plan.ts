@@ -16,16 +16,17 @@ export const sameReminders = (a: TriageItem, b: TriageItem) => [...(a.reminders 
 
 // Що зробити в Todoist: змінені задачі оновити, нові створити, прибрані видалити.
 // Дублікати існуючих задач не створюємо; незмінені задачі пропускаємо.
-export function planOps(items: TriageItem[], inTodoist: TrackedTasks): TaskOp[] {
+export function planOps(items: TriageItem[], tracked: TrackedTasks): TaskOp[] {
 	const ops: TaskOp[] = [];
 	const kept = new Set<string>();
 	for (const item of items) {
-		const prev = item.key ? inTodoist[item.key] : undefined;
-		if (prev) {
-			kept.add(item.key!);
+		const { key } = item;
+		const prev = key ? tracked[key] : undefined;
+		if (key && prev) {
+			kept.add(key);
 			if (!sameItem(prev.item, item)) {
 				ops.push({
-					key: item.key!,
+					key,
 					item,
 					id: prev.id,
 					...(prev.item.project !== item.project && { move: true }),
@@ -37,7 +38,7 @@ export function planOps(items: TriageItem[], inTodoist: TrackedTasks): TaskOp[] 
 			ops.push({ key: item.key ?? "", item });
 		}
 	}
-	for (const [key, prev] of Object.entries(inTodoist)) {
+	for (const [key, prev] of Object.entries(tracked)) {
 		if (!kept.has(key)) ops.push({ key, item: null, id: prev.id });
 	}
 	return ops;
@@ -55,10 +56,10 @@ export async function getTrackedTasks(env: Env, noteId: string): Promise<Tracked
 }
 
 // Підпис показує повтор лише тих задач, які в Todoist справді з повтором.
-export function withAppliedRecurrence(items: TriageItem[] | null, inTodoist: TrackedTasks): TriageItem[] | null {
+export function withAppliedRecurrence(items: TriageItem[] | null, tracked: TrackedTasks): TriageItem[] | null {
 	return (
 		items?.map((i) => {
-			const applied = i.key ? inTodoist[i.key] : undefined;
+			const applied = i.key ? tracked[i.key] : undefined;
 			return i.recurrence && applied && !applied.item.recurrence ? { ...i, recurrence: "", recurrenceLabel: "" } : i;
 		}) ?? null
 	);

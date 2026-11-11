@@ -1,5 +1,12 @@
 import type { Env } from "../env";
 
+// JSON-значення: відповіді моделей і схеми structured output.
+export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+export type JsonObject = { [key: string]: Json };
+
+// Звужує значення з відповіді моделі до об'єкта.
+export const isJsonObject = (v: Json | undefined): v is JsonObject => typeof v === "object" && v !== null && !Array.isArray(v);
+
 // Повертає розібраний результат або null, якщо не впоралась жодна модель.
 export async function askJson<T>(env: Env, req: JsonRequest, parse: (text: string) => T): Promise<T | null> {
 	const models: [string, (env: Env, req: JsonRequest) => Promise<string>][] = [
@@ -26,7 +33,7 @@ export type JsonRequest = {
 	name: string; // ім'я схеми та мітка в логах
 	system: string;
 	user: string;
-	schema: object;
+	schema: JsonObject;
 	reasoning?: "none" | "low"; // для Luna; Gemma завжди без reasoning
 	image?: { base64: string; type: string }; // зображення до user-повідомлення (обидві моделі вміють vision)
 };
@@ -42,7 +49,7 @@ export function toBase64(data: ArrayBuffer): string {
 export const dataUrl = (image: NonNullable<JsonRequest["image"]>) => `data:${image.type};base64,${image.base64}`;
 
 // Витягує перший JSON-об'єкт з відповіді моделі.
-export function parseJsonObject(text: string): Record<string, unknown> {
+export function parseJsonObject(text: string): JsonObject {
 	return JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
 }
 
@@ -71,7 +78,7 @@ export async function askLuna(env: Env, req: JsonRequest): Promise<string> {
 		}),
 	});
 	if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
-	const data = (await res.json()) as { output: { type: string; content?: { type: string; text?: string }[] }[] };
+	const data = await res.json<{ output: { type: string; content?: { type: string; text?: string }[] }[] }>();
 	return data.output
 		.filter((o) => o.type === "message")
 		.flatMap((o) => o.content ?? [])
@@ -81,7 +88,7 @@ export async function askLuna(env: Env, req: JsonRequest): Promise<string> {
 }
 
 export async function askGemma(env: Env, req: JsonRequest): Promise<string> {
-	const res = (await env.AI.run("@cf/google/gemma-4-26b-a4b-it", {
+	const res = await env.AI.run("@cf/google/gemma-4-26b-a4b-it", {
 		messages: [
 			{ role: "system", content: req.system },
 			{
@@ -100,8 +107,9 @@ export async function askGemma(env: Env, req: JsonRequest): Promise<string> {
 		},
 		chat_template_kwargs: { enable_thinking: false },
 		max_completion_tokens: 4096,
-	} as never)) as { choices?: { message?: { content?: unknown } }[]; response?: unknown };
-	// Структуровану відповідь модель може віддати як рядок або вже як об'єкт.
-	const content = res.choices?.[0]?.message?.content ?? res.response ?? "";
+	});
+	// Структуровану відповідь модель може віддати як рядок або вже як об'єкт (чи в полі response, як старі моделі).
+	const out: { choices?: { message?: { content?: Json | null } }[]; response?: Json } = res;
+	const content = out.choices?.[0]?.message?.content ?? out.response ?? "";
 	return typeof content === "string" ? content : JSON.stringify(content);
 }

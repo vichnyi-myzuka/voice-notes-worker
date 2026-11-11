@@ -1,10 +1,11 @@
 import { isoDate } from "../../domain/recording";
+import type { Json, JsonObject } from "../llm";
 import type { TrackerSnapshot, TriageItem } from "../../domain/tracker";
 
 export const listNames = (snap: TrackerSnapshot) => snap.projects.filter((p) => !p.inbox).map((p) => p.name);
 
 // Поля задачі Todoist у JSON-схемі: enum гарантує, що модель не вигадає неіснуючий проєкт чи мітку.
-export function taskFieldsSchema(snap: TrackerSnapshot): Record<string, unknown> {
+export function taskFieldsSchema(snap: TrackerSnapshot): JsonObject {
 	return {
 		project: { type: "string", enum: ["", ...listNames(snap)] },
 		labels: snap.labels.length
@@ -49,7 +50,7 @@ export const TASK_FIELDS_HELP = `- project: a project from <projects> (name befo
 
 // Перевіряє поля задачі, які повернула модель (Gemma може не дотримуватись enum).
 // "today"/"tomorrow" перетворюються на дату відносно base (дата запису або правки).
-export function taskValidator(snap: TrackerSnapshot, base: Date, timeZone: string): (r: Record<string, unknown>) => TriageItem {
+export function taskValidator(snap: TrackerSnapshot, base: Date, timeZone: string): (r: JsonObject) => TriageItem {
 	const taskByKey = new Map(snap.tasks.map((t) => [normalize(t), t]));
 	const projects = new Set(listNames(snap));
 	const labels = new Set(snap.labels);
@@ -57,19 +58,19 @@ export function taskValidator(snap: TrackerSnapshot, base: Date, timeZone: strin
 	// Календарні дні від дати base у timeZone (не +24 год: так перехід на літній час не зсуває дату).
 	const [y, m, d] = isoDate(base, timeZone).split("-").map(Number);
 	const day = (offset: number) => new Date(Date.UTC(y, m - 1, d + offset)).toISOString().slice(0, 10);
-	const date = (v: unknown) => {
+	const date = (v: Json | undefined) => {
 		const s = String(v ?? "").trim();
 		return s === "today" ? day(0) : s === "tomorrow" ? day(1) : dateRe.test(s) ? s : "";
 	};
 	// Дата з необов'язковим часом: "today 13:00", "2026-11-10T13:00", "2026-11-10 9:05" → "2026-11-10T13:00".
-	const dateTime = (v: unknown) => {
+	const dateTime = (v: Json | undefined) => {
 		const [, dayPart, hh, mm] = String(v ?? "").trim().match(/^(\S+?)(?:[ T@](\d{1,2}):(\d{2})(?::\d{2})?)?$/) ?? [];
 		const ymd = date(dayPart);
 		if (!ymd || hh === undefined) return ymd;
 		return Number(hh) < 24 && Number(mm) < 60 ? `${ymd}T${hh.padStart(2, "0")}:${mm}` : ymd;
 	};
 	// Нагадування: "before 60" → "before:60" (лише коли в дати виконання є час), дата з часом → YYYY-MM-DDTHH:MM.
-	const reminders = (v: unknown, dueHasTime: boolean): string[] => {
+	const reminders = (v: Json | undefined, dueHasTime: boolean): string[] => {
 		const out = (Array.isArray(v) ? v : []).map((x) => {
 			const rel = String(x).trim().match(/^before[ :]?(\d{1,4})$/);
 			if (rel) return dueHasTime && Number(rel[1]) > 0 ? `before:${Number(rel[1])}` : "";
@@ -79,7 +80,7 @@ export function taskValidator(snap: TrackerSnapshot, base: Date, timeZone: strin
 		return [...new Set(out.filter(Boolean))];
 	};
 	// Повтор: лише фраза Todoist, що починається з "every"; без неї й підпис порожній.
-	const recurrence = (r: Record<string, unknown>) => {
+	const recurrence = (r: JsonObject) => {
 		const every = String(r.recurrence ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 		if (!/^every\b/.test(every)) return { recurrence: "", recurrenceLabel: "" };
 		return { recurrence: every, recurrenceLabel: String(r.recurrence_label ?? "").trim() || every };

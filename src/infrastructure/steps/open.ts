@@ -1,11 +1,14 @@
 
 
 export async function openSteps<S extends object>(env: { BUCKET: R2Bucket }, stateKey: string, lastAttempt: boolean): Promise<Steps<S>> {
-	const state: S = (await (await env.BUCKET.get(stateKey))?.json<S>()) ?? ({} as S);
-	const save = () => env.BUCKET.put(stateKey, JSON.stringify(state));
+	// Усі поля стану необов'язкові: слайси модулів заповнюються кроками по черзі.
+	const state: Partial<S> = (await (await env.BUCKET.get(stateKey))?.json<Partial<S>>()) ?? {};
+	const save = async () => void (await env.BUCKET.put(stateKey, JSON.stringify(state)));
 	const step: Steps<S>["step"] = async (name, fn, opts) => {
 		type V = Exclude<S[typeof name], undefined>;
-		if (state[name] !== undefined) return state[name] as V;
+		const done = state[name];
+		// TypeScript не зв'язує Partial<S>[K] з S[K] для узагальненого ключа; значення тут точно V.
+		if (done !== undefined) return done as V;
 		let value: V;
 		try {
 			value = await fn();
@@ -24,8 +27,8 @@ export async function openSteps<S extends object>(env: { BUCKET: R2Bucket }, sta
 export type Options<V> = { onFinalFailure?: () => V };
 
 export type Steps<S> = {
-	state: S;
+	state: Partial<S>;
 	lastAttempt: boolean;
-	save: () => Promise<unknown>;
+	save: () => Promise<void>;
 	step: <K extends keyof S>(name: K, fn: () => Promise<Exclude<S[K], undefined>>, opts?: Options<Exclude<S[K], undefined>>) => Promise<Exclude<S[K], undefined>>;
 };

@@ -1,5 +1,5 @@
 import type { Env } from "../../infrastructure/env";
-import { askJson, parseJsonObject } from "../../infrastructure/llm";
+import { askJson, isJsonObject, parseJsonObject, type Json, type JsonObject } from "../../infrastructure/llm";
 import { labelRule, setLabelRule } from "./rules";
 import type { SetupChange, SetupPlan, SetupWorld, TaskTracker } from "../../domain/tracker";
 
@@ -52,7 +52,7 @@ export async function planSetup(env: Env, tracker: TaskTracker, text: string, la
 		const plan = await askJson(env, { name: "todoist_setup", system: SETUP_SYSTEM, user, schema: SETUP_SCHEMA, reasoning: "low" }, (t) => {
 			const raw = parseJsonObject(t).changes;
 			if (!Array.isArray(raw)) throw new Error("no changes");
-			return validateSetup(raw, world);
+			return validateSetup(raw.filter(isJsonObject), world);
 		});
 		if (!plan) throw new Error("All setup models failed");
 		return plan;
@@ -63,15 +63,17 @@ export async function planSetup(env: Env, tracker: TaskTracker, text: string, la
 	}
 }
 
+const ACTIONS: SetupChange["action"][] = ["create", "rename", "delete", "describe"];
+
 export const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 
-export const clean = (v: unknown) => String(v ?? "").replace(/^[@#]/, "").replace(/\s+/g, " ").trim();
+export const clean = (v: Json | undefined) => String(v ?? "").replace(/^[@#]/, "").replace(/\s+/g, " ").trim();
 
 export const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // Перевіряє команди моделі по черзі (наступна бачить результат попередньої): лише існуючі проєкти й мітки,
 // без конфліктів імен; Inbox і RULES_PROJECT не чіпаємо. Описи міток переносяться в текст правил.
-export function validateSetup(raw: Record<string, unknown>[], world: SetupWorld): SetupPlan {
+export function validateSetup(raw: JsonObject[], world: SetupWorld): SetupPlan {
 	type Entry = { id?: string; name: string; description?: string; openTasks?: number };
 	const lists: Record<SetupChange["kind"], Entry[]> = {
 		project: world.projects.map((p) => ({ ...p })),
@@ -82,7 +84,7 @@ export function validateSetup(raw: Record<string, unknown>[], world: SetupWorld)
 	const changes: SetupChange[] = [];
 	for (const r of raw) {
 		const kind = r.kind === "project" || r.kind === "label" ? r.kind : null;
-		const action = ["create", "rename", "delete", "describe"].includes(String(r.action)) ? (r.action as SetupChange["action"]) : null;
+		const action = ACTIONS.find((a) => a === r.action) ?? null;
 		const name = clean(r.name);
 		const newName = clean(r.new_name);
 		// Опис мітки без правил нема де зберегти.
