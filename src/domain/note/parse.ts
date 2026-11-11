@@ -1,4 +1,4 @@
-import { parseJsonObject } from "../../infrastructure/llm";
+import { isJsonObject, parseJsonObject, type Json, type JsonObject } from "../../infrastructure/llm";
 import type { TriageItem } from "../tracker";
 import type { Meta } from "./types";
 
@@ -10,7 +10,7 @@ export function parseMeta(text: string): Meta {
 	const title = String(json.title ?? "").trim();
 	const summary = String(json.summary ?? "").trim();
 	if (!title || !summary) throw new Error("empty title/summary");
-	const list = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
+	const list = (v: Json | undefined) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
 	return { title, summary, ideas: list(json.ideas), tasks: list(json.tasks) };
 }
 
@@ -27,7 +27,7 @@ export function plainTasks(tasks: string[]): TriageItem[] {
 export function parseEditedNote(
 	text: string,
 	oldTasks: TriageItem[],
-	validate: ((r: Record<string, unknown>) => TriageItem) | null,
+	validate: ((r: JsonObject) => TriageItem) | null,
 ): { meta: Meta; triage: TriageItem[] | null } {
 	const json = parseJsonObject(text);
 	const meta = parseMeta(JSON.stringify({ ...json, tasks: [] }));
@@ -35,7 +35,7 @@ export function parseEditedNote(
 	const oldByKey = new Map(oldTasks.map((t) => [t.key, t]));
 	let nextKey = Math.max(0, ...oldTasks.map((t) => Number(t.key?.slice(1)) || 0)) + 1;
 	const used = new Set<string>();
-	const items = (Array.isArray(json.tasks) ? json.tasks : []).map((r: Record<string, unknown>): TriageItem => {
+	const items = (Array.isArray(json.tasks) ? json.tasks : []).filter(isJsonObject).map((r): TriageItem => {
 		let key = String(r.key ?? "");
 		if (!oldByKey.has(key) || used.has(key)) key = `t${nextKey++}`;
 		used.add(key);

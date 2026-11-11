@@ -6,6 +6,7 @@ import type { TaskOp, TrackedTasks, TrackerSnapshot, TriageItem } from "../src/d
 import { buildCommands, RULES_PROJECT, todoistTracker } from "../src/infrastructure/todoist";
 import { fetchSnapshot, findRulesProject } from "../src/infrastructure/todoist/api";
 import { taskRulesBlock, taskValidator } from "../src/infrastructure/todoist/fields";
+import type { Json } from "../src/infrastructure/llm";
 import { fakeEnv } from "./fake-env";
 
 // Параметри запуску, які в тестах задаються до виклику applyPrepared (id запуску — з префіксом команд).
@@ -117,7 +118,7 @@ describe("taskValidator", () => {
 
 describe("taskValidator: нагадування", () => {
 	const v = taskValidator(snap, new Date("2026-11-10T08:00:00Z"), "Europe/Kyiv");
-	const rem = (reminders: unknown, due = "today 16:00") => v({ title: "Х", due, reminders }).reminders;
+	const rem = (reminders?: Json, due = "today 16:00") => v({ title: "Х", due, ...(reminders !== undefined && { reminders }) }).reminders;
 
 	it("before N → before:N; абсолютні today/tomorrow/дата з часом → YYYY-MM-DDTHH:MM", () => {
 		expect(rem(["before 60", "before:15", "before45"])).toEqual(["before:60", "before:15", "before:45"]);
@@ -735,7 +736,7 @@ describe("повторювані задачі", () => {
 			expect(v({ title: "Х", recurrence: "every 2 weeks" })).toMatchObject({ recurrence: "every 2 weeks", recurrenceLabel: "every 2 weeks" });
 		});
 		it("не «every» → порожні recurrence і підпис", () => {
-			for (const recurrence of ["", "daily", "everyday", "each monday", "щодня", " ", 5, null, undefined]) {
+			for (const recurrence of ["", "daily", "everyday", "each monday", "щодня", " ", 5, null]) {
 				expect(v({ title: "Х", recurrence, recurrence_label: "щодня" })).toMatchObject({ recurrence: "", recurrenceLabel: "" });
 			}
 		});

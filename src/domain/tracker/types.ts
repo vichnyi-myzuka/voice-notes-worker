@@ -1,3 +1,5 @@
+import type { JsonObject } from "../../infrastructure/llm";
+
 // Що є в трекері задач зараз: воркер читає це перед тріажем.
 export type TrackerSnapshot = {
 	projects: { id: string; name: string; inbox: boolean; description?: string }[]; // опис — пояснення для тріажу
@@ -75,8 +77,8 @@ export interface TaskTracker {
 	prompts: {
 		help: string;
 		rulesBlock: (snap: TrackerSnapshot) => string;
-		fieldsSchema: (snap: TrackerSnapshot) => Record<string, unknown>;
-		validator: (snap: TrackerSnapshot, base: Date) => (raw: Record<string, unknown>) => TriageItem;
+		fieldsSchema: (snap: TrackerSnapshot) => JsonObject;
+		validator: (snap: TrackerSnapshot, base: Date) => (raw: JsonObject) => TriageItem;
 	};
 	// Виконує операції; runId і номер операції дають сталі id команд, тож ретрай не виконає їх удруге.
 	applyOps: (runId: string, ops: TaskOp[], description: string) => Promise<ApplyResult>;

@@ -37,17 +37,19 @@ export function buildCommands(actionId: string, ops: TaskOp[], description: stri
 					: { item_id: itemId, type: "absolute", due: { date: `${r}:00` } },
 			}));
 		if (!op.id) {
-			const { due, deadline, ...rest } = fields(op.item!);
-			const project_id = op.item!.project ? projectId(op.item!.project) : undefined;
+			const item = op.item;
+			if (!item) return [];
+			const { due, deadline, ...rest } = fields(item);
+			const project_id = item.project ? projectId(item.project) : undefined;
 			const temp_id = `tmp-${actionId}-${n}`;
 			return [
 				{
 					type: "item_add",
 					uuid: uuid(),
 					temp_id,
-					args: { ...rest, description: describe(op.item!), ...(project_id && { project_id }), ...(due && { due }), ...(deadline && { deadline }) },
+					args: { ...rest, description: describe(item), ...(project_id && { project_id }), ...(due && { due }), ...(deadline && { deadline }) },
 				},
-				...addReminders(temp_id, op.item!),
+				...addReminders(temp_id, item),
 			];
 		}
 		if (!op.item) return [{ type: "item_delete", uuid: uuid(), args: { id: op.id } }];
@@ -78,12 +80,14 @@ export async function applyOps(env: Env, id: string, planned: TaskOp[], descript
 	if (bad.length) {
 		const retryId = `${id}x`;
 		bad.forEach((n) => {
-			ops[n] = { ...ops[n], item: { ...ops[n].item!, recurrence: "", recurrenceLabel: "" } };
+			const item = planned[n].item;
+			if (!item) return;
+			ops[n] = { ...ops[n], item: { ...item, recurrence: "", recurrenceLabel: "" } };
 			prefix[n] = retryId;
 			// Статуси задачі й залежних команд (нагадування, переміщення): їх замінять статуси повтору.
 			const own = new RegExp(`^${id}-${n}(?:[a-z]|$)`);
 			for (const k of Object.keys(res.sync_status)) if (own.test(k)) delete res.sync_status[k];
-			console.error(`todoist: recurrence "${planned[n].item!.recurrence}" not recognized, task "${planned[n].item!.title}" saved without it`);
+			console.error(`todoist: recurrence "${item.recurrence}" not recognized, task "${item.title}" saved without it`);
 		});
 		const mine = (c: TodoistCommand) => bad.some((n) => new RegExp(`^${retryId}-${n}(?:[a-z]|$)`).test(c.uuid));
 		const retry = await runCommands(env, buildCommands(retryId, ops, description, snap).filter(mine));

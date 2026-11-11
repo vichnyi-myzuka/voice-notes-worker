@@ -1,7 +1,7 @@
 import { promptDate } from "../../domain/recording";
 import type { TrackerSnapshot, TriageItem } from "../../domain/tracker";
 import type { Env } from "../env";
-import { askJson, parseJsonObject } from "../llm";
+import { askJson, isJsonObject, parseJsonObject } from "../llm";
 import { TASK_FIELDS_HELP, taskFieldsSchema, taskRulesBlock, taskValidator } from "./fields";
 
 
@@ -54,7 +54,8 @@ export async function triage(
 		const raw = parseJsonObject(text).items;
 		if (!Array.isArray(raw)) throw new Error("no items");
 		return raw
-			.map((r: Record<string, unknown>, i: number) => ({ ...validate(r), key: `t${i + 1}` }))
+			.filter(isJsonObject)
+			.map((r, i) => ({ ...validate(r), key: `t${i + 1}` }))
 			.filter((i) => i.title);
 	});
 }
