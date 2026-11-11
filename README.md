@@ -329,7 +329,7 @@ Whisper (і резервна Gemma 4) працюють через binding `AI`. 
 
 ## Агент (`apps/agent`, прототип)
 
-Окремий воркер: кожна **сесія** агента — Durable Object з власним контейнером Cloudflare, у якому працює `opencode web` (веб-інтерфейс + API). Воркер створює сесію, ставить агенту задачу і повертає посилання на веб-інтерфейс. Доступ — лише через Cloudflare Access.
+Окремий воркер: кожна **сесія** агента — Durable Object з власним контейнером Cloudflare, у якому працює `opencode serve` (OpenCode V2: веб-інтерфейс + API `/api/...`). Воркер створює сесію, ставить агенту задачу і повертає посилання на веб-інтерфейс. Доступ — лише через Cloudflare Access.
 
 ```
 POST /api/sessions {prompt, repo?: "owner/name", id?}  → {id, url}   створити сесію й одразу поставити задачу (ідемпотентно за id)
@@ -353,7 +353,7 @@ GET  /s/<id>                                           → cookie з id сесі
 cd apps/agent
 
 # 2. Секрети
-npx wrangler secret put OPENCODE_SERVER_PASSWORD   # довгий випадковий рядок
+npx wrangler secret put OPENCODE_PASSWORD          # довгий випадковий рядок (пароль OpenCode V2, користувач завжди `opencode`)
 npx wrangler secret put ANTHROPIC_API_KEY          # або OPENAI_API_KEY: ключ моделі для OpenCode
 npx wrangler secret put GITHUB_TOKEN               # необов'язково: для приватних репозиторіїв і пушу гілок
 
@@ -387,5 +387,6 @@ curl -X POST localhost:8789/api/sessions -H 'content-type: application/json' -d 
 
 ### Версії OpenCode
 
-Контейнерний образ ставить `opencode-ai` з npm (зараз це V1: `opencode web`, API `/session`, `OPENCODE_SERVER_PASSWORD`). V2 ставиться окремим інсталятором, його сервер віддає веб-інтерфейс сам (`opencode serve`, API `/api/...`, `OPENCODE_PASSWORD`; старий `OPENCODE_SERVER_PASSWORD` ще працює). Перехід контейнера на V2 потребує зміни `infrastructure/container/opencode.ts` і Dockerfile.
+Використовується лише **OpenCode V2**. Контейнер ставить `@opencode/cli` (версія зафіксована в Dockerfile, `OPENCODE_VERSION`), запускає `opencode serve --hostname 0.0.0.0 --port 4096` (веб-інтерфейс віддає сам сервер) і приймає basic auth з паролем `OPENCODE_PASSWORD`. Клієнт воркера працює з API V2: `GET /api/info` (готовність), `POST /api/session`, `POST /api/session/{id}/prompt`, `GET /api/session/active`, `POST /api/session/{id}/interrupt`; відповіді загорнуті в `{data}`. Варіант на SDK (`@opencode/sdk/workerd`) теж V2. V1 не підтримується.
 
+Не перевірено без Docker: сам образ і робота веб-інтерфейсу V2 за проксі з підставленим basic auth (V2 штатно заходить у веб через `opencode pair` і cookie; якщо UI не завантажиться за basic auth, потрібно буде видавати посилання через `POST /api/pair`).

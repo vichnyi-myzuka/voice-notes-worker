@@ -1,45 +1,48 @@
-// Мінімальний клієнт HTTP API OpenCode (`opencode serve` / `opencode web`) усередині контейнера.
+// Мінімальний клієнт HTTP API OpenCode V2 (`opencode serve`, маршрути `/api/...`) усередині контейнера.
 
 export const OPENCODE_PORT = 4096;
 
 export type Opencode = { fetch: (path: string, init?: RequestInit) => Promise<Response> };
 
+// V2: basic auth, ім'я користувача завжди `opencode`, пароль — OPENCODE_PASSWORD.
 export const basicAuth = (password: string) => `Basic ${btoa(`opencode:${password}`)}`;
 
-async function json<T>(res: Response): Promise<T> {
+async function data<T>(res: Response): Promise<T> {
 	if (!res.ok) throw new Error(`opencode ${res.url}: ${res.status} ${await res.text()}`);
-	return res.json<T>();
+	return (await res.json<{ data: T }>()).data;
 }
 
-export async function createSession(oc: Opencode, title: string): Promise<string> {
-	const res = await oc.fetch("/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title }) });
-	return (await json<{ id: string }>(res)).id;
-}
+const post = (body?: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 
-// Асинхронний запуск: відповідь одразу, агент працює у фоні.
-export async function promptAsync(oc: Opencode, sessionId: string, text: string): Promise<void> {
-	const res = await oc.fetch(`/session/${sessionId}/prompt_async`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ parts: [{ type: "text", text }] }),
-	});
-	if (!res.ok) throw new Error(`opencode prompt_async: ${res.status} ${await res.text()}`);
-}
-
-export async function sessionExists(oc: Opencode, sessionId: string): Promise<boolean> {
-	const res = await oc.fetch(`/session/${sessionId}`);
+// Сервер готовий, коли відповідає /api/info.
+export async function isReady(oc: Opencode): Promise<boolean> {
+	const res = await oc.fetch("/api/info", { signal: AbortSignal.timeout(1500) });
 	await res.body?.cancel();
 	return res.ok;
 }
 
-// busy/retry → працює; у відповіді немає запису або idle → вільна.
-export async function isBusy(oc: Opencode, sessionId: string): Promise<boolean> {
-	const statuses = await json<Record<string, { type: string }>>(await oc.fetch("/session/status"));
-	const type = statuses[sessionId]?.type;
-	return type === "busy" || type === "retry";
+export async function createSession(oc: Opencode, title: string, directory: string): Promise<string> {
+	return (await data<{ id: string }>(await oc.fetch("/api/session", post({ title, location: { directory } })))).id;
 }
 
-export async function abortSession(oc: Opencode, sessionId: string): Promise<void> {
-	const res = await oc.fetch(`/session/${sessionId}/abort`, { method: "POST" });
-	if (!res.ok) throw new Error(`opencode abort: ${res.status} ${await res.text()}`);
+// Повертається, щойно запит прийнято в чергу сесії; агент працює у фоні.
+export async function prompt(oc: Opencode, sessionId: string, text: string): Promise<void> {
+	await data(await oc.fetch(`/api/session/${sessionId}/prompt`, post({ text })));
+}
+
+export async function sessionExists(oc: Opencode, sessionId: string): Promise<boolean> {
+	const res = await oc.fetch(`/api/session/${sessionId}`);
+	await res.body?.cancel();
+	return res.ok;
+}
+
+// Активні (виконуються зараз) сесії: є запис — працює, немає — вільна.
+export async function isBusy(oc: Opencode, sessionId: string): Promise<boolean> {
+	return sessionId in (await data<Record<string, { type: string }>>(await oc.fetch("/api/session/active")));
+}
+
+export async function interrupt(oc: Opencode, sessionId: string): Promise<void> {
+	const res = await oc.fetch(`/api/session/${sessionId}/interrupt`, post());
+	if (!res.ok) throw new Error(`opencode interrupt: ${res.status} ${await res.text()}`);
+	await res.body?.cancel();
 }

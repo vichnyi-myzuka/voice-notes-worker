@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import type { AgentStatus, StartInput } from "../../domain/agent";
-import { OPENCODE_PORT, abortSession, basicAuth, createSession, isBusy, promptAsync, sessionExists, type Opencode } from "./opencode";
+import { OPENCODE_PORT, basicAuth, createSession, interrupt, isBusy, isReady, prompt, sessionExists, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
@@ -21,7 +21,7 @@ export class AgentSession extends DurableObject<Env> {
 
 	private opencode(): Opencode {
 		const port = this.ctx.container!.getTcpPort(OPENCODE_PORT);
-		const auth = basicAuth(this.env.OPENCODE_SERVER_PASSWORD);
+		const auth = basicAuth(this.env.OPENCODE_PASSWORD);
 		return {
 			fetch: (path, init) => {
 				const headers = new Headers(init?.headers);
@@ -29,6 +29,11 @@ export class AgentSession extends DurableObject<Env> {
 				return port.fetch(`http://container${path}`, { ...init, headers });
 			},
 		};
+	}
+
+	// Каталог проєкту в контейнері: клон репозиторію (див. entrypoint.sh) або порожня /workspace.
+	private async directory(): Promise<string> {
+		return (await this.ctx.storage.get<string>("repo")) ? "/workspace/repo" : "/workspace";
 	}
 
 	// Стартує контейнер (якщо ще не працює) і чекає, поки OpenCode відповість.
@@ -52,9 +57,7 @@ export class AgentSession extends DurableObject<Env> {
 		await container.setInactivityTimeout(INACTIVITY_TIMEOUT_MS);
 		for (let attempt = 0; attempt < READY_ATTEMPTS; attempt++) {
 			try {
-				const res = await this.opencode().fetch("/global/health", { signal: AbortSignal.timeout(1500) });
-				await res.body?.cancel();
-				if (res.ok) return;
+				if (await isReady(this.opencode())) return;
 			} catch {
 				// порт ще не слухає
 			}
@@ -69,9 +72,9 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ensureRunning();
 		const existing = await this.ctx.storage.get<string>("sessionId");
 		if (existing) return { sessionId: existing };
-		const sessionId = await createSession(this.opencode(), input.prompt.slice(0, 80));
+		const sessionId = await createSession(this.opencode(), input.prompt.slice(0, 80), await this.directory());
 		await this.ctx.storage.put("sessionId", sessionId);
-		await promptAsync(this.opencode(), sessionId, input.prompt);
+		await prompt(this.opencode(), sessionId, input.prompt);
 		return { sessionId };
 	}
 
@@ -80,10 +83,10 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ensureRunning();
 		let sessionId = await this.ctx.storage.get<string>("sessionId");
 		if (!sessionId || !(await sessionExists(this.opencode(), sessionId))) {
-			sessionId = await createSession(this.opencode(), text.slice(0, 80));
+			sessionId = await createSession(this.opencode(), text.slice(0, 80), await this.directory());
 			await this.ctx.storage.put("sessionId", sessionId);
 		}
-		await promptAsync(this.opencode(), sessionId, text);
+		await prompt(this.opencode(), sessionId, text);
 	}
 
 	// Статус не будить контейнер, що спить.
@@ -96,7 +99,7 @@ export class AgentSession extends DurableObject<Env> {
 	async abort(): Promise<void> {
 		const sessionId = await this.ctx.storage.get<string>("sessionId");
 		if (!sessionId || !this.ctx.container?.running) return;
-		await abortSession(this.opencode(), sessionId);
+		await interrupt(this.opencode(), sessionId);
 	}
 
 	// Веб-інтерфейс OpenCode: запити (разом із SSE) проксуються в контейнер.
@@ -104,7 +107,7 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ensureRunning();
 		const url = new URL(request.url);
 		const headers = new Headers(request.headers);
-		headers.set("authorization", basicAuth(this.env.OPENCODE_SERVER_PASSWORD));
+		headers.set("authorization", basicAuth(this.env.OPENCODE_PASSWORD));
 		headers.delete("host");
 		headers.delete("cookie"); // cookie вибору сесії контейнеру не потрібна
 		return this.ctx.container!.getTcpPort(OPENCODE_PORT).fetch(new Request(`http://container${url.pathname}${url.search}`, new Request(request, { headers })));
@@ -113,7 +116,7 @@ export class AgentSession extends DurableObject<Env> {
 
 function containerEnv(env: Env, repo: string | undefined): Record<string, string> {
 	const vars: Record<string, string | undefined> = {
-		OPENCODE_SERVER_PASSWORD: env.OPENCODE_SERVER_PASSWORD,
+		OPENCODE_PASSWORD: env.OPENCODE_PASSWORD,
 		ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
 		OPENAI_API_KEY: env.OPENAI_API_KEY,
 		GITHUB_TOKEN: env.GITHUB_TOKEN,

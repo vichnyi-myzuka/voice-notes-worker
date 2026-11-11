@@ -15,4 +15,5 @@ if [ -n "$REPO" ]; then
 	cd /workspace/repo
 fi
 
-exec opencode web --hostname 0.0.0.0 --port 4096
+# V2: веб-інтерфейс віддає сам сервер; пароль береться з OPENCODE_PASSWORD.
+exec opencode serve --hostname 0.0.0.0 --port 4096
