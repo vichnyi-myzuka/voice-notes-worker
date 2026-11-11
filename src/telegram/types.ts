@@ -24,3 +24,38 @@ export type ReceivedVoice = {
 	// Відповідь голосовим на нотатку в каналі: інструкція редагування цієї нотатки.
 	replyTo?: string;
 };
+
+// Сутності тексту: посилання на задачі й розгортувана цитата оригіналу.
+export type TgTextLink = { type: "text_link"; offset: number; length: number; url: string };
+export type TgEntity = TgTextLink | { type: "expandable_blockquote"; offset: number; length: number };
+
+type ChatId = string | number;
+type MessageRef = { message_id: number };
+
+// Методи Bot API, які використовує воркер: параметри й результат. Ключі — назви методів.
+export type TgMethods = {
+	sendMessage: {
+		params: { chat_id: ChatId; text: string; entities?: TgEntity[]; link_preview_options?: { is_disabled: boolean } };
+		result: MessageRef;
+	};
+	sendAudio: { params: { chat_id: ChatId; audio: string; title: string; caption: string }; result: MessageRef };
+	sendVoice: { params: { chat_id: ChatId; voice: string; caption: string }; result: MessageRef };
+	sendPhoto: { params: { chat_id: ChatId; photo: string; caption: string }; result: MessageRef };
+	editMessageText: {
+		params: { chat_id: ChatId; message_id: number; text: string; entities: TgEntity[]; link_preview_options: { is_disabled: boolean } };
+		result: MessageRef;
+	};
+	editMessageCaption: {
+		params: { chat_id: ChatId; message_id: number; caption: string; caption_entities: TgEntity[] };
+		result: MessageRef;
+	};
+	deleteMessage: { params: { chat_id: ChatId; message_id: number }; result: boolean };
+	setMessageReaction: {
+		params: { chat_id: ChatId; message_id: number; reaction: { type: "emoji"; emoji: string }[] };
+		result: boolean;
+	};
+	getFile: { params: { file_id: string }; result: { file_path: string } };
+};
+
+// Оновлення з вебхука: потрібні лише повідомлення (приват) і дописи каналу.
+export type TgUpdate = { message?: TgMessage; channel_post?: TgMessage };

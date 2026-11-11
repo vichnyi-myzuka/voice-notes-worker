@@ -3,7 +3,7 @@
 export { setupCommands, setupReport } from "./apply";
 export { planSetup } from "./plan";
 export { labelRule, setLabelRule } from "./rules";
-export { runSetup } from "./run";
+export { runSetup } from "./apply";
 export type { SetupPlan, SetupState, SetupWorld } from "./types";
-export { clean } from "./utils";
-export { validateSetup } from "./validate";
+export { clean } from "./plan";
+export { validateSetup } from "./plan";

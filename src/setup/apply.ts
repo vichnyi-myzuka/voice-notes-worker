@@ -1,6 +1,8 @@
 import type { Env } from "../env";
+import type { Steps } from "../steps";
 import { sync } from "../todoist";
-import type { SetupPlan } from "./types";
+import { planSetup } from "./plan";
+import type { SetupPlan, SetupState } from "./types";
 
 // Команди /sync. uuid сталі (id плану + номер), тож ретрай не виконає їх вдруге.
 export function setupCommands(id: string, plan: SetupPlan): object[] {
@@ -42,4 +44,26 @@ export function setupReport(plan: SetupPlan): string[] {
 		if (c.openTasks) return `🗄 Проєкт «${c.name}» в архіві (відкритих задач у ньому: ${c.openTasks})`;
 		return `🗑 ${what} «${c.name}» видалено`;
 	});
+}
+
+export const SETUP_FAILED = "⚠️ Не вдалося змінити проєкти чи мітки";
+
+// Команди налаштування з тексту: план зберігається в стані, виконання ідемпотентне (сталі uuid).
+// Повертає рядки звіту для підпису ([] — команд не було).
+export async function runSetup(env: Env, text: string, run: Steps<SetupState>): Promise<string[]> {
+	const s = await run.step("setup", async () => {
+		const plan = await planSetup(env, text, run.lastAttempt);
+		return plan.changes.length ? { id: crypto.randomUUID(), plan } : null;
+	});
+	if (!s) return [];
+	const ok = await run.step(
+		"setupApplied",
+		async () => {
+			await applySetup(env, s.id, s.plan);
+			console.log(`todoist setup ${s.id}: ${s.plan.changes.length} changes, applied`);
+			return true;
+		},
+		{ onFinalFailure: () => false },
+	);
+	return ok ? setupReport(s.plan) : [SETUP_FAILED];
 }

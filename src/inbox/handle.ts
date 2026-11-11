@@ -1,9 +1,7 @@
 import type { Env } from "../env";
 import { noteIdByMessage } from "../published";
 import { captionKey } from "../recording";
-import { deleteOriginal, markEditing, receiveTelegramVoice } from "../telegram";
-import { enqueueNote } from "./enqueue";
-import { safeEqual } from "./utils";
+import { deleteOriginal, markEditing, receiveTelegramVoice, type TgUpdate } from "../telegram";
 
 export async function handleFetch(req: Request, env: Env): Promise<Response> {
 	const url = new URL(req.url);
@@ -14,8 +12,7 @@ export async function handleFetch(req: Request, env: Env): Promise<Response> {
 		if (!env.TG_WEBHOOK_SECRET || !(await safeEqual(token, env.TG_WEBHOOK_SECRET))) {
 			return new Response("unauthorized", { status: 401 });
 		}
-		type Msg = Parameters<typeof receiveTelegramVoice>[1];
-		const update = (await req.json()) as { message?: Msg; channel_post?: Msg };
+		const update = await req.json<TgUpdate>();
 		const msg = update.message ?? update.channel_post;
 		if (msg) {
 			await receiveTelegramVoice(env, msg, async (key, body, { contentType, replyTo, caption, ...meta }) => {
@@ -58,4 +55,24 @@ export async function handleFetch(req: Request, env: Env): Promise<Response> {
 	const key = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.m4a`;
 	await enqueueNote(env, key, body, "audio/mp4");
 	return new Response("ok");
+}
+
+// Кладе аудіо в R2 і ставить у чергу.
+export async function enqueueNote(
+	env: Env,
+	key: string,
+	body: ArrayBuffer,
+	contentType: string,
+	customMetadata?: Record<string, string | undefined>,
+	edit?: string,
+): Promise<void> {
+	const meta = Object.fromEntries(Object.entries(customMetadata ?? {}).filter(([, v]) => v !== undefined)) as Record<string, string>;
+	await env.BUCKET.put(key, body, { httpMetadata: { contentType }, customMetadata: meta });
+	await env.QUEUE.send(edit ? { key, edit } : { key });
+}
+
+export async function safeEqual(a: string, b: string): Promise<boolean> {
+	const enc = new TextEncoder();
+	const [ha, hb] = await Promise.all([crypto.subtle.digest("SHA-256", enc.encode(a)), crypto.subtle.digest("SHA-256", enc.encode(b))]);
+	return crypto.subtle.timingSafeEqual(ha, hb);
 }

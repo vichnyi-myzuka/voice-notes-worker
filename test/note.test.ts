@@ -295,7 +295,7 @@ describe("textNote", () => {
 	});
 
 	it("додає цитату після переданих entities", () => {
-		const link = { type: "text_link", offset: 0, length: 3, url: "https://x" };
+		const link = { type: "text_link" as const, offset: 0, length: 3, url: "https://x" };
 		const r = textNote("abc", "orig", [link]);
 		expect(r.entities).toEqual([link, { type: "expandable_blockquote", offset: 5, length: 4 }]);
 	});
