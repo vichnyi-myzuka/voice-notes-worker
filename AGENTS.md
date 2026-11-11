@@ -6,7 +6,7 @@
 
 - Перед комітом: `npm run check` (oxlint + tsc + vitest). Git-хуки однаково запускають pre-commit (lint + typecheck) і pre-push (`npm run check`).
 - **Після коміту одразу `git push origin main` і `npx wrangler deploy`.** Якщо wrangler просить авторизацію, попроси користувача виконати `npx wrangler login`.
-- Зміна поведінки → онови README в тому ж коміті. Нова логіка → unit-тести в `test/` (без мережі й LLM; `fetch` підміняється через `vi.stubGlobal`, R2 — `test/fake-env.ts`).
+- Зміна поведінки → онови README в тому ж коміті. Нова логіка → unit-тести в `test/` (без мережі й LLM; `fetch` підміняється через `vi.stubGlobal`, R2 — `test/fake-env.ts`). Зміна наскрізної поведінки → перевір `test/e2e.test.ts` (повний цикл на моках, без реальних сервісів).
 
 ## Секрети
 
