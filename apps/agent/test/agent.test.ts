@@ -7,6 +7,7 @@ describe("durableAgent", () => {
 			start: vi.fn(async () => ({ sessionId: "oc1" })),
 			begin: vi.fn(async () => {}),
 			resume: vi.fn(async () => {}),
+			answer: vi.fn(async () => "Мінімалізм"),
 			followUp: vi.fn(async () => {}),
 			status: vi.fn(async () => "working" as const),
 			abort: vi.fn(async () => {}),
@@ -39,9 +40,11 @@ describe("durableAgent", () => {
 		const target = { chatId: 5, url: agent.url("session-0003"), postId: 9, header: "h" };
 		await agent.begin("session-0003", { prompt: "Задача" }, target);
 		await agent.resume("session-0003", "Ще", target);
+		expect(await agent.answer("session-0003", 1)).toBe("Мінімалізм");
+		expect(stub.answer).toHaveBeenCalledWith("session-0003", 1);
 		expect(stub.begin).toHaveBeenCalledWith("session-0003", { prompt: "Задача" }, target);
 		expect(stub.resume).toHaveBeenCalledWith("session-0003", "Ще", target);
-		expect(names).toEqual(["main", "main"]);
+		expect(names).toEqual(["main", "main", "main"]);
 	});
 
 	it("решта операцій делегується з id сесії; веб-інтерфейс і знімок не залежать від id", async () => {

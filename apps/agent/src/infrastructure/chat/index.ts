@@ -39,11 +39,13 @@ const NO_PREVIEW = { is_disabled: true }; // без карток сторіно�
 // прибирає, тому їх передає кожен виклик sendChat/editChat.
 export type Buttons = "working" | "done";
 const SESSION_ID = /\/s\/(tg-[\w-]+)/;
-function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined): TgInlineKeyboard | undefined {
+function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, answers: string[] = []): TgInlineKeyboard | undefined {
 	const id = sessionUrl && buttons ? SESSION_ID.exec(sessionUrl)?.[1] : undefined;
 	if (!id) return undefined;
 	const row = [...(buttons === "working" ? [{ text: "⏹ Стоп", callback_data: `stop:${id}` }] : []), { text: "🗑 Видалити", callback_data: `del:${id}` }];
-	return { inline_keyboard: [row] };
+	// Варіанти відповіді на питання агента: по кнопці в рядку над службовими (callback_data `ans:<id>:<номер варіанта>`)
+	const choices = answers.map((label, i) => [{ text: label.length > 32 ? `${label.slice(0, 31)}…` : label, callback_data: `ans:${id}:${i}` }]);
+	return { inline_keyboard: [...choices, row] };
 }
 
 // Текст повідомлення в двох видах: HTML і простий (запасний, якщо Telegram відхилить розмітку). Внизу, за потреби,
@@ -55,9 +57,9 @@ function render(text: string, sessionUrl?: string): { html: string; plain: strin
 
 // Надсилає повідомлення з форматуванням і необов'язковим посиланням на сесію внизу. Якщо Telegram відхилив розмітку, шле
 // той самий текст без неї. Повертає message_id.
-export async function sendChat(env: BotEnv, chatId: number | string, text: string, sessionUrl?: string, buttons?: Buttons): Promise<number> {
+export async function sendChat(env: BotEnv, chatId: number | string, text: string, sessionUrl?: string, buttons?: Buttons, answers?: string[]): Promise<number> {
 	const { html, plain } = render(text, sessionUrl);
-	const reply_markup = keyboard(sessionUrl, buttons);
+	const reply_markup = keyboard(sessionUrl, buttons, answers);
 	try {
 		return (await tg(env, "sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML", link_preview_options: NO_PREVIEW, reply_markup })).message_id;
 	} catch (err) {
@@ -68,9 +70,9 @@ export async function sendChat(env: BotEnv, chatId: number | string, text: strin
 
 // Редагує повідомлення на місці (так само: HTML, потім простий текст). «Не змінилось» — не помилка. false — не вдалося
 // (повідомлення видалили чи надто довге): викликач може надіслати нове.
-export async function editChat(env: BotEnv, chatId: number | string, messageId: number, text: string, sessionUrl?: string, buttons?: Buttons): Promise<boolean> {
+export async function editChat(env: BotEnv, chatId: number | string, messageId: number, text: string, sessionUrl?: string, buttons?: Buttons, answers?: string[]): Promise<boolean> {
 	const { html, plain } = render(text, sessionUrl);
-	const reply_markup = keyboard(sessionUrl, buttons);
+	const reply_markup = keyboard(sessionUrl, buttons, answers);
 	const edit = async (body: string, parse_mode?: "HTML") => {
 		try {
 			await tg(env, "editMessageText", { chat_id: chatId, message_id: messageId, text: body, ...(parse_mode && { parse_mode }), link_preview_options: NO_PREVIEW, reply_markup });

@@ -5,6 +5,7 @@ export type SessionObject = {
 	start(id: string, input: StartInput): Promise<unknown>;
 	begin(id: string, input: StartInput, target: WatchTarget): Promise<void>;
 	resume(id: string, text: string, target: WatchTarget): Promise<void>;
+	answer(id: string, choice: number): Promise<string | undefined>;
 	followUp(id: string, text: string): Promise<void>;
 	status(id: string): Promise<AgentStatus>;
 	report(id: string): Promise<SessionReport>;
@@ -29,6 +30,7 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		url: (id) => `${origin}/s/${id}`,
 		begin: (id, input, target) => computer().begin(id, input, target),
 		resume: (id, text, target) => computer().resume(id, text, target),
+		answer: (id, choice) => computer().answer(id, choice),
 		async start(id, input) {
 			await computer().start(id, input);
 			return { id, url: `${origin}/s/${id}` };

@@ -358,6 +358,14 @@ describe("вебхук Telegram", () => {
 			expect(t.answers()).toEqual(["Сесію видалено."]);
 		});
 
+		it("«відповідь» передає номер варіанта агентові й показує вибране спливаючою підказкою", async () => {
+			const t = await started();
+			t.choices.set(SESSION, ["Мінімалізм", "Яскравий"]);
+			await t.press(`ans:${SESSION}:1`);
+			await t.press(`ans:${SESSION}:5`); // такого варіанта немає (чи питання вже закрите)
+			expect(t.answers()).toEqual(["Відповідь: Яскравий", "Питання вже неактуальне."]);
+		});
+
 		it("чужий користувач, чужий чат, невідома дія чи сесія — відмова без наслідків", async () => {
 			const t = await started();
 			await t.press(`del:${SESSION}`, 999);
