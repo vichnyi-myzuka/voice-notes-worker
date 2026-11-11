@@ -327,6 +327,27 @@ Whisper (і резервна Gemma 4) працюють через binding `AI`. 
 
 Джерела: [Queues limits](https://developers.cloudflare.com/queues/platform/limits/), [Queues pricing](https://developers.cloudflare.com/queues/platform/pricing/), [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [Batching & retries](https://developers.cloudflare.com/queues/configuration/batching-retries/).
 
+## CI/CD
+
+Зміни потрапляють у `main` лише через PR, розгортання робить GitHub Actions (`.github/workflows`):
+
+- `check.yml`: на кожен PR і перед кожним деплоєм `npm run check` (oxlint, tsc, vitest). Секретів у цьому job немає: код з PR (зокрема від агента) виконується тут, тож Cloudflare-токен йому недоступний.
+- `deploy.yml`: після мержу в `main` спершу `check`, потім розгортаються лише змінені застосунки (`notes`, `sites`, `agent`; зміни в `packages/`, `package-lock.json` зачіпають усі). Вручну: Actions → deploy → Run workflow (`apps`: `all`, `notes`, `agent`, `sites`).
+- `notes` і `sites` розгортаються самі (environment `production`), `agent` чекає твого схвалення (environment `production-agent`): деплой замінює контейнер, а зміна образу скидає знімки. `CLOUDFLARE_API_TOKEN` і `CLOUDFLARE_ACCOUNT_ID` лежать лише в секретах environments, не репозиторію.
+- `CODEOWNERS` позначає власником `.github/`, `wrangler.toml`, `apps/agent/container/` і `apps/agent/payload/`.
+
+Агент не має доступу до Cloudflare: його токен GitHub пушить у гілки й відкриває PR, але не має права `workflows` (змінити workflow й дістати секрет не вийде).
+
+### Налаштування GitHub (робить власник)
+
+1. **Репозиторій публічний** (Settings → General → Danger Zone): тільки так на безкоштовному плані доступні rulesets і environment-схвалення.
+2. **Environments** (Settings → Environments): `production` (без обмежень) і `production-agent` (Required reviewers: ти). У кожному секрети `CLOUDFLARE_API_TOKEN` та `CLOUDFLARE_ACCOUNT_ID`.
+3. **Токен Cloudflare** (My Profile → API Tokens → Custom token) лише для одного акаунта: Account → Workers Scripts: Edit; Account → Cloudchamber (Containers): Edit; Zone → Workers Routes: Edit для `example.com`. Без DNS, Access і Billing. Якщо `wrangler deploy` скаже про нестачу права, додавай по одному.
+4. **Ruleset на `main`** (Settings → Rules → Rulesets): Require a pull request (0 схвалень: схвалити власний PR неможливо), Require status checks → `check`, Block force pushes, без bypass-списку (токен агента діє від твого імені, тож bypass для admin зняв би захист).
+5. **Токен агента**: fine-grained PAT на потрібні репозиторії: Contents, Pull requests: Read and write; без Workflows, Actions і Administration (`wrangler secret put GITHUB_TOKEN` в `apps/agent`).
+
+Після цього пуш у `main` напряму заборонено всім, зокрема власнику: працюємо через PR.
+
 ## Витрати Cloudflare
 
 `npm run cost` (або `npm run cost -- 14`) друкує витрати по днях і продуктах за останні N днів (типово 7) з Billable Usage API (alpha). У `.env` потрібні `CLOUDFLARE_API_TOKEN` (токен із правом Billing Read: My Profile → API Tokens) і `CLOUDFLARE_ACCOUNT_ID`. API віддає поточний розрахунковий період, тож днів може бути менше за запит; дані оновлюються раз на день. Показується лише плата понад безкоштовні ліміти, фіксовані підписки (Workers Paid) не входять. Те саме без токена видно в дашборді Manage Account → Billing → Billable Usage.

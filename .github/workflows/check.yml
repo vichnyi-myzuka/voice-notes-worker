@@ -1,0 +1,24 @@
+name: check
+
+# Перевірка PR (і виклик із deploy.yml перед розгортанням): oxlint + tsc + vitest. Секретів тут немає навмисно:
+# код з PR агента виконується в цьому job, тож Cloudflare-токен у ньому недоступний.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # --ignore-scripts: не виконуємо postinstall залежностей (і `prepare` з git-хуками)
+      - run: npm ci --ignore-scripts
+      - run: npm run check

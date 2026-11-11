@@ -1,0 +1,85 @@
+name: deploy
+
+# Розгортання після мержу в main. Спершу check, потім лише ті застосунки, чиї файли (або спільний код) змінились.
+# Cloudflare-токен лежить тільки в environments (не в секретах репозиторію):
+#   production        — notes і sites, без схвалення;
+#   production-agent  — agent (замінює контейнер), з обов'язковим схваленням власника.
+# Запуск вручну (Actions → deploy → Run workflow): apps = all | notes | agent | sites.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      apps:
+        description: "Що розгортати: all, notes, agent або sites"
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
+  changed:
+    runs-on: ubuntu-latest
+    outputs:
+      notes: ${{ steps.diff.outputs.notes }}
+      agent: ${{ steps.diff.outputs.agent }}
+      sites: ${{ steps.diff.outputs.sites }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          APPS: ${{ inputs.apps }}
+        run: |
+          set -eu
+          zero=0000000000000000000000000000000000000000
+          if [ "$EVENT" = workflow_dispatch ]; then
+            for app in notes agent sites; do
+              if [ "$APPS" = all ] || [ "$APPS" = "$app" ]; then echo "$app=true"; else echo "$app=false"; fi
+            done >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "$zero" ]; then files=$(git ls-files); else files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA"); fi
+          # спільний код і залежності зачіпають усі застосунки
+          shared=false
+          echo "$files" | grep -qE '^(packages/|package(-lock)?\.json$|tsconfig)' && shared=true
+          for app in notes agent sites; do
+            if [ "$shared" = true ] || echo "$files" | grep -q "^apps/$app/"; then echo "$app=true"; else echo "$app=false"; fi
+          done >> "$GITHUB_OUTPUT"
+
+  deploy-notes:
+    needs: [check, changed]
+    if: needs.changed.outputs.notes == 'true'
+    uses: ./.github/workflows/deploy-app.yml
+    with:
+      app: notes
+      environment: production
+    secrets: inherit
+
+  deploy-sites:
+    needs: [check, changed]
+    if: needs.changed.outputs.sites == 'true'
+    uses: ./.github/workflows/deploy-app.yml
+    with:
+      app: sites
+      environment: production
+    secrets: inherit
+
+  deploy-agent:
+    needs: [check, changed]
+    if: needs.changed.outputs.agent == 'true'
+    uses: ./.github/workflows/deploy-app.yml
+    with:
+      app: agent
+      environment: production-agent
+    secrets: inherit

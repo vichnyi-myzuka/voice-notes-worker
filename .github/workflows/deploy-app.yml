@@ -1,0 +1,33 @@
+name: deploy-app
+
+# Розгортання одного застосунку (викликається з deploy.yml). Секрети беруться з environment, тож без схвалення
+# environment (для агента) токен недоступний. Docker на ubuntu-раннері потрібен для образу агента.
+on:
+  workflow_call:
+    inputs:
+      app:
+        type: string
+        required: true
+      environment:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run deploy -w apps/${{ inputs.app }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
