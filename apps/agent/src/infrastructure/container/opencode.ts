@@ -105,7 +105,7 @@ export async function lastAssistant(oc: Opencode, sessionId: string): Promise<{ 
 }
 
 // Подія сервера OpenCode (SSE `/api/event`): тип і, якщо стосується сесії, її id.
-export type OpencodeEvent = { type: string; data?: { sessionID?: string } };
+export type OpencodeEvent = { type: string; data?: { sessionID?: string; id?: string; name?: string; input?: Record<string, unknown> } };
 
 // Читає потік подій, поки він не закінчиться чи не спрацює signal. Для кожної події викликає onEvent; для службового рядка
 // (heartbeat) викликає onEvent(undefined), щоб читач міг вирішити, чи потік ще потрібен.

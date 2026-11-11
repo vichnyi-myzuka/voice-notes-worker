@@ -6,6 +6,7 @@ import { editChat, sendChat } from "../chat";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
+import { describeActivity } from "./activity";
 import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, readEvents, type OpencodeEvent, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
@@ -25,6 +26,7 @@ const WATCH_MAX_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_MAX_COST_USD = 5;
 const DEFAULT_MAX_TOKENS = 3_000_000;
 const WORKING = "⏳ Працює";
+const PROGRESS_INTERVAL_MS = 4000; // не частіше: ліміти Telegram на редагування одного повідомлення
 const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096
 const SUMMARY_MAX = 3000; // підсумок у чат: решта обрізається (ліміт повідомлення Telegram — 4096)
 
@@ -58,6 +60,11 @@ export class AgentSession extends DurableObject<Env> {
 	private streamSeq = 0;
 	// Підписка на події OpenCode, поки за якоюсь сесією стежать (див. listen).
 	private events: AbortController | undefined;
+	// Прогрес у пості: назви інструментів за id виклику, час останнього оновлення поста сесії й черга правок поста
+	// (запізніла проміжна правка не має затирати підсумок: finishWatch чекає на чергу).
+	private toolNames = new Map<string, string>();
+	private lastProgress = new Map<string, number>();
+	private postQueue: Promise<unknown> = Promise.resolve();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -282,6 +289,8 @@ export class AgentSession extends DurableObject<Env> {
 	private async finishWatch(key: string, w: Watch, text: string): Promise<void> {
 		if (!(await this.ctx.storage.get(key))) return; // уже показано (подія й опитування можуть збігтися)
 		await this.ctx.storage.delete(key);
+		this.lastProgress.delete(w.ocId);
+		await this.postQueue.catch(() => undefined); // проміжна правка вже в дорозі: підсумок іде після неї
 		await this.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
 		if (await this.show(w, text, true)) return;
@@ -427,6 +436,12 @@ export class AgentSession extends DurableObject<Env> {
 	// Старт роботи відмічає сесію працюючою, кінець (успіх, помилка, зупинка) одразу показує підсумок у пості.
 	private async onEvent(event: OpencodeEvent): Promise<void> {
 		const ocId = event.data?.sessionID;
+		if (ocId && event.type === "session.tool.input.started" && event.data?.id && event.data.name) {
+			if (this.toolNames.size > 500) this.toolNames.clear();
+			this.toolNames.set(event.data.id, event.data.name);
+			return;
+		}
+		if (ocId && event.type === "session.tool.called" && event.data?.id) return this.progress(ocId, this.toolNames.get(event.data.id) ?? "", event.data.input);
 		const kind = event.type.startsWith("session.execution.") ? event.type.slice("session.execution.".length) : "";
 		if (!ocId || !["started", "succeeded", "failed", "interrupted"].includes(kind)) return;
 		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: "watch:" }))].find(([, w]) => w.ocId === ocId);
@@ -434,6 +449,23 @@ export class AgentSession extends DurableObject<Env> {
 		const [key, w] = entry;
 		if (kind === "started") return void (w.seenBusy || (await this.ctx.storage.put(key, { ...w, seenBusy: true } satisfies Watch)));
 		await this.finishWatch(key, w, await this.summary(this.opencode(), w));
+	}
+
+	// «⏳ Працює · редагує README.md»: пост оновлюється на місці, не частіше за PROGRESS_INTERVAL_MS (проміжні дії між оновленнями пропускаються).
+	private async progress(ocId: string, tool: string, input: Record<string, unknown> | undefined): Promise<void> {
+		if (!tool || !this.env.BOT_TOKEN) return;
+		const now = Date.now();
+		if (now - (this.lastProgress.get(ocId) ?? 0) < (positiveInt(this.env.AGENT_PROGRESS_MS) ?? PROGRESS_INTERVAL_MS)) return;
+		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: "watch:" }))].find(([, w]) => w.ocId === ocId);
+		if (!entry?.[1].postId) return;
+		this.lastProgress.set(ocId, now);
+		const w = entry[1];
+		const text = `${WORKING} · ${describeActivity(tool, input)}`;
+		const job = this.postQueue.catch(() => undefined).then(async () => {
+			if (await this.ctx.storage.get(entry[0])) await this.show(w, text); // спостереження могло закінчитись, поки чекали в черзі
+		});
+		this.postQueue = job;
+		await job;
 	}
 
 	// Найближчий alarm: не пізніше за інтервал опитування.

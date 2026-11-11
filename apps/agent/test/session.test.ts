@@ -597,6 +597,59 @@ describe("AgentSession", () => {
 				expect(edit.text).toBe(`🗣 ${"я".repeat(397)}…\n\n✅ Готово\n\nГотово: <b>ok</b>\n\n${link}`);
 			});
 
+			describe("прогрес у пості (події інструментів)", () => {
+				const flush = async () => {
+					for (let i = 0; i < 20; i++) await Promise.resolve();
+					await new Promise((r) => setTimeout(r, 0));
+				};
+				const tool = (opencode: { emit(e: unknown): void }, id: string, name: string, input: Record<string, unknown>, session = ocId) => {
+					opencode.emit({ type: "session.tool.input.started", data: { sessionID: session, id, name } });
+					opencode.emit({ type: "session.tool.called", data: { sessionID: session, id, input } });
+				};
+
+				it("дія агента показується в пості; частіші за інтервал оновлення пропускаються", async () => {
+					const t = setup({ BOT_TOKEN: "bot" });
+					await t.session.start(ID, { prompt: "Задача" });
+					await t.session.watch(ID, POST);
+					tool(t.opencode, "c1", "edit", { filePath: "/workspace/sessions/docs-1/README.md" });
+					await flush();
+					tool(t.opencode, "c2", "read", { filePath: "/workspace/sessions/docs-1/a.ts" }); // надто швидко: пропущено
+					await flush();
+					expect(edits().map((e) => [e.message_id, e.text])).toEqual([[77, `${HEADER}\n\n⏳ Працює · редагує README.md\n\n${link}`]]);
+					vi.setSystemTime(Date.now() + 5000);
+					tool(t.opencode, "c3", "bash", { command: "npm test" });
+					await flush();
+					expect(edits().at(-1)!.text).toContain("⏳ Працює · виконує npm");
+					expect(edits()).toHaveLength(2);
+				});
+
+				it("чужа сесія, виклик без відомої назви і сесія без поста нічого не редагують", async () => {
+					const t = setup({ BOT_TOKEN: "bot" });
+					await t.session.start(ID, { prompt: "Задача" });
+					await t.session.watch(ID, POST);
+					tool(t.opencode, "c1", "edit", { filePath: "a" }, "ses_other");
+					t.opencode.emit({ type: "session.tool.called", data: { sessionID: ocId, id: "unknown", input: {} } });
+					await flush();
+					expect(edits()).toEqual([]);
+				});
+
+				it("після підсумку проміжні події пост не чіпають", async () => {
+					const t = setup({ BOT_TOKEN: "bot" });
+					await t.session.start(ID, { prompt: "Задача" });
+					await t.session.watch(ID, POST);
+					t.opencode.busy.clear();
+					t.opencode.info[ocId] = { outcome: "succeeded" };
+					t.opencode.lastText = "Готово";
+					t.opencode.emit({ type: "session.execution.succeeded", data: { sessionID: ocId } });
+					await flush();
+					vi.setSystemTime(Date.now() + 5000);
+					tool(t.opencode, "late", "edit", { filePath: "a" });
+					await flush();
+					expect(edits()).toHaveLength(1);
+					expect(edits()[0].text).toContain("✅ Готово");
+				});
+			});
+
 			it("уточнення: пост знову показує «Працює» (пост береться зі сховища), потім підсумок", async () => {
 				const t = setup({ BOT_TOKEN: "bot" });
 				await t.session.start(ID, { prompt: "Задача" });
