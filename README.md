@@ -90,7 +90,7 @@ npx wrangler secret put TODOIST_TOKEN   # Todoist → Settings → Integrations 
 npx wrangler deploy
 ```
 
-Після деплою wrangler покаже URL на кшталт `https://notes.valentyi.dev`.
+Після деплою wrangler покаже URL на кшталт `https://notes.example.com`.
 
 Логи: `npx wrangler tail` або Workers Logs у дашборді.
 
@@ -100,7 +100,7 @@ npx wrangler deploy
 
 1. **Record Audio**: Audio Quality: Normal, Start Recording: Immediately, Finish Recording: On Tap.
 2. **Get Contents of URL**:
-   - URL: `https://notes.valentyi.dev`
+   - URL: `https://notes.example.com`
    - Method: **POST**
    - Headers: `x-secret` = значення `SECRET`
    - Request Body: **Form**, поле `audio`: тип **File** → **Recorded Audio**
@@ -158,7 +158,7 @@ curl -X POST http://localhost:8787 -H "x-secret: local-test" \
 | `mixed-tasks.m4a` | задачі в різних проєктах, пріоритет (p1), мітка `Pending`, дедлайн, «колись» → Want |
 
 ```sh
-source .env && curl -X POST https://notes.valentyi.dev -H "x-secret: $SECRET" \
+source .env && curl -X POST https://notes.example.com -H "x-secret: $SECRET" \
   -F "audio=@apps/notes/test-audio/shopping-list.m4a;type=audio/mp4"
 ```
 
@@ -177,7 +177,7 @@ source .env && curl -X POST https://notes.valentyi.dev -H "x-secret: $SECRET" \
 
 ```sh
 source .env && curl "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
-  -d url=https://notes.valentyi.dev/telegram \
+  -d url=https://notes.example.com/telegram \
   -d secret_token=$TG_WEBHOOK_SECRET \
   --data-urlencode 'allowed_updates=["message","channel_post"]' -d drop_pending_updates=true
 ```
@@ -338,11 +338,13 @@ Whisper (і резервна Gemma 4) працюють через binding `AI`. 
 
 Агент не має доступу до Cloudflare: його токен GitHub пушить у гілки й відкриває PR, але не має права `workflows` (змінити workflow й дістати секрет не вийде).
 
+Домени воркерів у репозиторії не зберігаються: CI підставляє `--domain <застосунок>.$BASE_DOMAIN` (`notes.`, `agent.`, `sites.`). Базовий домен задає змінна `BASE_DOMAIN` (Variables, не Secrets) в обох environments. У прикладах цього README `example.com` замінюй на свій домен. Локальний аварійний деплой: `npm run deploy -w apps/<назва> -- --domain <назва>.<домен>`.
+
 ### Налаштування GitHub (робить власник)
 
 1. **Репозиторій публічний** (Settings → General → Danger Zone): тільки так на безкоштовному плані доступні rulesets і environment-схвалення.
 2. **Environments** (Settings → Environments): `production` (без обмежень) і `production-agent` (Required reviewers: ти). У кожному секрети `CLOUDFLARE_API_TOKEN` та `CLOUDFLARE_ACCOUNT_ID`.
-3. **Токен Cloudflare** (My Profile → API Tokens → Custom token) лише для одного акаунта: Account → Workers Scripts: Edit; Account → Cloudchamber (Containers): Edit; Zone → Workers Routes: Edit для `valentyi.dev`. Без DNS, Access і Billing. Якщо `wrangler deploy` скаже про нестачу права, додавай по одному.
+3. **Токен Cloudflare** (My Profile → API Tokens → Custom token) лише для одного акаунта: Account → Workers Scripts: Edit; Account → Cloudchamber (Containers): Edit; Zone → Workers Routes: Edit для `example.com`. Без DNS, Access і Billing. Якщо `wrangler deploy` скаже про нестачу права, додавай по одному.
 4. **Ruleset на `main`** (Settings → Rules → Rulesets): Require a pull request (0 схвалень: схвалити власний PR неможливо), Require status checks → `check`, Block force pushes, без bypass-списку (токен агента діє від твого імені, тож bypass для admin зняв би захист).
 5. **Токен агента**: fine-grained PAT на потрібні репозиторії: Contents, Pull requests: Read and write; без Workflows, Actions і Administration (`wrangler secret put GITHUB_TOKEN` в `apps/agent`).
 
@@ -392,15 +394,15 @@ GET  /s/<id>                                           → редірект на
 
 ### Сайти агента (`apps/sites`)
 
-Агент може опублікувати маленький статичний проєкт (сторінку, звіт, артефакт). У контейнері команда `publish <тека> <назва>` (`rclone` + перевірки назви, `index.html`, ліміти 50 МБ / 1000 файлів / 20 МБ на файл, без прихованих файлів і `node_modules`) синхронізує теку з R2-бакетом `agent-sites`, а воркер `apps/sites` віддає її на `https://sites.valentyi.dev/<назва>/` (корінь показує список сайтів, теки віддають `index.html`, `/<назва>` без слеша перенаправляється на `/<назва>/`). Доступ лише через Cloudflare Access, воркер ще й сам перевіряє JWT (`verifyAccess` з `core`). Це лише статика: у контейнері немає ключів Cloudflare для деплою воркерів, бекенди не підтримуються. Про команду агент дізнається з глобального `AGENTS.md` (розділ «Publishing small static sites»). Усі сайти живуть на одному origin, тож сторінки одного сайту технічно можуть читати інший: це нормально для приватного сховища одного власника, але не клади туди чужий код.
+Агент може опублікувати маленький статичний проєкт (сторінку, звіт, артефакт). У контейнері команда `publish <тека> <назва>` (`rclone` + перевірки назви, `index.html`, ліміти 50 МБ / 1000 файлів / 20 МБ на файл, без прихованих файлів і `node_modules`) синхронізує теку з R2-бакетом `agent-sites`, а воркер `apps/sites` віддає її на `https://sites.example.com/<назва>/` (корінь показує список сайтів, теки віддають `index.html`, `/<назва>` без слеша перенаправляється на `/<назва>/`). Доступ лише через Cloudflare Access, воркер ще й сам перевіряє JWT (`verifyAccess` з `core`). Це лише статика: у контейнері немає ключів Cloudflare для деплою воркерів, бекенди не підтримуються. Про команду агент дізнається з глобального `AGENTS.md` (розділ «Publishing small static sites»). Усі сайти живуть на одному origin, тож сторінки одного сайту технічно можуть читати інший: це нормально для приватного сховища одного власника, але не клади туди чужий код.
 
 Налаштування (кроки в Cloudflare лише твої):
 
 1. Бакет `agent-sites` створено (`npx wrangler r2 bucket create agent-sites`).
 2. **Токен R2 лише на цей бакет**: Cloudflare → R2 → Manage API tokens → Create API token, права **Object Read & Write**, у Specify bucket обери `agent-sites`. З результату потрібні Access Key ID, Secret Access Key і endpoint (`https://<account-id>.r2.cloudflarestorage.com`).
-3. Секрети воркера агента (`cd apps/agent`): `npx wrangler secret put R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `SITES_BASE_URL` (значення `https://sites.valentyi.dev`). Вони потрапляють у контейнер, інших секретів там не додається.
-4. Access для сайтів: Zero Trust → Access → Applications → Self-hosted, hostname `sites.valentyi.dev`, політика **Allow** лише твоя пошта. Запиши AUD цього застосунку й виконай у `apps/sites`: `npx wrangler secret put ACCESS_AUD` і `ACCESS_TEAM_DOMAIN` (той самий team domain, що в агента). Без цього воркер відповідає `503`.
-5. Деплой: `npm run deploy -w apps/sites` (створює домен `sites.valentyi.dev`) і `npm run deploy -w apps/agent` (`publish` воркер сам розкладає в контейнер).
+3. Секрети воркера агента (`cd apps/agent`): `npx wrangler secret put R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `SITES_BASE_URL` (значення `https://sites.example.com`). Вони потрапляють у контейнер, інших секретів там не додається.
+4. Access для сайтів: Zero Trust → Access → Applications → Self-hosted, hostname `sites.example.com`, політика **Allow** лише твоя пошта. Запиши AUD цього застосунку й виконай у `apps/sites`: `npx wrangler secret put ACCESS_AUD` і `ACCESS_TEAM_DOMAIN` (той самий team domain, що в агента). Без цього воркер відповідає `503`.
+5. Деплой (CI робить це сам; локально з доменом): `npm run deploy -w apps/sites -- --domain sites.<домен>` (домен підключає `--domain`, див. «CI/CD») і `npm run deploy -w apps/agent` (`publish` воркер сам розкладає в контейнер).
 
 ### Запобіжники агента
 
@@ -413,7 +415,7 @@ GET  /s/<id>                                           → редірект на
 
 Окремий бот (не бот нотаток) працює так само, як бот нотаток: канал `CHAT_ID` (бот адмін з правом видаляти повідомлення) і особистий чат із ботом від `TG_OWNER_ID`. Голосове чи аудіо розпізнає Whisper (Workers AI, українська), текст іде як є. Бот ставить ✍ і створює сесію (id `tg-<chat>-<message_id>`):
 
-- **У каналі** оригінал замінюється постом: текст задачі (для голосового `🗣` і розшифровка) та посилання `https://agent.valentyi.dev/s/<id>`; оригінал видаляється. У канал дописують лише адміни, тож окремої перевірки відправника немає.
+- **У каналі** оригінал замінюється постом: текст задачі (для голосового `🗣` і розшифровка) та посилання `https://agent.example.com/s/<id>`; оригінал видаляється. У канал дописують лише адміни, тож окремої перевірки відправника немає.
 - **У приваті** бот відповідає посиланням (для голосового ще й показує, що розібрав), оригінал лишається.
 
 Повторна доставка того самого повідомлення не створює другу сесію й другу відповідь (`start` ідемпотентний, перевірка за `link`). Чужі користувачі, інші канали й групи ігноруються мовчки; файл понад 20 МБ чи порожня транскрипція дають підказку без сесії. Telegram одразу отримує `200`, а Whisper і холодний старт контейнера йдуть у фоні (`waitUntil`).
@@ -429,8 +431,8 @@ GET  /s/<id>                                           → редірект на
 
 1. У @BotFather створи **окремого** бота й візьми токен. Створи канал (приватний), додай бота адміном із правом публікувати й видаляти повідомлення, `CHAT_ID` каналу має вигляд `-100…`.
 2. Секрети воркера: `cd apps/agent && npx wrangler secret put BOT_TOKEN`, так само `TG_WEBHOOK_SECRET` (довільний довгий випадковий рядок), `TG_OWNER_ID` (твій числовий id у Telegram) і `CHAT_ID`.
-3. Cloudflare Zero Trust → Access → Applications → додай застосунок Self-hosted для `agent.valentyi.dev` зі шляхом `telegram` і політикою **Bypass** (Everyone). Без цього Access відповідає Telegram логіном, і вебхук не доходить. Решта хоста лишається за Access; `/telegram` захищає секретний заголовок `x-telegram-bot-api-secret-token`.
-4. Вебхук: `source .env && curl "https://api.telegram.org/bot$AGENT_BOT_TOKEN/setWebhook" -d url=https://agent.valentyi.dev/telegram -d secret_token=$AGENT_TG_WEBHOOK_SECRET --data-urlencode 'allowed_updates=["message","channel_post"]'` (у `.env` значення агента під іншими іменами, ніж у бота нотаток).
+3. Cloudflare Zero Trust → Access → Applications → додай застосунок Self-hosted для `agent.example.com` зі шляхом `telegram` і політикою **Bypass** (Everyone). Без цього Access відповідає Telegram логіном, і вебхук не доходить. Решта хоста лишається за Access; `/telegram` захищає секретний заголовок `x-telegram-bot-api-secret-token`.
+4. Вебхук: `source .env && curl "https://api.telegram.org/bot$AGENT_BOT_TOKEN/setWebhook" -d url=https://agent.example.com/telegram -d secret_token=$AGENT_TG_WEBHOOK_SECRET --data-urlencode 'allowed_updates=["message","channel_post"]'` (у `.env` значення агента під іншими іменами, ніж у бота нотаток).
 
 ### SSH у контейнер
 
@@ -454,7 +456,7 @@ npx wrangler secret put GITHUB_TOKEN               # необов'язково: 
 npm run deploy
 ```
 
-4. У Cloudflare Zero Trust створити застосунок Access (Self-hosted) для `agent.valentyi.dev` (або в налаштуваннях воркера увімкнути Cloudflare Access), політика: ваша пошта. З застосунку взяти **Application Audience (AUD) tag**, а team domain — `<team>.cloudflareaccess.com`.
+4. У Cloudflare Zero Trust створити застосунок Access (Self-hosted) для `agent.example.com` (або в налаштуваннях воркера увімкнути Cloudflare Access), політика: ваша пошта. З застосунку взяти **Application Audience (AUD) tag**, а team domain — `<team>.cloudflareaccess.com`.
 5. `npx wrangler secret put ACCESS_AUD` і `npx wrangler secret put ACCESS_TEAM_DOMAIN`.
 6. Перевірка (після входу через Access у браузері): `POST /api/sessions` з тілом `{"prompt":"…"}` (наприклад, з DevTools або `curl` із токеном Access Service Token) → відкрити `url` з відповіді з телефона.
 

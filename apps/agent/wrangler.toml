@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2026-11-01"
 workers_dev = false
 preview_urls = false
-routes = [{ pattern = "agent.valentyi.dev", custom_domain = true }]
+# Домен (agent.<BASE_DOMAIN>) підключає CI: wrangler deploy --domain (див. README, «CI/CD»)
 
 # payload/*.md і *.sh підключаються до коду як текст (їх воркер розкладає в контейнер)
 rules = [{ type = "Text", globs = ["**/*.md", "**/*.sh"], fallthrough = true }]

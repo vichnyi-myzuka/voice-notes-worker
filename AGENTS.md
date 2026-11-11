@@ -53,7 +53,7 @@ src/<шар>/<модуль>/    шари: interface → application → domain, 
 ## Локальний e2e (справжній канал і Todoist!)
 
 ```sh
-cd apps/notes && npx wrangler dev --port 8787 --var LOCAL_DEV:1 --var TG_OWNER_ID:230295237 --var TG_WEBHOOK_SECRET:local-webhook-test --env-file ../../.env
+cd apps/notes && npx wrangler dev --port 8787 --var LOCAL_DEV:1 --var TG_OWNER_ID:<твій Telegram id> --var TG_WEBHOOK_SECRET:local-webhook-test --env-file ../../.env
 ```
 
 - Пост у каналі імітується POST на `localhost:8787/telegram` з заголовком `x-telegram-bot-api-secret-token: local-webhook-test` і тілом `{"channel_post":{"message_id":…,"date":…,"chat":{"id":CHAT_ID,"type":"channel"},"text":"…"}}` (правка — з `"reply_to_message":{"message_id":<id нотатки>}`).

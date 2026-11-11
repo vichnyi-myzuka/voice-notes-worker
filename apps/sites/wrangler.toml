@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2026-11-01"
 workers_dev = false
 preview_urls = false
-routes = [{ pattern = "sites.valentyi.dev", custom_domain = true }] # за Cloudflare Access (див. README, «Сайти агента»)
+# Домен (sites.<BASE_DOMAIN>) підключає CI: wrangler deploy --domain (див. README, «CI/CD»)
 
 [observability]
 enabled = true

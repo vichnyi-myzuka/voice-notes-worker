@@ -7,12 +7,12 @@ afterEach(() => vi.unstubAllGlobals());
 describe("telegramMessageUrl", () => {
 	it("посилання лише для каналів і супергруп", () => {
 		expect(telegramMessageUrl("-1004390223227", 5)).toBe("https://t.me/c/4390223227/5");
-		expect(telegramMessageUrl("230295237", 5)).toBeNull();
+		expect(telegramMessageUrl("111111111", 5)).toBeNull();
 	});
 });
 
 describe("receiveTelegramMessage", () => {
-	const env = fakeEnv({ TG_OWNER_ID: "230295237" });
+	const env = fakeEnv({ TG_OWNER_ID: "111111111" });
 	const voice = { file_id: "f", file_size: 1000 };
 	const base = { message_id: 1, date: 1 };
 
@@ -20,7 +20,7 @@ describe("receiveTelegramMessage", () => {
 		["чужий користувач у приваті", { ...base, chat: { id: 1, type: "private" }, from: { id: 1 }, voice }],
 		["голосове з підписом у каналі (нотатка бота)", { ...base, chat: { id: -1004390223227, type: "channel" }, caption: "Назва", voice }],
 		["інший канал", { ...base, chat: { id: -1001, type: "channel" }, voice }],
-		["група", { ...base, chat: { id: -5, type: "group" }, from: { id: 230295237 }, voice }],
+		["група", { ...base, chat: { id: -5, type: "group" }, from: { id: 111111111 }, voice }],
 	])("ігнорує: %s", async (_, msg) => {
 		const fetchSpy = vi.fn();
 		vi.stubGlobal("fetch", fetchSpy);
@@ -34,10 +34,10 @@ describe("receiveTelegramMessage", () => {
 		["порожній текст", { ...base, chat: { id: -1004390223227, type: "channel" }, text: "" }],
 		["лише пробіли", { ...base, chat: { id: -1004390223227, type: "channel" }, text: " \n\t " }],
 		["команда /start у каналі", { ...base, chat: { id: -1004390223227, type: "channel" }, text: "/start" }],
-		["команда з аргументами", { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "/help me" }],
+		["команда з аргументами", { ...base, chat: { id: 111111111, type: "private" }, from: { id: 111111111 }, text: "/help me" }],
 		["текст від чужого в приваті", { ...base, chat: { id: 1, type: "private" }, from: { id: 1 }, text: "привіт" }],
 		["текст в іншому каналі", { ...base, chat: { id: -1001, type: "channel" }, text: "привіт" }],
-		["текст у групі", { ...base, chat: { id: -5, type: "group" }, from: { id: 230295237 }, text: "привіт" }],
+		["текст у групі", { ...base, chat: { id: -5, type: "group" }, from: { id: 111111111 }, text: "привіт" }],
 		["текст з підписом у каналі", { ...base, chat: { id: -1004390223227, type: "channel" }, caption: "x", text: "привіт" }],
 	])("текст не стає нотаткою: %s", async (_, msg) => {
 		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
@@ -52,7 +52,7 @@ describe("receiveTelegramMessage", () => {
 		const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
 		vi.stubGlobal("fetch", fetchSpy);
 		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
-		await receiveTelegramMessage(env, { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "/start" }, store);
+		await receiveTelegramMessage(env, { ...base, chat: { id: 111111111, type: "private" }, from: { id: 111111111 }, text: "/start" }, store);
 		expect(store).not.toHaveBeenCalled();
 		expect(fetchSpy).toHaveBeenCalledOnce();
 		expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toContain("sendMessage");
@@ -80,7 +80,7 @@ describe("receiveTelegramMessage", () => {
 	it("звичайний текст від власника в приваті — нотатка без даних для видалення", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true })));
 		const store = vi.fn(async (_k: string, _b: ArrayBuffer, _m: ReceivedMessage) => true);
-		await receiveTelegramMessage(env, { ...base, chat: { id: 230295237, type: "private" }, from: { id: 230295237 }, text: "ідея для проєкту" }, store);
+		await receiveTelegramMessage(env, { ...base, chat: { id: 111111111, type: "private" }, from: { id: 111111111 }, text: "ідея для проєкту" }, store);
 		expect(store).toHaveBeenCalledOnce();
 		const [key, , meta] = store.mock.calls[0];
 		expect(key).toMatch(/\.txt$/);

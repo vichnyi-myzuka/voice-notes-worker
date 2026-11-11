@@ -6,7 +6,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("chatHtml", () => {
 	it("голі посилання стають клікабельними з коротким підписом; GitHub PR — owner/repo#N", () => {
 		expect(chatHtml("PR: https://github.com/me/app/pull/13.")).toBe('PR: <a href="https://github.com/me/app/pull/13">me/app#13</a>.');
-		expect(chatHtml("див. https://sites.valentyi.dev/hello-test/ (ось)")).toBe('див. <a href="https://sites.valentyi.dev/hello-test/">sites.valentyi.dev/hello-test</a> (ось)');
+		expect(chatHtml("див. https://sites.example.com/hello-test/ (ось)")).toBe('див. <a href="https://sites.example.com/hello-test/">sites.example.com/hello-test</a> (ось)');
 		expect(chatHtml("https://a.dev/x?a=1&b=2")).toBe('<a href="https://a.dev/x?a=1&amp;b=2">a.dev/x?a=1&amp;b=2</a>');
 		expect(chatHtml(`https://example.com/${"x".repeat(80)}`)).toContain("…</a>");
 	});
