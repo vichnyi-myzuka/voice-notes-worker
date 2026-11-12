@@ -57,7 +57,7 @@ const RESULT: Record<string, string> = { success: "✅ Деплой успішн
 
 async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
 	const run = p.workflow_run;
-	const chat = env.CHAT_ID ?? env.TG_OWNER_ID;
+	const chat = env.TG_OWNER_ID ?? env.CHAT_ID;
 	const title = run?.conclusion ? RESULT[run.conclusion] : undefined;
 	if (p.action !== "completed" || !run || !chat || !title || run.name !== DEPLOY_WORKFLOW || run.head_branch !== p.repository?.default_branch) return;
 	const pulls = env.GITHUB_TOKEN && run.head_sha ? await commitPulls(env.GITHUB_TOKEN, repo, run.head_sha).catch((err) => (console.error("commit pulls failed:", err), [])) : [];
@@ -86,7 +86,7 @@ async function cleanup(bot: BotEnv, env: Env, agent: Agent, repo: string, branch
 // Job чекає схвалення environment (workflow_job зі статусом waiting): пост із кнопками.
 async function onReviewRequested(bot: BotEnv, env: Env, repo: string, p: Payload): Promise<void> {
 	const job = p.workflow_job;
-	const chat = env.CHAT_ID ?? env.TG_OWNER_ID;
+	const chat = env.TG_OWNER_ID ?? env.CHAT_ID;
 	if (p.action !== "waiting" || !job || !chat) return;
 	const text = `🚀 Деплой чекає схвалення\n${repo} · ${job.name}\n${job.workflow_name ?? "workflow"}${job.head_branch ? ` (${job.head_branch})` : ""}\n${job.html_url}`;
 	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup: reviewButtons(repo, job.run_id), link_preview_options: { is_disabled: true } });

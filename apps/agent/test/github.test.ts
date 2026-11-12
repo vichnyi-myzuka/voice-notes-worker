@@ -86,7 +86,7 @@ describe("вебхук GitHub", () => {
 		await s.hook("workflow_job", { action: "completed", repository: { full_name: "me/bot", default_branch: "main" }, workflow_job: { run_id: 124, name: "x", html_url: "u" } }); // інші статуси ігноруємо
 		expect(s.tgCalls("sendMessage")).toHaveLength(1);
 		const sent = s.tgCalls("sendMessage")[0] as { chat_id: string; text: string; reply_markup: { inline_keyboard: { callback_data: string }[][] } };
-		expect(sent.chat_id).toBe("-1001");
+		expect(sent.chat_id).toBe("42");
 		expect(sent.text).toContain("deploy-agent");
 		expect(sent.reply_markup.inline_keyboard[0].map((b) => b.callback_data)).toEqual(["appr:me/bot:123", "rej:me/bot:123"]);
 
