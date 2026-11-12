@@ -60,6 +60,7 @@ async function handleButton(bot: BotEnv, query: NonNullable<TgUpdate["callback_q
 	if (action === "del") {
 		await agent.remove(id);
 		await removeMessage(bot, chat.id, query.message.message_id);
+		await removeOriginal(bot, chat.id, id);
 		return void (await answer("Сесію видалено."));
 	}
 	if ((await agent.report(id)).status !== "working") return void (await answer("Нічого зупиняти."));
@@ -80,6 +81,14 @@ async function updateContainer(env: BotEnv, chat: number, agent: Agent, force: b
 
 const removeMessage = (env: BotEnv, chat: number, messageId: number) =>
 	tg(env, "deleteMessage", { chat_id: chat, message_id: messageId }).catch((err) => console.error("delete message failed:", err));
+
+// Оригінал, з якого почалась сесія (id сесії = tg-<чат>-<повідомлення>). У каналі його прибрано одразу, у приваті він лишається
+// до видалення сесії; тут прибираємо лише приватний чат (id > 0), у каналі нічого не лишилось.
+function removeOriginal(env: BotEnv, chat: number, sessionId: string): Promise<unknown> {
+	const [, origChat, origId] = /^tg-(-?\d+)-(\d+)$/.exec(sessionId) ?? [];
+	if (!origId || Number(origChat) !== chat || chat < 0) return Promise.resolve();
+	return removeMessage(env, chat, Number(origId));
+}
 
 // Текст повідомлення разом з адресами клікабельних слів: посилання на сесію в пості тепер сховане під «Відкрити сесію».
 function textWithLinks(m: TgMessage["reply_to_message"]): string {
@@ -165,6 +174,7 @@ async function sessionCommand(env: BotEnv, chat: number, agent: Agent, id: strin
 	if (command === "/delete") {
 		await agent.remove(id);
 		if (postId) await tg(env, "deleteMessage", { chat_id: chat, message_id: postId }).catch((err) => console.error("delete post failed:", err));
+		await removeOriginal(env, chat, id);
 		return; // підтвердження не шлемо: пост і сама команда зникають з чату
 	}
 	const report = await agent.report(id);
