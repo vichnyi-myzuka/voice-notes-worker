@@ -476,11 +476,12 @@ GET  /s/<id>                                           → редірект на
 
 - **Мердж PR бота.** Коли PR з гілки `agent/<назва>` того ж репозиторію змерджено в головну гілку, воркер знаходить сесію за репозиторієм і назвою гілки та прибирає її так само, як `/delete`: сесія OpenCode, worktree, локальна гілка (за тих самих умов, що й у `CLEANUP`: робота не втрачена), пост і оригінал у чаті. Окрім цього видаляється віддалена гілка в GitHub (`GITHUB_TOKEN`; уже видалену ігноруємо). У чаті на 25 с з'являється `🧹 PR #N змерджено…`. Сесії без поста в чаті (з `/api/sessions`) теж прибираються. Якщо контейнер спить, прибирання чекає його запуску; `waitUntil` живе ~30 с, тож на холодному старті воно може не встигнути, тоді сесію видаль кнопкою `🗑`.
 - **Схвалення деплою.** Коли workflow чекає схвалення environment (`production-agent`), у `CHAT_ID` (або приват власника) приходить пост `🚀 Деплой чекає схвалення` з кнопками `✅ Схвалити` / `❌ Відхилити`. Натискання (лише від `TG_OWNER_ID`) викликає GitHub API `pending_deployments`, а пост показує результат. Якщо environment уже схвалено на GitHub, кнопка скаже, що оброблено.
+- **Результат деплою.** Коли workflow `deploy` на головній гілці завершився, у чат приходить `✅ Деплой успішний` / `❌ Деплой не вдався` / `⏹ Деплой скасовано` з посиланням на запуск і PR, що його запустив (шукається за комітом через `GITHUB_TOKEN`; якщо коміт пушили без PR, рядка PR немає). Пропущені запуски й інші workflow ігноруються.
 
 Налаштування (кроки в GitHub і Cloudflare лише твої):
 
 1. Секрети воркера агента: `npx wrangler secret put GITHUB_WEBHOOK_SECRET` (довільний довгий рядок) і `GITHUB_APPROVE_TOKEN` (fine-grained PAT на цей репозиторій: **Actions: Read and write**; належить тобі як рев'юверу environment; агент цього токена не бачить, у контейнер він не передається). Якщо в environment увімкнено «Prevent self-review», схвалити власний запуск не вийде.
-2. GitHub → репозиторій → Settings → Webhooks → Add webhook: Payload URL `https://agent.example.com/github`, Content type `application/json`, Secret той самий, події: **Pull requests** і **Deployment reviews**.
+2. GitHub → репозиторій → Settings → Webhooks → Add webhook: Payload URL `https://agent.example.com/github`, Content type `application/json`, Secret той самий, події: **Pull requests**, **Deployment reviews** і **Workflow runs**.
 3. Cloudflare Access: до політики Bypass для шляху `telegram` додай шлях `github`.
 
 ### SSH у контейнер

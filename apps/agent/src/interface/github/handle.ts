@@ -1,7 +1,7 @@
 import { safeEqual, tg, type BotEnv } from "@voice-notes/core";
 import type { Agent } from "../../domain/agent";
 import type { Env } from "../../env";
-import { deleteBranch } from "../../infrastructure/github";
+import { commitPull, deleteBranch } from "../../infrastructure/github";
 import { removeMessage, removeOriginal, sayTemporarily } from "../telegram/handle";
 import { reviewButtons } from "./review";
 
@@ -14,7 +14,7 @@ type Payload = {
 	repository?: { full_name: string; default_branch: string };
 	pull_request?: { number: number; merged: boolean; base: { ref: string }; head: { ref: string; repo?: { full_name: string } | null } };
 	environment?: string;
-	workflow_run?: { id: number; name: string; head_branch: string; html_url: string };
+	workflow_run?: { id: number; name: string; head_branch: string; head_sha?: string; html_url: string; conclusion?: string | null };
 };
 
 const REPO = /^[\w.-]+\/[\w.-]+$/;
@@ -29,7 +29,8 @@ async function validSignature(body: string, header: string, secret: string): Pro
 
 // Вебхук GitHub (повз Access, як і Telegram: захищає підпис). Дві події:
 //  • pull_request closed+merged з гілки agent/<назва> у головну: прибираємо сесію, worktree, локальну й віддалену гілку, пост у чаті;
-//  • deployment_review requested: надсилаємо в чат запит на схвалення деплою з кнопками (див. review.ts).
+//  • deployment_review requested: надсилаємо в чат запит на схвалення деплою з кнопками (див. review.ts);
+//  • workflow_run completed (deploy на головній гілці): результат деплою й PR.
 // GitHub отримує 200 одразу, робота йде у фоні.
 export async function handleGithub(req: Request, env: Env, deps: GithubDeps): Promise<Response> {
 	if (req.method !== "POST" || !env.GITHUB_WEBHOOK_SECRET) return new Response("unauthorized", { status: 401 });
@@ -48,7 +49,22 @@ export async function handleGithub(req: Request, env: Env, deps: GithubDeps): Pr
 	const event = req.headers.get("x-github-event");
 	if (event === "pull_request") deps.defer(onMerged(bot, env, deps, repo, payload).catch((err) => console.error("github merge failed:", err)));
 	else if (event === "deployment_review") deps.defer(onReviewRequested(bot, env, repo, payload).catch((err) => console.error("github review failed:", err)));
+	else if (event === "workflow_run") deps.defer(onDeployFinished(bot, env, repo, payload).catch((err) => console.error("github deploy result failed:", err)));
 	return new Response("ok");
+}
+
+// Результат деплою (workflow `deploy` після мержу в головну гілку) і PR, який його запустив.
+const DEPLOY_WORKFLOW = "deploy";
+const RESULT: Record<string, string> = { success: "✅ Деплой успішний", failure: "❌ Деплой не вдався", timed_out: "❌ Деплой не вдався (час вийшов)", cancelled: "⏹ Деплой скасовано" };
+
+async function onDeployFinished(bot: BotEnv, env: Env, repo: string, p: Payload): Promise<void> {
+	const run = p.workflow_run;
+	const chat = env.CHAT_ID ?? env.TG_OWNER_ID;
+	const title = run?.conclusion ? RESULT[run.conclusion] : undefined;
+	if (p.action !== "completed" || !run || !chat || !title || run.name !== DEPLOY_WORKFLOW || run.head_branch !== p.repository?.default_branch) return;
+	const pr = env.GITHUB_TOKEN && run.head_sha ? await commitPull(env.GITHUB_TOKEN, repo, run.head_sha).catch((err) => (console.error("commit pull failed:", err), undefined)) : undefined;
+	const text = [title, repo, pr && `PR #${pr.number}: ${pr.title}\n${pr.url}`, run.html_url].filter(Boolean).join("\n");
+	await tg(bot, "sendMessage", { chat_id: chat, text, link_preview_options: { is_disabled: true } });
 }
 
 async function onMerged(bot: BotEnv, env: Env, { agent, sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: GithubDeps, repo: string, p: Payload): Promise<void> {

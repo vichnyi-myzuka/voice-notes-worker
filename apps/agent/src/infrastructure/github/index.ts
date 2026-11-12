@@ -28,3 +28,11 @@ export async function reviewDeployments(token: string, repo: string, runId: numb
 	if (!res.ok) throw new Error(`review deployments ${res.status}`);
 	return ids.length;
 }
+
+// PR, змерджений у цей коміт (за ним показуємо результат деплою); undefined, якщо коміт пушили не через PR.
+export async function commitPull(token: string, repo: string, sha: string): Promise<{ number: number; title: string; url: string } | undefined> {
+	const res = await gh(token, "GET", `/repos/${repo}/commits/${sha}/pulls`);
+	if (!res.ok) throw new Error(`commit pulls ${res.status}`);
+	const pr = (await res.json<{ number: number; title: string; html_url: string }[]>())[0];
+	return pr && { number: pr.number, title: pr.title, url: pr.html_url };
+}

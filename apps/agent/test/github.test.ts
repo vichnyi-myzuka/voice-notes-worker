@@ -24,6 +24,7 @@ function setup() {
 			const body = init?.body ? JSON.parse(init.body as string) : undefined;
 			calls.push({ url: input, method: init?.method ?? "GET", body });
 			if (input.includes("/pending_deployments") && (init?.method ?? "GET") === "GET") return Response.json([{ environment: { id: 9 }, current_user_can_approve: true }]);
+			if (input.includes("/commits/") && input.endsWith("/pulls")) return Response.json([{ number: 5, title: "Fix", html_url: "https://github.com/me/bot/pull/5" }]);
 			if (input.includes("api.github.com")) return new Response(null, { status: 204 });
 			return Response.json({ ok: true, result: { message_id: 500 } });
 		}),
@@ -90,6 +91,21 @@ describe("вебхук GitHub", () => {
 		expect(s.calls.find((c) => c.method === "POST" && c.url.endsWith("/runs/123/pending_deployments"))?.body).toMatchObject({ environment_ids: [9], state: "approved" });
 		expect(s.tgCalls("editMessageText")[0].text).toContain("✅ Схвалено");
 		expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("✅ Схвалено");
+	});
+
+	it("результат деплою на main → пост з PR; чужі workflow і гілки ігноруються", async () => {
+		const s = setup();
+		const run = (over: Record<string, unknown>) => ({ action: "completed", repository: { full_name: "me/bot", default_branch: "main" }, workflow_run: { id: 1, name: "deploy", head_branch: "main", head_sha: "abc", html_url: "https://github.com/me/bot/actions/runs/1", conclusion: "success", ...over } });
+		await s.hook("workflow_run", run({ name: "check" }));
+		await s.hook("workflow_run", run({ head_branch: "agent/x" }));
+		await s.hook("workflow_run", run({ conclusion: "skipped" }));
+		expect(s.tgCalls("sendMessage")).toEqual([]);
+		await s.hook("workflow_run", run({}));
+		await s.hook("workflow_run", run({ conclusion: "failure" }));
+		const texts = s.tgCalls("sendMessage").map((c) => c.text as string);
+		expect(texts[0]).toContain("✅ Деплой успішний");
+		expect(texts[0]).toContain("PR #5: Fix");
+		expect(texts[1]).toContain("❌ Деплой не вдався");
 	});
 
 	it("кнопку схвалення від чужого натиснути не можна", async () => {
