@@ -257,6 +257,16 @@ describe("вебхук Telegram", () => {
 			expect(sessions.get(SID)?.input).toMatchObject({ prompt: "Поправ README", repo: "acme/site", model: "opus" });
 		});
 
+		it("голосове чи текст «модель опус, задача» теж задає модель; невідома назва лишається в задачі", async () => {
+			const a = setup();
+			await a.send(msg({ text: "Модель Опус, поправ README" }));
+			expect(a.sessions.get(SID)?.input).toMatchObject({ prompt: "поправ README", model: "opus" });
+			const b = setup();
+			await b.send(msg({ text: "Модель користувача поправ README" }));
+			expect(b.sessions.get(SID)?.input.model).toBeUndefined();
+			expect(b.sessions.get(SID)?.input.prompt).toBe("Модель користувача поправ README");
+		});
+
 		it("/model змінює модель відповіддю на пост; без відповіді чи з недоступною моделлю — підказка", async () => {
 			const { send, sessions, replies } = await withSession();
 			await send(msg({ text: "/model opus", reply_to_message: botPost() }, 8));

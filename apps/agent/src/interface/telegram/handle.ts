@@ -83,6 +83,18 @@ function textWithLinks(m: TgMessage["reply_to_message"]): string {
 const REPO_PREFIX = /^([\w-][\w.-]*\/[\w-][\w.-]*)\s*:\s*([\s\S]+)$/;
 // «@opus» (чи «@провайдер/модель») перед усім іншим — модель для нової сесії.
 const MODEL_PREFIX = /^@([\w.-]+(?:\/[\w.:-]+)?)\s+([\s\S]+)$/;
+// Голосом «@» не продиктуєш: «модель опус, задача» (чи «model opus …») на початку розшифровки. Лише відомі назви, щоб
+// звичайна задача на кшталт «модель користувача…» не вважалась вибором моделі.
+const SPOKEN_MODELS: Record<string, string> = { opus: "opus", опус: "opus", sonnet: "sonnet", сонет: "sonnet", соннет: "sonnet", haiku: "haiku", хайку: "haiku" };
+const SPOKEN_MODEL_PREFIX = /^(?:модель|model)\s+([\p{L}]+)[\s,.:;!—–-]+([\s\S]+)$/iu;
+
+function modelPrefix(transcript: string): { model: string; task: string } | undefined {
+	const at = MODEL_PREFIX.exec(transcript);
+	if (at) return { model: at[1], task: at[2] };
+	const spoken = SPOKEN_MODEL_PREFIX.exec(transcript);
+	const model = spoken && SPOKEN_MODELS[spoken[1].toLowerCase()];
+	return spoken && model ? { model, task: spoken[2] } : undefined;
+}
 
 async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
 	const chat = msg.chat.id;
@@ -138,9 +150,9 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const transcript = await transcribe(env, llm, file, text);
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
-	const withModel = MODEL_PREFIX.exec(transcript);
-	const task = withModel ? withModel[2].trim() : transcript;
-	const model = withModel?.[1];
+	const withModel = modelPrefix(transcript);
+	const task = withModel ? withModel.task.trim() : transcript;
+	const model = withModel?.model;
 	const withRepo = REPO_PREFIX.exec(task);
 	const prompt = withRepo ? withRepo[2].trim() : task;
 	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
