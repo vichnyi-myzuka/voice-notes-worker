@@ -187,7 +187,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
-	const where = repo ? `📦 ${repo} · 🌿 agent/${folderFor(id, route.name)}` : "";
+	const where = repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "";
 	const header = (
 		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
 		: `${inChannel ? `${clipped}\n\n` : ""}${where}`

@@ -25,7 +25,9 @@ describe("ліміти Claude", () => {
 
 	it("форматує відсотки й час до скидання", () => {
 		const text = describeQuota(parseQuota(headers()), 1000 * (1000 - 2 * 3600 - 10 * 60));
-		expect(text).toBe("📊 Ліміти Claude\n5 годин: 63% (скидання через 2 год 10 хв)\nТиждень: 18% (скидання через 2 дн 4 год)");
+		expect(text).toBe(
+			"📊 Ліміти Claude\n\n5 годин\n█████████████░░░░░░░ 63%\nскидання через 2 год 10 хв\n\nТиждень\n████░░░░░░░░░░░░░░░░ 18%\nскидання через 2 дн 4 год",
+		);
 		expect(describeQuota(parseQuota(headers({ "anthropic-ratelimit-unified-status": "rejected" })), 0)).toContain("⛔");
 	});
 
