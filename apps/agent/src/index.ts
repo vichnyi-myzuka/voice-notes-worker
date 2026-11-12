@@ -3,6 +3,7 @@ import type { Env } from "./env";
 import { durableAgent } from "./infrastructure/container";
 import { workersLlm } from "@voice-notes/core";
 import { handleFetch } from "./interface/http";
+import { GITHUB_PATH, handleGithub } from "./interface/github";
 import { TELEGRAM_PATH, handleTelegram, parseRepos } from "./interface/telegram";
 
 export { AgentSession } from "./infrastructure/container";
@@ -12,8 +13,9 @@ export default {
 	fetch: (req, env, ctx) => {
 		const url = new URL(req.url);
 		const agent = durableAgent(env.AGENT_SESSION, url.origin);
-		// Вебхук Telegram стоїть повз Access (див. README), решта — за Access.
+		// Вебхуки Telegram і GitHub стоять повз Access (див. README), решта — за Access.
 		if (url.pathname === TELEGRAM_PATH) return handleTelegram(req, env, { agent, llm: workersLlm(env), repos: parseRepos(env.AGENT_REPOS), defer: (w) => ctx.waitUntil(w) });
+		if (url.pathname === GITHUB_PATH) return handleGithub(req, env, { agent, defer: (w) => ctx.waitUntil(w) });
 		return handleFetch(req, env, agent);
 	},
 } satisfies ExportedHandler<Env>;

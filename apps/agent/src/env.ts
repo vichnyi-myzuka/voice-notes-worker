@@ -28,6 +28,9 @@ export interface Env {
 	TG_WEBHOOK_SECRET?: string;
 	TG_OWNER_ID?: string;
 	CHAT_ID?: string; // канал, у який публікуєш задачі (бот адмін): працює так само, як канал бота нотаток
+	// Вебхук GitHub (/github): секрет підпису і токен для схвалення деплоїв з Telegram (Actions: read/write, лише у воркері, у контейнер не йде)
+	GITHUB_WEBHOOK_SECRET?: string;
+	GITHUB_APPROVE_TOKEN?: string;
 	AI: Ai;
 	// Публікація статичних сайтів (команда `publish` у контейнері): ключ R2 лише на бакет `agent-sites`, endpoint акаунта
 	// (`https://<account>.r2.cloudflarestorage.com`) і адреса воркера сайтів. Усе йде в контейнер.

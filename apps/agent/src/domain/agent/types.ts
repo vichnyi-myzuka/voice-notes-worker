@@ -42,6 +42,9 @@ export type ConnectionsInfo = { running: boolean; ssh?: PortInfo; opencode?: Por
 // Результат ручного знімка диска контейнера.
 export type SnapshotInfo = { id: string; bytes: number; ms: number };
 
+// Прибрана сесія і її пост у чаті (щоб прибрати й пост).
+export type RemovedSession = { id: string; chatId?: number; postId?: number };
+
 export type Agent = {
 	// Адреса сесії в веб-інтерфейсі (від id, без звернення до контейнера): потрібна для посилання в пості до старту.
 	url(id: string): string;
@@ -66,6 +69,8 @@ export type Agent = {
 	abort(id: string): Promise<void>;
 	// Видаляє сесію: історію в OpenCode і теку (worktree) в контейнері; гілка agent/<назва> з комітами лишається в клоні
 	remove(id: string): Promise<void>;
+	// Прибирає сесію, чия гілка agent/<folder> у репозиторії repo змерджена (PR у main). undefined, якщо такої сесії немає.
+	removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined>;
 	// Веб-інтерфейс: проксі запиту в спільний контейнер (усі сесії в одному інтерфейсі).
 	serve(req: Request): Promise<Response>;
 	// Id сесії в OpenCode для прямого посилання на сесію; undefined, якщо такої сесії немає.

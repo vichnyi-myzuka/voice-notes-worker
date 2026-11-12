@@ -5,6 +5,8 @@ import type { Agent, AgentStatus, SessionReport, StartInput, WatchTarget } from 
 // followUp будить сесію (working), а для невідомої сесії будь-яка дія — помилка. Веб-інтерфейс один на всі сесії.
 export type FakeSession = { input: StartInput; messages: string[]; status: AgentStatus; outcome?: SessionReport["outcome"]; cost?: number };
 
+const CHAT = -1001; // чат, у якому «живе» пост сесії
+
 export function fakeAgent(origin = "https://agent.example") {
 	const sessions = new Map<string, FakeSession>();
 	const served: string[] = [];
@@ -61,6 +63,15 @@ export function fakeAgent(origin = "https://agent.example") {
 		},
 		async remove(id) {
 			sessions.delete(id);
+		},
+		async removeByBranch(repo, folder) {
+			for (const [id, s] of sessions) {
+				if (s.input.repo === repo && `${s.input.name}-${id.split("-").at(-1)}` === folder) {
+					sessions.delete(id);
+					return { id, chatId: CHAT, postId: 77 };
+				}
+			}
+			return undefined;
 		},
 		async serve(req) {
 			served.push(new URL(req.url).pathname);

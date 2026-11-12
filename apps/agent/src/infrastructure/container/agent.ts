@@ -1,4 +1,4 @@
-import type { Agent, AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import type { Agent, AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 
 // Що має вміти Durable Object, щоб за ним працював порт Agent: він володіє єдиним контейнером і всіма сесіями в ньому.
 export type SessionObject = {
@@ -12,6 +12,7 @@ export type SessionObject = {
 	watch(id: string, target: WatchTarget): Promise<void>;
 	abort(id: string): Promise<void>;
 	remove(id: string): Promise<void>;
+	removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined>;
 	link(id: string): Promise<string | undefined>;
 	snapshot(): Promise<SnapshotInfo>;
 	resetComputer(unlessBusy?: boolean): Promise<boolean>;
@@ -41,6 +42,7 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		watch: (id, target) => computer().watch(id, target),
 		abort: (id) => computer().abort(id),
 		remove: (id) => computer().remove(id),
+		removeByBranch: (repo, folder) => computer().removeByBranch(repo, folder),
 		serve: (req) => computer().fetch(req),
 		link: (id) => computer().link(id),
 		snapshot: () => computer().snapshot(),

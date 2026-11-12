@@ -470,6 +470,19 @@ GET  /s/<id>                                           → редірект на
 3. Cloudflare Zero Trust → Access → Applications → додай застосунок Self-hosted для `agent.example.com` зі шляхом `telegram` і політикою **Bypass** (Everyone). Без цього Access відповідає Telegram логіном, і вебхук не доходить. Решта хоста лишається за Access; `/telegram` захищає секретний заголовок `x-telegram-bot-api-secret-token`.
 4. Вебхук: `source .env && curl "https://api.telegram.org/bot$AGENT_BOT_TOKEN/setWebhook" -d url=https://agent.example.com/telegram -d secret_token=$AGENT_TG_WEBHOOK_SECRET --data-urlencode 'allowed_updates=["message","channel_post","callback_query"]'` (`callback_query` потрібен для кнопок під постом; у `.env` значення агента під іншими іменами, ніж у бота нотаток).
 
+### Автоматизація GitHub → Telegram
+
+Вебхук GitHub `POST /github` (повз Access, як і `/telegram`; захист — підпис `X-Hub-Signature-256` за секретом `GITHUB_WEBHOOK_SECRET`) робить дві речі:
+
+- **Мердж PR бота.** Коли PR з гілки `agent/<назва>` того ж репозиторію змерджено в головну гілку, воркер знаходить сесію за репозиторієм і назвою гілки та прибирає її так само, як `/delete`: сесія OpenCode, worktree, локальна гілка (за тих самих умов, що й у `CLEANUP`: робота не втрачена), пост і оригінал у чаті. Окрім цього видаляється віддалена гілка в GitHub (`GITHUB_TOKEN`; уже видалену ігноруємо). У чаті на 25 с з'являється `🧹 PR #N змерджено…`. Сесії без поста в чаті (з `/api/sessions`) теж прибираються. Якщо контейнер спить, прибирання чекає його запуску; `waitUntil` живе ~30 с, тож на холодному старті воно може не встигнути, тоді сесію видаль кнопкою `🗑`.
+- **Схвалення деплою.** Коли workflow чекає схвалення environment (`production-agent`), у `CHAT_ID` (або приват власника) приходить пост `🚀 Деплой чекає схвалення` з кнопками `✅ Схвалити` / `❌ Відхилити`. Натискання (лише від `TG_OWNER_ID`) викликає GitHub API `pending_deployments`, а пост показує результат. Якщо environment уже схвалено на GitHub, кнопка скаже, що оброблено.
+
+Налаштування (кроки в GitHub і Cloudflare лише твої):
+
+1. Секрети воркера агента: `npx wrangler secret put GITHUB_WEBHOOK_SECRET` (довільний довгий рядок) і `GITHUB_APPROVE_TOKEN` (fine-grained PAT на цей репозиторій: **Actions: Read and write**; належить тобі як рев'юверу environment; агент цього токена не бачить, у контейнер він не передається). Якщо в environment увімкнено «Prevent self-review», схвалити власний запуск не вийде.
+2. GitHub → репозиторій → Settings → Webhooks → Add webhook: Payload URL `https://agent.example.com/github`, Content type `application/json`, Secret той самий, події: **Pull requests** і **Deployment reviews**.
+3. Cloudflare Access: до політики Bypass для шляху `telegram` додай шлях `github`.
+
 ### SSH у контейнер
 
 `npm run ssh -w apps/agent` (сам знаходить інстанс `main`; зі своєю командою: `npm run ssh -w apps/agent -- ls /workspace`) або вручну `npx wrangler containers ssh <INSTANCE_ID>` (id: `npx wrangler containers instances`). Якщо ключ має пароль, додай його в агент: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` (інакше wrangler відповідає `Permission denied (publickey)`). Публічний ed25519-ключ лежить у `wrangler.toml` (`[[containers.authorized_keys]]`), порту назовні немає, вхід лише через твій акаунт Cloudflare. Контейнер має вже працювати: SSH його не будить і **не утримує від сну**. Зміни, зроблені через SSH, воркер не бачить, тож після роботи виконай `POST /api/computer/snapshot` (за Access), інакше вони зникнуть разом із диском при сні. Агент не має доступу до `wrangler` і акаунта Cloudflare.
