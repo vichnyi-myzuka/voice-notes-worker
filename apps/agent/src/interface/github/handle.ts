@@ -70,7 +70,7 @@ async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, re
 		}
 	}
 	const text = [title, repo, ...pulls.map((pr) => `PR #${pr.number}: ${pr.title}\n${pr.url}`), run.html_url, cleaned && "🧹 Сесію, worktree і гілку прибрано."].filter(Boolean).join("\n");
-	await tg(bot, "sendMessage", { chat_id: chat, text, link_preview_options: { is_disabled: true } });
+	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup: { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: "dismiss" }]] }, link_preview_options: { is_disabled: true } });
 }
 
 // Прибирає сесію гілки (як /delete), віддалену гілку і пост у чаті. true, якщо сесію знайдено.

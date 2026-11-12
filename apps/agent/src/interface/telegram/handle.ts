@@ -58,6 +58,10 @@ async function handleButton(bot: BotEnv, query: NonNullable<TgUpdate["callback_q
 	const allowed = !!env.TG_OWNER_ID && String(query.from.id) === env.TG_OWNER_ID && !!chat && (String(chat.id) === env.CHAT_ID || (chat.type === "private" && String(chat.id) === env.TG_OWNER_ID));
 	const review = /^(appr|rej):([\w.-]+\/[\w.-]+):(\d+)$/.exec(query.data ?? "");
 	if (review && allowed && query.message) return handleReviewButton(bot, query, env, review[1] === "appr", review[2], Number(review[3]));
+	if (query.data === "dismiss" && allowed && query.message) {
+		await removeMessage(bot, chat!.id, query.message.message_id);
+		return void (await answer("Видалено."));
+	}
 	const [, action, id, choice] = /^(stop|del|ans|tog|ok):(tg-[\w-]+)(?::(\d+))?$/.exec(query.data ?? "") ?? [];
 	if (!allowed || !action || !query.message) return void (await answer(allowed ? "Невідома дія." : "Недоступно."));
 	if (!(await agent.link(id))) return void (await answer("Сесію не знайдено."));

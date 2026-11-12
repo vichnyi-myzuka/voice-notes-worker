@@ -65,6 +65,21 @@ describe("вебхук GitHub", () => {
 		expect(s.calls.find((c) => c.method === "DELETE" && c.url.endsWith("/repos/me/bot/git/refs/heads/agent/fix-7"))).toBeTruthy();
 		expect(s.tgCalls("deleteMessage")[0]).toMatchObject({ chat_id: -1001, message_id: 77 });
 		expect(s.tgCalls("sendMessage")[0].text).toContain("🧹");
+		const sent = s.tgCalls("sendMessage")[0] as { reply_markup: { inline_keyboard: { callback_data: string }[][] } };
+		expect(sent.reply_markup.inline_keyboard[0][0].callback_data).toBe("dismiss");
+	});
+
+	it("кнопка «Видалити» під результатом деплою видаляє повідомлення (лише від власника)", async () => {
+		const s = setup();
+		const press = async (from: number) => {
+			const query = { id: "q", from: { id: from }, message: { message_id: 9, chat: { id: 42, type: "private" }, text: "x" }, data: "dismiss" };
+			await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret" }, body: JSON.stringify({ callback_query: query }) }), env, { ...s.deps, llm: {} as never });
+			await Promise.all(s.pending.splice(0));
+		};
+		await press(7);
+		expect(s.tgCalls("deleteMessage")).toEqual([]);
+		await press(42);
+		expect(s.tgCalls("deleteMessage")[0]).toMatchObject({ chat_id: 42, message_id: 9 });
 	});
 
 	it("невдалий деплой, не agent/* і форк сесію лишають", async () => {
