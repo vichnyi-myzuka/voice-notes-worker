@@ -578,7 +578,7 @@ export class AgentSession extends DurableObject<Env> {
 		// Що відбувається, каже маленька модель за завданням і останніми діями; без неї (збій, тайм-аут) — технічний підпис.
 		let activity = "";
 		if (!announcement) {
-			activity = (await narrate(workersLlm({ AI: this.env.AI, OPENAI_KEY: this.env.OPENAI_KEY ?? this.env.OPENAI_API_KEY }), w.header ?? "", this.recent.get(ocId) ?? [], this.narration.get(ocId))) ?? "";
+			activity = (await narrate(workersLlm({ AI: this.env.AI, OPENAI_KEY: this.env.OPENAI_API_KEY }), w.header ?? "", this.recent.get(ocId) ?? [], this.narration.get(ocId))) ?? "";
 			if (activity) this.narration.set(ocId, activity);
 		}
 		const text = announcement ?? `${WORKING} · ${activity || describeActivity(tool, input)}`;
