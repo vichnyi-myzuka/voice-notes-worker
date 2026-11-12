@@ -48,7 +48,13 @@ export type RemovedSession = { id: string; chatId?: number; postId?: number };
 // Пост чату, який потім треба оновити (запит на схвалення деплою → його результат); живе у сховищі воркера.
 export type PostRef = { chatId: number | string; messageId: number; text: string };
 
+// Деплой PR сесії для її поста: text — рядки під станом сесії; repo+runId — чекає схвалення (кнопки); done — деплой завершено, сесію прибрано.
+export type DeployInfo = { text: string; repo?: string; runId?: number; done?: boolean };
+
 export type Agent = {
+	// Показує деплой у пості сесії гілки agent/<folder>; false — сесії з постом немає. setDeployByPost: те саме за постом, лише якщо він уже показує деплой.
+	setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean>;
+	setDeployByPost(postId: number, deploy: DeployInfo): Promise<boolean>;
 	// Запам'ятовує пост за ключем і віддає його один раз (take забирає): так результат деплою редагує пост зі схваленням.
 	saveRef(key: string, ref: PostRef): Promise<void>;
 	takeRef(key: string): Promise<PostRef | undefined>;

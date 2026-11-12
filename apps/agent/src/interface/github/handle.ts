@@ -12,7 +12,7 @@ export type GithubDeps = { agent: Agent; defer: (work: Promise<unknown>) => void
 type Payload = {
 	action?: string;
 	repository?: { full_name: string; default_branch: string };
-	workflow_job?: { run_id: number; name: string; workflow_name?: string; head_branch?: string; html_url: string };
+	workflow_job?: { run_id: number; head_sha?: string; name: string; workflow_name?: string; head_branch?: string; html_url: string };
 	workflow_run?: { id: number; name: string; head_branch: string; head_sha?: string; html_url: string; conclusion?: string | null };
 };
 
@@ -61,34 +61,37 @@ async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, re
 	const title = run?.conclusion ? RESULT[run.conclusion] : undefined;
 	if (p.action !== "completed" || !run || !chat || !title || run.name !== DEPLOY_WORKFLOW || run.head_branch !== p.repository?.default_branch) return;
 	const pulls = env.GITHUB_TOKEN && run.head_sha ? await commitPulls(env.GITHUB_TOKEN, repo, run.head_sha).catch((err) => (console.error("commit pulls failed:", err), [])) : [];
-	// Успішний деплой PR бота (гілка agent/* цього ж репозиторію): сесія, worktree, гілки й пост у чаті більше не потрібні.
-	// Невдалий деплой сесію лишає, щоб можна було дописати уточнення.
+	// PR бота (гілка agent/* цього ж репозиторію): результат показуємо в пості його сесії. Успішний деплой ще й прибирає сесію, worktree
+	// і гілки, а пост лишається з відміткою (видалити його можна кнопкою). Невдалий деплой сесію лишає, щоб можна було дописати уточнення.
+	let shown = false;
 	let cleaned = 0;
-	if (run.conclusion === "success") {
-		for (const pr of pulls) {
-			if (pr.repo === repo && pr.branch.startsWith("agent/")) cleaned += (await cleanup(bot, env, agent, repo, pr.branch).catch((err) => (console.error("cleanup failed:", err), false))) ? 1 : 0;
-		}
+	for (const pr of pulls) {
+		if (pr.repo !== repo || !pr.branch.startsWith("agent/")) continue;
+		const inPost = await agent.setDeploy(repo, pr.branch.slice("agent/".length), { text: `${title}\n${run.html_url}`, done: run.conclusion === "success" }).catch((err) => (console.error("show deploy in post failed:", err), false));
+		shown ||= inPost;
+		if (run.conclusion === "success") cleaned += (await cleanup(bot, env, agent, repo, pr.branch, inPost).catch((err) => (console.error("cleanup failed:", err), false))) ? 1 : 0;
 	}
+	if (shown) return;
 	const text = [title, repo, ...pulls.map((pr) => `PR #${pr.number}: ${pr.title}\n${pr.url}`), run.html_url, cleaned && "🧹 Сесію, worktree і гілку прибрано."].filter(Boolean).join("\n");
 	const reply_markup = { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: "dismiss" }]] };
-	// Якщо цей запуск чекав схвалення в чаті, результат дописуємо в той самий пост (а не шлемо новий).
+	// Якщо цей запуск чекав схвалення в окремому пості, результат дописуємо в нього (а не шлемо новий).
 	const asked = await agent.takeRef(refKey(repo, run.id)).catch(() => undefined);
 	if (asked && (await tg(bot, "editMessageText", { chat_id: asked.chatId, message_id: asked.messageId, text: `${asked.text}\n\n${text}`, reply_markup, link_preview_options: { is_disabled: true } }).then(() => true, (err) => (console.error("edit approval post failed:", err), false)))) return;
 	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup, link_preview_options: { is_disabled: true } });
 }
 
-// Ключ посту зі схваленням: репозиторій і id запуску (однаковий у workflow_job і workflow_run).
-const refKey = (repo: string, runId: number) => `deploy:${repo}:${runId}`;
-
-// Прибирає сесію гілки (як /delete), віддалену гілку і пост у чаті. true, якщо сесію знайдено.
-async function cleanup(bot: BotEnv, env: Env, agent: Agent, repo: string, branch: string): Promise<boolean> {
+// Прибирає сесію гілки (як /delete) і віддалену гілку; пост у чаті видаляє, лише якщо він не показує результату (keepPost). true, якщо сесію знайдено.
+async function cleanup(bot: BotEnv, env: Env, agent: Agent, repo: string, branch: string, keepPost: boolean): Promise<boolean> {
 	const removed = await agent.removeByBranch(repo, branch.slice("agent/".length));
 	if (env.GITHUB_TOKEN) await deleteBranch(env.GITHUB_TOKEN, repo, branch).catch((err) => console.error("delete remote branch failed:", err));
 	if (!removed) return false;
-	if (removed.chatId && removed.postId) await removeMessage(bot, removed.chatId, removed.postId);
+	if (removed.chatId && removed.postId && !keepPost) await removeMessage(bot, removed.chatId, removed.postId);
 	if (removed.chatId) await removeOriginal(bot, removed.chatId, removed.id);
 	return true;
 }
+
+// Ключ посту зі схваленням: репозиторій і id запуску (однаковий у workflow_job і workflow_run).
+const refKey = (repo: string, runId: number) => `deploy:${repo}:${runId}`;
 
 // Job чекає схвалення environment (workflow_job зі статусом waiting): пост із кнопками.
 async function onReviewRequested(bot: BotEnv, env: Env, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
@@ -96,6 +99,12 @@ async function onReviewRequested(bot: BotEnv, env: Env, { agent }: GithubDeps, r
 	const chat = env.TG_OWNER_ID ?? env.CHAT_ID;
 	if (p.action !== "waiting" || !job || !chat) return;
 	const text = `🚀 Деплой чекає схвалення\n${repo} · ${job.name}\n${job.workflow_name ?? "workflow"}${job.head_branch ? ` (${job.head_branch})` : ""}\n${job.html_url}`;
+	// Деплой PR бота: запит на схвалення показуємо в пості його сесії, а не окремим повідомленням.
+	const pulls = env.GITHUB_TOKEN && job.head_sha ? await commitPulls(env.GITHUB_TOKEN, repo, job.head_sha).catch((err) => (console.error("commit pulls failed:", err), [])) : [];
+	for (const pr of pulls) {
+		if (pr.repo !== repo || !pr.branch.startsWith("agent/")) continue;
+		if (await agent.setDeploy(repo, pr.branch.slice("agent/".length), { text: `🚀 Деплой чекає схвалення\n${job.html_url}`, repo, runId: job.run_id }).catch(() => false)) return;
+	}
 	const sent = await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup: reviewButtons(repo, job.run_id), link_preview_options: { is_disabled: true } });
 	await agent.saveRef(refKey(repo, job.run_id), { chatId: chat, messageId: sent.message_id, text }).catch((err) => console.error("save approval post failed:", err));
 }

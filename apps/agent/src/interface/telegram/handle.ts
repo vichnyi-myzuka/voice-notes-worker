@@ -57,7 +57,7 @@ async function handleButton(bot: BotEnv, query: NonNullable<TgUpdate["callback_q
 	const chat = query.message?.chat;
 	const allowed = !!env.TG_OWNER_ID && String(query.from.id) === env.TG_OWNER_ID && !!chat && (String(chat.id) === env.CHAT_ID || (chat.type === "private" && String(chat.id) === env.TG_OWNER_ID));
 	const review = /^(appr|rej):([\w.-]+\/[\w.-]+):(\d+)$/.exec(query.data ?? "");
-	if (review && allowed && query.message) return handleReviewButton(bot, query, env, review[1] === "appr", review[2], Number(review[3]));
+	if (review && allowed && query.message) return handleReviewButton(bot, query, env, agent, review[1] === "appr", review[2], Number(review[3]));
 	if (query.data === "dismiss" && allowed && query.message) {
 		await removeMessage(bot, chat!.id, query.message.message_id);
 		return void (await answer("Видалено."));

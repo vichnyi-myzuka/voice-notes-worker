@@ -32,7 +32,7 @@ export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env
 }
 
 // Натискання кнопки (власник уже перевірений). Результат — спливаюча підказка, а пост втрачає кнопки й показує підсумок.
-export async function handleReviewButton(bot: BotEnv, query: TgCallbackQuery, env: Env, approve: boolean, repo: string, runId: number): Promise<void> {
+export async function handleReviewButton(bot: BotEnv, query: TgCallbackQuery, env: Env, agent: Agent, approve: boolean, repo: string, runId: number): Promise<void> {
 	const answer = (text: string) => tg(bot, "answerCallbackQuery", { callback_query_id: query.id, text }).catch((err) => console.error("answer failed:", err));
 	if (!env.GITHUB_APPROVE_TOKEN) return void (await answer("Не налаштовано GITHUB_APPROVE_TOKEN."));
 	let failure = "";
@@ -41,6 +41,9 @@ export async function handleReviewButton(bot: BotEnv, query: TgCallbackQuery, en
 	if (done === null) return void (await answer(`Не вдалося звернутись до GitHub: ${failure}`.slice(0, 200)));
 	const message = query.message!;
 	const verdict = done === 0 ? "ℹ️ Уже оброблено (або немає права)" : approve ? "✅ Схвалено" : "❌ Відхилено";
+	// Пост сесії показує деплой: оновлюємо його рядок (форматування й кнопки сесії лишаються), а не весь текст
+	const line = done === 0 ? "ℹ️ Деплой уже оброблено (або немає права)" : approve ? "✅ Деплой схвалено, виконується" : "❌ Деплой відхилено";
+	if (await agent.setDeployByPost(message.message_id, { text: line }).catch(() => false)) return void (await answer(verdict));
 	// editMessageText без reply_markup прибирає кнопки
 	await tg(bot, "editMessageText", { chat_id: message.chat.id, message_id: message.message_id, text: `${message.text ?? ""}\n\n${verdict}`, link_preview_options: { is_disabled: true } }).catch((err) => console.error("edit failed:", err));
 	await answer(verdict);

@@ -129,6 +129,22 @@ describe("вебхук GitHub", () => {
 		expect(s.tgCalls("sendMessage")).toHaveLength(2);
 	});
 
+	it("деплой PR бота показується в пості його сесії: схвалення, а після успіху сесія прибрана, а пост лишається", async () => {
+		const s = setup();
+		await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+		s.sessions.get("tg--1001-7")!.posted = true;
+		const repository = { full_name: "me/bot", default_branch: "main" };
+		await s.hook("workflow_job", { action: "waiting", repository, workflow_job: { run_id: 123, head_sha: "abc", name: "deploy", html_url: "https://github.com/x/job" } });
+		expect(s.tgCalls("sendMessage")).toEqual([]); // окремого повідомлення немає
+		expect(s.deploys[0]).toMatchObject({ repo: "me/bot", folder: "fix-7", deploy: { runId: 123 } });
+		await s.hook("workflow_run", deploy({ id: 123 }));
+		expect(s.deploys[1].deploy).toMatchObject({ done: true });
+		expect(s.deploys[1].deploy.text).toContain("✅ Деплой успішний");
+		expect(s.sessions.size).toBe(0);
+		expect(s.tgCalls("sendMessage")).toEqual([]);
+		expect(s.tgCalls("deleteMessage")).toEqual([]); // пост лишається
+	});
+
 	it("результат деплою на main → пост з PR; чужі workflow і гілки ігноруються", async () => {
 		const s = setup();
 		const run = (over: Record<string, unknown>) => ({ action: "completed", repository: { full_name: "me/bot", default_branch: "main" }, workflow_run: { id: 1, name: "deploy", head_branch: "main", head_sha: "abc", html_url: "https://github.com/me/bot/actions/runs/1", conclusion: "success", ...over } });
