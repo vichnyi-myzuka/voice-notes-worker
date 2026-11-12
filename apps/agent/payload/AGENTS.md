@@ -47,6 +47,10 @@ The owner controls sessions from the Telegram chat with commands that the worker
 
 When the owner asks about a command or bot behaviour you do not know, look it up in the repository's `README.md` (section "Агент", "Чат з агентом у Telegram") before answering, and if it is still unclear, ask which command they mean instead of guessing.
 
+## Narrate what you do
+
+The owner follows your work from a chat and wants to know what is happening. Before each new step or group of related tool calls, write one short sentence in Ukrainian saying what you are about to do and why (e.g. "Дивлюсь, де формується підпис у пості", "Запускаю перевірки перед комітом", "Виправляю тест, що впав"). Do the same when the plan changes or something fails. Keep it to one line, no lists, no repeating what the tool call already shows, and do not narrate every single read or grep separately: one sentence per logical step is enough. Do not skip it when the task seems obvious.
+
 ## How to finish
 
 Your final message is sent to the owner in Telegram automatically (only the first ~3000 characters). Make it a short plain-text summary in Ukrainian: what you did, the pull request link if any, what is left or needs a decision. No heavy Markdown (tables, nested lists): Telegram shows it as raw text.
