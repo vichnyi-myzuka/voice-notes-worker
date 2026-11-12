@@ -244,6 +244,7 @@ export class AgentSession extends DurableObject<Env> {
 		const byOc = new Map([...watches].map(([key, w]) => [w.ocId, [key, w] as const]));
 
 		for (const ocId of active) {
+			if (!byOc.has(ocId)) await this.watchPrompted(ocId).catch((err) => console.error("rewatch failed:", err)); // працює без стеження (страховка до подій)
 			const info = await getSession(oc, ocId);
 			const tokens = totalTokens(info);
 			const over = (info.cost ?? 0) > maxCost ? `вартість $${(info.cost ?? 0).toFixed(2)} (ліміт $${maxCost})` : tokens > maxTokens ? `${tokens} токенів (ліміт ${maxTokens})` : "";
@@ -519,7 +520,11 @@ export class AgentSession extends DurableObject<Env> {
 		const kind = event.type.startsWith("session.execution.") ? event.type.slice("session.execution.".length) : "";
 		if (!ocId || !["started", "succeeded", "failed", "interrupted"].includes(kind)) return;
 		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: "watch:" }))].find(([, w]) => w.ocId === ocId);
-		if (!entry) return;
+		if (!entry) {
+			// Сесія знову працює без стеження (агент сам продовжив хід, напр. після фонової команди): беремо її під нагляд, щоб підсумок дійшов у чат.
+			if (kind === "started") await this.watchPrompted(ocId).catch((err) => console.error("rewatch failed:", err));
+			return;
+		}
 		const [key, w] = entry;
 		if (kind === "started") return void (w.seenBusy || (await this.ctx.storage.put(key, { ...w, seenBusy: true } satisfies Watch)));
 		await this.finishWatch(key, w, await this.summary(this.opencode(), w));
