@@ -182,7 +182,8 @@ describe("вебхук GitHub", () => {
 			await press(s);
 			expect(s.calls.find((c) => c.url.includes("/pulls?state=open"))?.url).toContain("head=me%3Aagent%2Ffix-7");
 			expect(s.calls.find((c) => c.method === "PUT")).toMatchObject({ url: "https://api.github.com/repos/me/bot/pulls/5/merge", body: { merge_method: "merge" } });
-			expect(s.tgCalls("editMessageReplyMarkup")[0]).toMatchObject({ message_id: 77, reply_markup: { inline_keyboard: [[{ callback_data: "del:tg--1001-7" }]] } });
+			// пост одразу показує «змерджено, чекаємо на деплой» (без очікування вебхука)
+			expect(s.deploys).toEqual([{ postId: 77, deploy: { text: "🔀 PR #5 змерджено, чекаємо на деплой" } }]);
 			expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("🔀 PR #5 змерджено");
 		});
 

@@ -334,8 +334,9 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Те саме за постом (після натискання «Схвалити/Відхилити»); false, якщо цей пост не показує деплою.
-	async setDeployByPost(postId: number, deploy: DeployInfo): Promise<boolean> {
-		if (!(await this.ctx.storage.get(deployKey(postId)))) return false;
+	// force: показати деплой, навіть якщо пост його ще не показував (напр. одразу після мерджу з чату).
+	async setDeployByPost(postId: number, deploy: DeployInfo, force = false): Promise<boolean> {
+		if (!force && !(await this.ctx.storage.get(deployKey(postId)))) return false;
 		for (const tracked of (await this.ctx.storage.list<Tracked>({ prefix: "session:" })).values()) {
 			if (tracked.post?.postId === postId) return this.applyDeploy(tracked.post, deploy);
 		}
