@@ -7,7 +7,9 @@ import { describe, expect, it } from "vitest";
 import { CLEANUP } from "../src/infrastructure/container/cleanup";
 
 // Справжній git: «GitHub» (bare), спільний клон і worktree сесії в /workspace/sessions-подібній теці. Хуки вимкнено: системний pre-push (агент) забороняє пуш у main, а тест пушить у власний тимчасовий bare-репозиторій.
-const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+// У git-хуку (pre-push) git виставляє GIT_DIR тощо: без очищення тест працював би з реальним репозиторієм.
+const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("GIT_")));
+const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, env: cleanEnv(), stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
 function setup() {
 	const root = mkdtempSync(join(tmpdir(), "cleanup-"));
@@ -35,7 +37,7 @@ function setup() {
 	writeFileSync(join(bin, "publish"), `#!/bin/sh\n[ "$2" = broken ] && exit 1\necho "$@" >> "${deleted}"\n`);
 	chmodSync(join(bin, "publish"), 0o755);
 	const cleanup = (name: string) =>
-		execFileSync("sh", ["-c", CLEANUP.replace("/workspace/sessions/", `${sessions}/`).replace("/workspace/published/", `${published}/`), "sh", name], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+		execFileSync("sh", ["-c", CLEANUP.replace("/workspace/sessions/", `${sessions}/`).replace("/workspace/published/", `${published}/`), "sh", name], { env: { ...cleanEnv(), PATH: `${bin}:${process.env.PATH}` } });
 	const sitesOf = (name: string, sites: string[]) => writeFileSync(join(published, name), sites.join("\n") + "\n");
 	const deletedSites = () => (existsSync(deleted) ? readFileSync(deleted, "utf8").trim().split("\n") : []);
 	const branches = () => git(base, "branch", "--format=%(refname:short)").split("\n");
