@@ -17,6 +17,9 @@ describe("describeActivity", () => {
 		expect(describeActivity("grep", { pattern: "TODO" })).toBe("шукає TODO");
 		expect(describeActivity("webfetch", { url: "https://example.com/a" })).toBe("відкриває example.com/a");
 		expect(describeActivity("custom", undefined)).toBe("інструмент custom");
+		expect(describeActivity("sure_get_transactions", { start_date: "2025-10-01", end_date: "2025-10-31", page: 2, account_id: "a1" })).toBe("дивиться транзакції (start date 2025-10-01, end date 2025-10-31)");
+		expect(describeActivity("sure_get_accounts", {})).toBe("дивиться рахунки");
+		expect(describeActivity("sure_do_magic", { category: "Їжа" })).toBe("викликає Sure: do magic (category Їжа)");
 		expect(describeActivity("read", { filePath: `a/${"x".repeat(100)}` })).toHaveLength("читає ".length + 60);
 	});
 });

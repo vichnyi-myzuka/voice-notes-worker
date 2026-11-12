@@ -481,6 +481,10 @@ describe("AgentSession", () => {
 		const server = JSON.parse(file.content).mcp.servers.sure;
 		expect(server).toMatchObject({ type: "remote", url: "https://sure.example/mcp", oauth: false });
 		expect(server.headers).toEqual({ Authorization: "Bearer {env:SURE_MCP_TOKEN}", "CF-Access-Client-Id": "{env:SURE_ACCESS_CLIENT_ID}", "CF-Access-Client-Secret": "{env:SURE_ACCESS_CLIENT_SECRET}" });
+		const config = JSON.parse(file.content);
+		expect(config.default_agent).toBe("sure");
+		expect(config.agents.sure).toMatchObject({ mode: "primary" });
+		expect(config.agents.sure.system).toContain("publish ./site");
 		expect(file.content).not.toMatch(/tok"|sec"|id\.access/);
 		const env = container.starts[0].env as Record<string, string>;
 		expect(env).toMatchObject({ SURE_MCP_TOKEN: "tok", SURE_ACCESS_CLIENT_ID: "id.access", SURE_ACCESS_CLIENT_SECRET: "sec" });

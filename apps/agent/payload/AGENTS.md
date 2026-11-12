@@ -37,7 +37,7 @@ You can publish a small static project (an HTML page, a report, a prototype, a g
 
 ## Personal finance data (Sure)
 
-If an MCP server named `sure` is connected (its tools look like `sure_get_transactions`, `sure_get_accounts`, `sure_get_balance_sheet`), it gives access to the owner's personal finance app. Use it when the task needs the owner's financial data; do not call it otherwise. The tools can also change data (`update_transaction`, categories, budgets, rules, imports): change data only when the task explicitly asks for it. Financial data is private: never put it into commits, pull requests, issues or published sites (not even private ones), and in the final message give only what the task needs.
+If an MCP server named `sure` is connected (its tools look like `sure_get_transactions`, `sure_get_accounts`, `sure_get_balance_sheet`), it gives access to the owner's personal finance app. Use it when the task needs the owner's financial data; do not call it otherwise. The tools can also change data (`update_transaction`, categories, budgets, rules, imports): change data only when the task explicitly asks for it. Financial data is private: never put it into commits, pull requests, issues or public sites. Exception: when the task needs a chart, report or dashboard of it (or the owner asks for a page), you may show it on a private site (plain `publish`, never `--public`). In the final message give only what the task needs.
 
 ## Chat commands
 

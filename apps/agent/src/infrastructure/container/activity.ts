@@ -35,6 +35,39 @@ export function describeForm(form: ActivityForm): string {
 	return text.length > FORM_MAX ? `${text.slice(0, FORM_MAX)}…` : text;
 }
 
+// Аргументи інструмента, що не має відомих полів (MCP): короткі скалярні значення «ключ значення», без id, пагінації й довгих рядків.
+// Так видно, що саме шукають («start date 2025-10-01, category Їжа»), а не лише назву інструмента.
+export function argSummary(input: Record<string, unknown> | undefined, max = 3): string {
+	const skip = /(^|_)(id|ids|page|per_page|limit|offset)$/;
+	return Object.entries(input ?? {})
+		.filter(([k, v]) => !skip.test(k) && (typeof v === "string" ? v.trim() && v.length <= 40 : typeof v === "number" || typeof v === "boolean"))
+		.slice(0, max)
+		.map(([k, v]) => `${k.replace(/_/g, " ")} ${String(v).trim()}`)
+		.join(", ");
+}
+
+// Інструменти MCP Sure (`sure_get_transactions`): що робить виклик словами. Невідомий інструмент отримує назву без префікса й аргументи.
+const SURE_VERBS: Record<string, string> = {
+	get_transactions: "дивиться транзакції",
+	get_transaction: "відкриває транзакцію",
+	get_accounts: "дивиться рахунки",
+	get_account: "відкриває рахунок",
+	get_balance_sheet: "дивиться баланс і чисті активи",
+	get_categories: "дивиться категорії",
+	get_budgets: "дивиться бюджети",
+	get_tags: "дивиться мітки",
+	get_merchants: "дивиться отримувачів",
+	update_transaction: "оновлює транзакцію",
+	create_transaction: "створює транзакцію",
+	delete_transaction: "видаляє транзакцію",
+};
+
+function describeSure(name: string, input: Record<string, unknown> | undefined): string {
+	const verb = SURE_VERBS[name] ?? `викликає Sure: ${name.replace(/_/g, " ")}`;
+	const args = argSummary(input);
+	return cut(args ? `${verb} (${args})` : verb);
+}
+
 export function describeActivity(tool: string, input: Record<string, unknown> | undefined): string {
 	const i = input ?? {};
 	const file = str(i.filePath) ?? str(i.path) ?? str(i.file);
@@ -64,7 +97,10 @@ export function describeActivity(tool: string, input: Record<string, unknown> | 
 			return "ставить питання";
 		case "task":
 			return "делегує підзадачу";
-		default:
-			return cut(`інструмент ${tool}`);
+		default: {
+			if (tool.startsWith("sure_")) return describeSure(tool.slice("sure_".length), i);
+			const args = argSummary(i);
+			return cut(args ? `інструмент ${tool} (${args})` : `інструмент ${tool}`);
+		}
 	}
 }

@@ -3,6 +3,7 @@
 // тоді пост показує технічний підпис з describeActivity.
 
 import type { Llm } from "@voice-notes/core";
+import { argSummary } from "./activity";
 
 const RECENT_MAX = 8; // скільки останніх дій бачить модель
 const CALL_MAX = 160; // довжина опису однієї дії
@@ -34,14 +35,15 @@ export function describeCall(tool: string, input: Record<string, unknown> | unde
 		str(i.pattern) ??
 		str(i.url) ??
 		str(i.query) ??
-		(file && short(file));
+		(file && short(file)) ??
+		(redact(argSummary(i, 5)) || undefined); // інструменти MCP (напр. sure_get_transactions): без відомих полів показуємо скалярні аргументи
 	return cut(detail ? `${tool}: ${detail}` : tool, CALL_MAX);
 }
 
 // Остання дія додається в кінець; зберігаються лише RECENT_MAX останніх.
 export const remember = (recent: string[], call: string): string[] => [...recent, call].slice(-RECENT_MAX);
 
-const SYSTEM = `You write a one-line live status for a coding agent that works for its owner. You get the task and the agent's latest actions (tool calls, oldest first). Reply with "status": what the agent is doing right now and why, in Ukrainian, in the present tense, 3-9 words, e.g. "перевіряє, як формується підпис у чаті" or "запускає тести після змін". Describe the purpose, not the mechanics: never mention tool names, shell commands, flags or raw paths (a file name is fine when it helps). No quotes, no trailing period, no emoji. Do not repeat the previous status word for word unless nothing has changed.`;
+const SYSTEM = `You write a one-line live status for a coding agent that works for its owner. You get the task and the agent's latest actions (tool calls, oldest first). Reply with "status": what the agent is doing right now and why, in Ukrainian, in the present tense, 3-9 words, e.g. "перевіряє, як формується підпис у чаті" or "запускає тести після змін". Describe the purpose, not the mechanics: never mention tool names, shell commands, flags or raw paths (a file name is fine when it helps). For calls to the owner's finance app (tools starting with "sure_") say concretely what is being looked up or changed, using the call's arguments (period, category, account), e.g. "дивиться витрати на їжу за жовтень" or "порівнює бюджет із фактичними витратами"; never state amounts or balances. No quotes, no trailing period, no emoji. Do not repeat the previous status word for word unless nothing has changed.`;
 
 export async function narrate(llm: Llm, task: string, recent: string[], previous?: string): Promise<string | undefined> {
 	if (recent.length === 0) return undefined;
