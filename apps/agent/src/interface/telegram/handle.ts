@@ -207,6 +207,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }) }, { chatId: chat, url, postId, header });
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст.
 	if (inChannel || file) await removeMessage(env, chat, msg.message_id);
+	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
+	if (silpo && !(await agent.silpoConnected().catch(() => true))) await say(`🛒 Сільпо ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/silpo/login`);
 }
 
 // Голосове → текст через Whisper; текст як є. Порожній рядок — не розібрали.

@@ -275,6 +275,7 @@ describe("вебхук Telegram", () => {
 			const b = setup();
 			await b.send(msg({ text: "модель опус, @silpo шур, зістав чеки з платежами" }));
 			expect(b.sessions.get(SID)?.input).toMatchObject({ prompt: "зістав чеки з платежами", model: "opus", sure: true, silpo: true });
+			expect(JSON.stringify(a.calls.map((c) => c.body))).toContain("https://agent.example/silpo/login");
 		});
 
 		it("явне «шур, задача» / «@sure задача» вмикає MCP Sure для сесії (разом із моделлю в будь-якому порядку)", async () => {
