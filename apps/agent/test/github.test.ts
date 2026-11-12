@@ -82,10 +82,12 @@ describe("вебхук GitHub", () => {
 
 	it("запит на схвалення деплою → пост з кнопками, кнопка схвалює через GitHub", async () => {
 		const s = setup();
-		await s.hook("deployment_review", { action: "requested", repository: { full_name: "me/bot", default_branch: "main" }, environment: "production-agent", workflow_run: { id: 123, name: "deploy", head_branch: "main", html_url: "https://github.com/me/bot/actions/runs/123" } });
+		await s.hook("workflow_job", { action: "waiting", repository: { full_name: "me/bot", default_branch: "main" }, workflow_job: { run_id: 123, name: "deploy-agent / deploy", workflow_name: "deploy", head_branch: "main", html_url: "https://github.com/me/bot/actions/runs/123/job/1" } });
+		await s.hook("workflow_job", { action: "completed", repository: { full_name: "me/bot", default_branch: "main" }, workflow_job: { run_id: 124, name: "x", html_url: "u" } }); // інші статуси ігноруємо
+		expect(s.tgCalls("sendMessage")).toHaveLength(1);
 		const sent = s.tgCalls("sendMessage")[0] as { chat_id: string; text: string; reply_markup: { inline_keyboard: { callback_data: string }[][] } };
 		expect(sent.chat_id).toBe("-1001");
-		expect(sent.text).toContain("production-agent");
+		expect(sent.text).toContain("deploy-agent");
 		expect(sent.reply_markup.inline_keyboard[0].map((b) => b.callback_data)).toEqual(["appr:me/bot:123", "rej:me/bot:123"]);
 
 		const query = { id: "q", from: { id: 42 }, message: { message_id: 8, chat: { id: -1001, type: "channel" }, text: sent.text }, data: "appr:me/bot:123" };

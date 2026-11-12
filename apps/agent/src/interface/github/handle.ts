@@ -12,7 +12,7 @@ export type GithubDeps = { agent: Agent; defer: (work: Promise<unknown>) => void
 type Payload = {
 	action?: string;
 	repository?: { full_name: string; default_branch: string };
-	environment?: string;
+	workflow_job?: { run_id: number; name: string; workflow_name?: string; head_branch?: string; html_url: string };
 	workflow_run?: { id: number; name: string; head_branch: string; head_sha?: string; html_url: string; conclusion?: string | null };
 };
 
@@ -27,7 +27,7 @@ async function validSignature(body: string, header: string, secret: string): Pro
 }
 
 // Вебхук GitHub (повз Access, як і Telegram: захищає підпис). Дві події:
-//  • deployment_review requested: надсилаємо в чат запит на схвалення деплою з кнопками (див. review.ts);
+//  • workflow_job waiting (job чекає схвалення environment): надсилаємо в чат запит на схвалення деплою з кнопками (див. review.ts);
 //  • workflow_run completed (deploy на головній гілці): результат деплою й PR; після успіху ще й прибирання сесії PR бота
 //    (сесія, worktree, локальна й віддалена гілка, пост у чаті).
 // GitHub отримує 200 одразу, робота йде у фоні.
@@ -46,7 +46,7 @@ export async function handleGithub(req: Request, env: Env, deps: GithubDeps): Pr
 	const repo = payload.repository?.full_name;
 	if (!repo || !REPO.test(repo)) return new Response("ok");
 	const event = req.headers.get("x-github-event");
-	if (event === "deployment_review") deps.defer(onReviewRequested(bot, env, repo, payload).catch((err) => console.error("github review failed:", err)));
+	if (event === "workflow_job") deps.defer(onReviewRequested(bot, env, repo, payload).catch((err) => console.error("github review failed:", err)));
 	else if (event === "workflow_run") deps.defer(onDeployFinished(bot, env, deps, repo, payload).catch((err) => console.error("github deploy result failed:", err)));
 	return new Response("ok");
 }
@@ -83,10 +83,11 @@ async function cleanup(bot: BotEnv, env: Env, agent: Agent, repo: string, branch
 	return true;
 }
 
+// Job чекає схвалення environment (workflow_job зі статусом waiting): пост із кнопками.
 async function onReviewRequested(bot: BotEnv, env: Env, repo: string, p: Payload): Promise<void> {
-	const run = p.workflow_run;
+	const job = p.workflow_job;
 	const chat = env.CHAT_ID ?? env.TG_OWNER_ID;
-	if (p.action !== "requested" || !run || !chat) return;
-	const text = `🚀 Деплой чекає схвалення\n${repo} · ${p.environment ?? "environment"}\n${run.name} (${run.head_branch})\n${run.html_url}`;
-	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup: reviewButtons(repo, run.id), link_preview_options: { is_disabled: true } });
+	if (p.action !== "waiting" || !job || !chat) return;
+	const text = `🚀 Деплой чекає схвалення\n${repo} · ${job.name}\n${job.workflow_name ?? "workflow"}${job.head_branch ? ` (${job.head_branch})` : ""}\n${job.html_url}`;
+	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup: reviewButtons(repo, job.run_id), link_preview_options: { is_disabled: true } });
 }

@@ -475,13 +475,13 @@ GET  /s/<id>                                           → редірект на
 Вебхук GitHub `POST /github` (повз Access, як і `/telegram`; захист — підпис `X-Hub-Signature-256` за секретом `GITHUB_WEBHOOK_SECRET`) робить дві речі:
 
 - **Прибирання після успішного деплою.** Коли workflow `deploy` на головній гілці завершився успішно, воркер знаходить за комітом PR (`GITHUB_TOKEN`), і для кожного PR з гілки `agent/<назва>` цього ж репозиторію (не форка) прибирає сесію так само, як `/delete`: сесія OpenCode, worktree, локальна гілка (за тих самих умов, що й у `CLEANUP`: робота не втрачена), пост і оригінал у чаті, а також віддалена гілка в GitHub (уже видалену ігноруємо). Про це свідчить рядок `🧹` у повідомленні про результат. Невдалий деплой сесію лишає: можна дописати уточнення. Сесії без поста в чаті теж прибираються. Якщо контейнер спить, прибирання чекає його запуску; `waitUntil` живе ~30 с, тож на холодному старті воно може не встигнути, тоді сесію видаль кнопкою `🗑`.
-- **Схвалення деплою.** Коли workflow чекає схвалення environment (`production-agent`), у `CHAT_ID` (або приват власника) приходить пост `🚀 Деплой чекає схвалення` з кнопками `✅ Схвалити` / `❌ Відхилити`. Натискання (лише від `TG_OWNER_ID`) викликає GitHub API `pending_deployments`, а пост показує результат. Якщо environment уже схвалено на GitHub, кнопка скаже, що оброблено.
+- **Схвалення деплою.** Коли job workflow чекає схвалення environment (`production-agent`; подія `workflow_job` зі статусом `waiting`), у `CHAT_ID` (або приват власника) приходить пост `🚀 Деплой чекає схвалення` з кнопками `✅ Схвалити` / `❌ Відхилити`. Натискання (лише від `TG_OWNER_ID`) викликає GitHub API `pending_deployments`, а пост показує результат. Якщо environment уже схвалено на GitHub, кнопка скаже, що оброблено.
 - **Результат деплою.** Коли workflow `deploy` на головній гілці завершився, у `CHAT_ID` приходить `✅ Деплой успішний` / `❌ Деплой не вдався` / `⏹ Деплой скасовано` з посиланням на запуск і PR, що його запустив (шукається за комітом через `GITHUB_TOKEN`; якщо коміт пушили без PR, рядка PR немає). Пропущені запуски й інші workflow ігноруються.
 
 Налаштування (кроки в GitHub і Cloudflare лише твої):
 
 1. Секрети воркера агента: `npx wrangler secret put GITHUB_WEBHOOK_SECRET` (довільний довгий рядок) і `GITHUB_APPROVE_TOKEN` (fine-grained PAT на цей репозиторій: **Actions: Read and write**; належить тобі як рев'юверу environment; агент цього токена не бачить, у контейнер він не передається). Якщо в environment увімкнено «Prevent self-review», схвалити власний запуск не вийде.
-2. GitHub → репозиторій → Settings → Webhooks → Add webhook: Payload URL `https://agent.example.com/github`, Content type `application/json`, Secret той самий, події: **Deployment reviews** і **Workflow runs** (Pull requests не потрібні).
+2. GitHub → репозиторій → Settings → Webhooks → Add webhook: Payload URL `https://agent.example.com/github`, Content type `application/json`, Secret той самий, події: **Workflow jobs** і **Workflow runs** (Pull requests і Deployment reviews не потрібні).
 3. Cloudflare Access: до політики Bypass для шляху `telegram` додай шлях `github`.
 
 ### SSH у контейнер
