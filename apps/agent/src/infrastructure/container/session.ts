@@ -10,7 +10,7 @@ import { JOB_ATTEMPTS, JOB_RETRY_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_M
 import { describeActivity, describeForm, formChoices } from "./activity";
 import { Forms } from "./forms";
 import { describeCall, narrate, remember } from "./narrate";
-import { activeSessions, createSession, deleteSession, getSession, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, type Opencode } from "./opencode";
+import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./posts";
 import { WebProxy } from "./proxy";
 import { WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
@@ -204,8 +204,8 @@ export class AgentSession extends DurableObject<Env> {
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
 			const directory = await this.computer.prepare(folder, input.repo);
-			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model());
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder } satisfies Tracked);
+			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
+			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }) } satisfies Tracked);
 			await prompt(this.opencode(), ocId, input.prompt);
 			await this.computer.markActive();
 			return { sessionId: ocId };
@@ -221,12 +221,25 @@ export class AgentSession extends DurableObject<Env> {
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
 				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo);
-				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model());
+				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
 		}
 		await prompt(this.opencode(), ocId, text);
 		await this.computer.markActive();
+	}
+
+	// Змінює модель сесії для наступних ходів і запам'ятовує її (нова сесія OpenCode після сну теж піде на ній).
+	async setModel(id: string, requested: string): Promise<boolean> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		if (!tracked) throw new Error(`unknown session ${id}`);
+		const model = this.computer.model(requested);
+		if (!model) return false;
+		await this.computer.ensureRunning();
+		if (!(await hasModel(this.opencode(), model))) return false;
+		if (await sessionExists(this.opencode(), tracked.ocId)) await switchModel(this.opencode(), tracked.ocId, model);
+		await this.ctx.storage.put(sessionKey(id), { ...tracked, model: requested } satisfies Tracked);
+		return true;
 	}
 
 	// Id сесії OpenCode для прямого посилання (контейнер не будимо). Прийняте, але ще не запущене завдання теж «є» (повторна

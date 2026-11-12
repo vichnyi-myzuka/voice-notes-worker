@@ -7,6 +7,7 @@ export type SessionObject = {
 	resume(id: string, text: string, target: WatchTarget): Promise<void>;
 	answer(id: string, choice: number | "ok"): Promise<string | undefined>;
 	followUp(id: string, text: string): Promise<void>;
+	setModel(id: string, model: string): Promise<boolean>;
 	status(id: string): Promise<AgentStatus>;
 	report(id: string): Promise<SessionReport>;
 	watch(id: string, target: WatchTarget): Promise<void>;
@@ -42,6 +43,7 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 			return { id, url: `${origin}/s/${id}` };
 		},
 		followUp: (id, text) => computer().followUp(id, text),
+		setModel: (id, model) => computer().setModel(id, model),
 		status: (id) => computer().status(id),
 		report: (id) => computer().report(id),
 		watch: (id, target) => computer().watch(id, target),

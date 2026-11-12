@@ -41,8 +41,11 @@ export class Computer {
 	}
 
 	// Із токеном підписки сесії йдуть через Claude Agent; без нього — модель за замовчуванням OpenCode (ключі з env).
-	model(): ModelRef | undefined {
-		return this.env.CLAUDE_CODE_OAUTH_TOKEN ? { providerID: "claude-agent", id: this.env.CLAUDE_MODEL || "sonnet" } : undefined;
+	// requested: «opus» (Claude Agent) або «провайдер/модель»; без нього — CLAUDE_MODEL/sonnet.
+	model(requested?: string): ModelRef | undefined {
+		const [providerID, ...rest] = requested?.split("/") ?? [];
+		if (requested && rest.length) return { providerID, id: rest.join("/") };
+		return this.env.CLAUDE_CODE_OAUTH_TOKEN ? { providerID: "claude-agent", id: requested || this.env.CLAUDE_MODEL || "sonnet" } : undefined;
 	}
 
 	// Стартує контейнер (якщо ще не працює) і чекає, поки OpenCode відповість.

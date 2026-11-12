@@ -27,6 +27,13 @@ export async function createSession(oc: Opencode, title: string, directory: stri
 	return (await data<{ id: string }>(await oc.fetch("/api/session", post({ title, location: { directory }, ...(model && { model }) })))).id;
 }
 
+// Модель для наступних ходів сесії (поточний хід не чіпає).
+export async function switchModel(oc: Opencode, sessionId: string, model: ModelRef): Promise<void> {
+	const res = await oc.fetch(`/api/session/${sessionId}/model`, post({ model }));
+	if (!res.ok) throw new Error(`opencode switch model: ${res.status} ${await res.text()}`);
+	await res.body?.cancel();
+}
+
 // Чи є модель у списку доступних. Моделі провайдера з'являються з затримкою після підключення.
 export async function hasModel(oc: Opencode, model: ModelRef): Promise<boolean> {
 	const models = await data<{ id: string; providerID: string }[]>(await oc.fetch("/api/model"));
