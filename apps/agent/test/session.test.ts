@@ -705,6 +705,25 @@ describe("AgentSession", () => {
 					expect(edits()).toHaveLength(2);
 				});
 
+				it("із ключем OpenAI дію описує маленька модель за завданням і останніми діями (а не «виконує grep»)", async () => {
+					const bodies: { input: { content: string }[] }[] = [];
+					vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+						if (!String(url).includes("api.openai.com")) {
+							sent.push(JSON.parse(String(init.body)));
+							return Response.json({ ok: true, result: { message_id: 1 } });
+						}
+						bodies.push(JSON.parse(String(init.body)));
+						return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify({ status: "шукає, де формується підпис" }) }] }] });
+					});
+					const t = setup({ BOT_TOKEN: "bot", OPENAI_API_KEY: "k" });
+					await t.session.start(ID, { prompt: "Задача" });
+					await t.session.watch(ID, POST);
+					tool(t.opencode, "c1", "grep", { pattern: "describeActivity" });
+					await flush();
+					expect(edits().at(-1)!.text).toBe(`${HEADER}\n\n⏳ Працює · шукає, де формується підпис\n\n${link}`);
+					expect(bodies[0].input[1].content).toContain("- grep: describeActivity");
+				});
+
 				it("питання агента (form.created) показується одразу, навіть частіше за інтервал оновлень", async () => {
 					const t = setup({ BOT_TOKEN: "bot" });
 					await t.session.start(ID, { prompt: "Задача" });

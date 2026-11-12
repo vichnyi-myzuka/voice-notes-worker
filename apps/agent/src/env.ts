@@ -22,6 +22,9 @@ export interface Env {
 	// Запобіжники сесії: вартість у USD (за замовчуванням 5) і токени без кешу (за замовчуванням 3 млн); понад ліміт сесію зупиняє alarm
 	AGENT_MAX_COST_USD?: string;
 	AGENT_MAX_TOKENS?: string;
+	// Ключ OpenAI для воркера (маленька модель gpt-6-luna описує дію агента в пості); без нього — Gemma у Workers AI, а далі технічний підпис.
+	// Якщо не заданий, береться OPENAI_API_KEY.
+	OPENAI_KEY?: string;
 	AGENT_PROGRESS_MS?: string; // мінімальний інтервал оновлення поста з прогресом (мс; типово 4000)
 	// Чат з агентом у Telegram (окремий бот): токен, секрет вебхука, єдиний дозволений користувач. Whisper — через Workers AI.
 	BOT_TOKEN?: string;

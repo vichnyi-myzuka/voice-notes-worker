@@ -1,4 +1,4 @@
-import { tg } from "@voice-notes/core";
+import { tg, workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
@@ -7,6 +7,7 @@ import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
 import { describeActivity, describeForm, formChoices, type Choice } from "./activity";
+import { describeCall, narrate, remember } from "./narrate";
 import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, readEvents, type OpencodeEvent, type OpencodeForm, replyForm, sessionExists, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
@@ -73,6 +74,9 @@ export class AgentSession extends DurableObject<Env> {
 	// (запізніла проміжна правка не має затирати підсумок: finishWatch чекає на чергу).
 	private toolNames = new Map<string, string>();
 	private lastProgress = new Map<string, number>();
+	// Останні дії агента (для маленької моделі, що описує поточну дію) і її попередній опис — за id сесії OpenCode.
+	private recent = new Map<string, string[]>();
+	private narration = new Map<string, string>();
 	private postQueue: Promise<unknown> = Promise.resolve();
 
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -301,6 +305,8 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ctx.storage.delete(key);
 		await this.ctx.storage.delete(formKey(key.slice("watch:".length))); // питання, що лишилось без відповіді, неактуальне
 		this.lastProgress.delete(w.ocId);
+		this.recent.delete(w.ocId);
+		this.narration.delete(w.ocId);
 		await this.postQueue.catch(() => undefined); // проміжна правка вже в дорозі: підсумок іде після неї
 		await this.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
@@ -505,7 +511,11 @@ export class AgentSession extends DurableObject<Env> {
 			this.toolNames.set(event.data.id, event.data.name);
 			return;
 		}
-		if (ocId && event.type === "session.tool.called" && event.data?.id) return this.progress(ocId, this.toolNames.get(event.data.id) ?? "", event.data.input);
+		if (ocId && event.type === "session.tool.called" && event.data?.id) {
+			const tool = this.toolNames.get(event.data.id) ?? "";
+			if (tool) this.recent.set(ocId, remember(this.recent.get(ocId) ?? [], describeCall(tool, event.data.input)));
+			return this.progress(ocId, tool, event.data.input);
+		}
 		const kind = event.type.startsWith("session.execution.") ? event.type.slice("session.execution.".length) : "";
 		if (!ocId || !["started", "succeeded", "failed", "interrupted"].includes(kind)) return;
 		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: "watch:" }))].find(([, w]) => w.ocId === ocId);
@@ -565,7 +575,13 @@ export class AgentSession extends DurableObject<Env> {
 		if (!entry?.[1].postId) return;
 		this.lastProgress.set(ocId, now);
 		const w = entry[1];
-		const text = announcement ?? `${WORKING} · ${describeActivity(tool, input)}`;
+		// Що відбувається, каже маленька модель за завданням і останніми діями; без неї (збій, тайм-аут) — технічний підпис.
+		let activity = "";
+		if (!announcement) {
+			activity = (await narrate(workersLlm({ AI: this.env.AI, OPENAI_KEY: this.env.OPENAI_KEY ?? this.env.OPENAI_API_KEY }), w.header ?? "", this.recent.get(ocId) ?? [], this.narration.get(ocId))) ?? "";
+			if (activity) this.narration.set(ocId, activity);
+		}
+		const text = announcement ?? `${WORKING} · ${activity || describeActivity(tool, input)}`;
 		const job = this.postQueue.catch(() => undefined).then(async () => {
 			if (await this.ctx.storage.get(entry[0])) await this.show(w, text, false, answers); // спостереження могло закінчитись, поки чекали в черзі
 		});
