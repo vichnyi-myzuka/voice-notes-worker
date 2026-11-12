@@ -356,11 +356,19 @@ export class AgentSession extends DurableObject<Env> {
 		return tracked?.repo ? { repo: tracked.repo, branch: `agent/${tracked.folder ?? id}` } : undefined;
 	}
 
-	// Чи є в гілки сесії відкритий PR (тоді під підсумком з'являється «Змерджити»). Збій GitHub кнопку просто не показує.
-	private async hasOpenPull(id: string): Promise<boolean> {
-		const target = this.env.GITHUB_TOKEN ? await this.pullTarget(id) : undefined;
-		if (!target || !this.env.GITHUB_TOKEN) return false;
-		return !!(await openPullNumber(this.env.GITHUB_TOKEN, target.repo, target.branch).catch((err) => (console.error("open pull lookup failed:", err), undefined)));
+	// Чи є в гілки сесії відкритий PR (тоді під підсумком з'являється «Змерджити»). Якщо кнопки не буде, повертає причину для поста.
+	private async pullCheck(id: string): Promise<{ ok: boolean; why?: string }> {
+		const target = await this.pullTarget(id);
+		if (!target) return { ok: false }; // сесія без репозиторію
+		const token = this.env.GITHUB_TOKEN;
+		if (!token) return { ok: false, why: "у воркері немає GITHUB_TOKEN" };
+		try {
+			const number = await openPullNumber(token, target.repo, target.branch);
+			return number ? { ok: true } : { ok: false, why: `немає відкритого PR з гілки ${target.branch}` };
+		} catch (err) {
+			console.error("open pull lookup failed:", err);
+			return { ok: false, why: `збій пошуку PR (${err instanceof Error ? err.message : String(err)})` };
+		}
 	}
 
 	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
@@ -375,7 +383,9 @@ export class AgentSession extends DurableObject<Env> {
 		await this.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
 		// Підсумок успішної роботи: якщо агент відкрив PR, додаємо «Змерджити» (зупинену чи невдалу сесію не мерджимо з чату)
-		const mergeable = text.startsWith("✅") && (await this.hasOpenPull(key.slice("watch:".length)));
+		const check = text.startsWith("✅") ? await this.pullCheck(key.slice("watch:".length)) : { ok: false };
+		const mergeable = check.ok;
+		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
 		if (await this.show(w, text, true, undefined, mergeable)) return;
 		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done").catch((err) => console.error("notify failed:", err));
 	}
