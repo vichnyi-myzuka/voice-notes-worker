@@ -2,6 +2,7 @@ import { DOWNLOAD_MAX_BYTES, react, safeEqual, tg, tgSendMessage, type BotEnv, t
 import type { Agent, SessionReport } from "../../domain/agent";
 import type { Env } from "../../env";
 import { sendChat } from "../../infrastructure/chat";
+import { describeQuota, fetchQuota } from "../../infrastructure/quota";
 import { routeTask, type KnownRepo } from "./repo";
 
 export const TELEGRAM_PATH = "/telegram";
@@ -35,7 +36,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	const inPrivate = msg.chat.type === "private" && !!env.TG_OWNER_ID && String(msg.from?.id) === env.TG_OWNER_ID;
 	if (inChannel || inPrivate) {
 		deps.defer(
-			handleMessage(bot, msg, inChannel, deps).catch(async (err) => {
+			handleMessage(bot, msg, inChannel, deps, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
 				console.error("telegram message failed:", err);
 				await tgSendMessage(bot, msg.chat.id, "⚠️ Не вдалося створити сесію, спробуй ще раз.").catch(() => {});
 			}),
@@ -79,6 +80,17 @@ async function updateContainer(env: BotEnv, chat: number, agent: Agent, force: b
 	await tgSendMessage(env, chat, "🔄 Контейнер зупинено: наступне завдання стартує з поточного образу. Старі сесії скинуто (гілки в GitHub лишились).");
 }
 
+// Ліміти підписки Claude (/quota): без токена підписки їх немає, збій запиту не валить обробник.
+async function quotaText(token?: string): Promise<string> {
+	if (!token) return "ℹ️ Ліміти доступні лише за підписки Claude (потрібен CLAUDE_CODE_OAUTH_TOKEN).";
+	try {
+		return describeQuota(await fetchQuota(token));
+	} catch (err) {
+		console.error("quota failed:", err);
+		return "⚠️ Не вдалося отримати ліміти Claude.";
+	}
+}
+
 const removeMessage = (env: BotEnv, chat: number, messageId: number) =>
 	tg(env, "deleteMessage", { chat_id: chat, message_id: messageId }).catch((err) => console.error("delete message failed:", err));
 
@@ -99,7 +111,7 @@ function textWithLinks(m: TgMessage["reply_to_message"]): string {
 // «owner/name: задача» на початку тексту — репозиторій для сесії.
 const REPO_PREFIX = /^([\w-][\w.-]*\/[\w-][\w.-]*)\s*:\s*([\s\S]+)$/;
 
-async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [] }: TelegramDeps): Promise<void> {
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [] }: TelegramDeps, claudeToken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const text = msg.text?.trim();
@@ -108,14 +120,15 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 
 	if (!file && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
-		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /delete видаляє сесію, /update перезапускає контейнер з поточного образу.");
+		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер з поточного образу.");
 		else if (command === "/update") await updateContainer(env, chat, agent, /\bforce\b/i.test(text ?? ""));
+		else if (command === "/quota") await say(await quotaText(claudeToken));
 		else if (command === "/status" || command === "/stop" || command === "/delete") {
 			if (!replied) await say(`Надішли ${command} відповіддю на пост із сесією.`);
 			else await sessionCommand(env, chat, agent, replied[1], command, msg.reply_to_message?.message_id);
 		}
 		// Команда виконана: саму команду з чату прибираємо (відповідь бота лишається), як і прийняті уточнення.
-		if (command === "/status" || command === "/stop" || command === "/delete" || command === "/update") await removeMessage(env, chat, msg.message_id);
+		if (command === "/status" || command === "/stop" || command === "/delete" || command === "/update" || command === "/quota") await removeMessage(env, chat, msg.message_id);
 		return;
 	}
 	if (file && (file.file_size ?? 0) > DOWNLOAD_MAX_BYTES) {

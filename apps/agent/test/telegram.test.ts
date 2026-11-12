@@ -300,6 +300,13 @@ describe("вебхук Telegram", () => {
 			expect(calls.filter((c) => c.method === "deleteMessage").map((c) => c.body.message_id)).toEqual([8, 9, 10]); // команди прибрано
 		});
 
+		it("/quota без токена підписки пояснює, чому ліміти недоступні, і прибирає команду", async () => {
+			const { send, replies, calls } = setup();
+			await send(msg({ text: "/quota" }, 12));
+			expect(replies()).toEqual(["ℹ️ Ліміти доступні лише за підписки Claude (потрібен CLAUDE_CODE_OAUTH_TOKEN)."]);
+			expect(calls.filter((c) => c.method === "deleteMessage").map((c) => c.body.message_id)).toEqual([12]);
+		});
+
 		it("команда без відповіді на пост просить відповісти на пост із сесією", async () => {
 			const { send, replies } = setup();
 			await send(msg({ text: "/status" }));
