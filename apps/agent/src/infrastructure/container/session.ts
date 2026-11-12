@@ -12,6 +12,7 @@ import { Forms } from "./forms";
 import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./posts";
+import { Silpo } from "./silpo";
 import { WebProxy } from "./proxy";
 import { WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
 
@@ -26,6 +27,7 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly posts: Posts;
 	private readonly forms: Forms;
 	private readonly proxy: WebProxy;
+	private readonly silpo: Silpo;
 	// Підписка на події OpenCode, поки за якоюсь сесією стежать (див. listen).
 	private events: AbortController | undefined;
 	// Назви інструментів за id виклику й час останнього оновлення поста сесії.
@@ -41,6 +43,7 @@ export class AgentSession extends DurableObject<Env> {
 		this.posts = new Posts(ctx.storage, env);
 		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
 		this.proxy = new WebProxy(ctx, env, this.computer);
+		this.silpo = new Silpo(ctx.storage);
 		this.computer.applyInactivityTimeout();
 	}
 
@@ -130,6 +133,18 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Контейнер: знімки, скидання, діагностика (див. Computer).
+	silpoLoginUrl(origin: string): Promise<string> {
+		return this.silpo.loginUrl(origin);
+	}
+
+	silpoCallback(code: string, state: string): Promise<boolean> {
+		return this.silpo.callback(code, state);
+	}
+
+	silpoConnected(): Promise<boolean> {
+		return this.silpo.connected();
+	}
+
 	snapshot(): Promise<SnapshotInfo> {
 		return this.computer.snapshot();
 	}
@@ -203,10 +218,12 @@ export class AgentSession extends DurableObject<Env> {
 			const again = await this.ctx.storage.get<Tracked>(sessionKey(id));
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
-			const directory = await this.computer.prepare(folder, input.repo, input.sure);
+			const silpo = input.silpo ? await this.silpo.accessToken() : undefined;
+			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo });
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }) } satisfies Tracked);
-			await prompt(this.opencode(), ocId, input.prompt);
+			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }) } satisfies Tracked);
+			// Сільпо просили, а входу немає (чи токен не оновився): агент скаже про це власнику замість мовчазної відсутності інструментів.
+			await prompt(this.opencode(), ocId, input.silpo && !silpo ? `${input.prompt}\n\n(Системна примітка: MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.)` : input.prompt);
 			await this.computer.markActive();
 			return { sessionId: ocId };
 		});
@@ -220,7 +237,8 @@ export class AgentSession extends DurableObject<Env> {
 		let ocId = tracked.ocId;
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, tracked.sure);
+				const silpo = tracked.silpo ? await this.silpo.accessToken() : undefined;
+				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo });
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);

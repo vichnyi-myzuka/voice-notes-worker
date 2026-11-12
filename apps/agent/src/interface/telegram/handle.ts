@@ -100,12 +100,16 @@ function modelPrefix(transcript: string): { model: string; task: string } | unde
 // моделі (routeTask: задача потребує особистих фінансів власника), тож слово «шур» не обов'язкове.
 const SURE_PREFIX = /^(?:@sure|shure|шур|шюр|шуре)[\s,.:;!—–-]+([\s\S]+)$/iu;
 
-// Шукає префікси моделі й Sure в будь-якому порядку; повертає задачу без них.
-function parsePrefixes(transcript: string): { task: string; model?: string; sure: boolean } {
+// Те саме для MCP Сільпо (покупки в магазині): «@silpo задача» чи голосом «сільпо, задача».
+const SILPO_PREFIX = /^(?:@silpo|silpo|сільпо|сильпо|сілпо)[\s,.:;!—–-]+([\s\S]+)$/iu;
+
+// Шукає префікси моделі, Sure і Сільпо в будь-якому порядку; повертає задачу без них.
+function parsePrefixes(transcript: string): { task: string; model?: string; sure: boolean; silpo: boolean } {
 	let task = transcript;
 	let model: string | undefined;
 	let sure = false;
-	for (let i = 0; i < 2; i++) {
+	let silpo = false;
+	for (let i = 0; i < 3; i++) {
 		const m = !model && modelPrefix(task);
 		if (m) ({ model, task } = m);
 		const sm = !sure && SURE_PREFIX.exec(task);
@@ -113,8 +117,13 @@ function parsePrefixes(transcript: string): { task: string; model?: string; sure
 			task = sm[1];
 			sure = true;
 		}
+		const lm = !silpo && SILPO_PREFIX.exec(task);
+		if (lm) {
+			task = lm[1];
+			silpo = true;
+		}
 	}
-	return { task: task.trim(), model, sure };
+	return { task: task.trim(), model, sure, silpo };
 }
 
 async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
@@ -171,13 +180,15 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const transcript = await transcribe(env, llm, file, text);
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
-	const { task, model, sure: forced } = parsePrefixes(transcript);
+	const { task, model, sure: forcedSure, silpo: forcedSilpo } = parsePrefixes(transcript);
 	const withRepo = REPO_PREFIX.exec(task);
 	const prompt = withRepo ? withRepo[2].trim() : task;
 	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
 	const repo = withRepo ? withRepo[1] : route.repo;
 	// Sure підключається, коли власник назвав його явно («шур, …», «@sure») або модель побачила, що задача про його фінанси.
-	const sure = forced || route.sure === true;
+	const sure = forcedSure || route.sure === true;
+	// Сільпо так само: явно («сільпо, …», «@silpo») або модель побачила, що треба дивитись, що власник купував у магазині.
+	const silpo = forcedSilpo || route.silpo === true;
 
 	const url = agent.url(id);
 	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
@@ -186,14 +197,14 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
-	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : ""].filter(Boolean).join("\n");
+	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : ""].filter(Boolean).join("\n");
 	const header = (
 		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
 		: `${inChannel ? `${clipped}\n\n` : ""}${where}`
 	).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }) }, { chatId: chat, url, postId, header });
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }) }, { chatId: chat, url, postId, header });
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст.
 	if (inChannel || file) await removeMessage(env, chat, msg.message_id);
 }

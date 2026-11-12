@@ -68,6 +68,13 @@ function describeSure(name: string, input: Record<string, unknown> | undefined):
 	return cut(args ? `${verb} (${args})` : verb);
 }
 
+// Інструменти MCP Сільпо (`silpo_…`): назви не відомі наперед, тож без словника — назва без префікса й аргументи.
+function describeSilpo(name: string, input: Record<string, unknown> | undefined): string {
+	const args = argSummary(input);
+	const verb = `викликає Сільпо: ${name.replace(/^silpo_/, "").replace(/_/g, " ")}`;
+	return cut(args ? `${verb} (${args})` : verb);
+}
+
 export function describeActivity(tool: string, input: Record<string, unknown> | undefined): string {
 	const i = input ?? {};
 	const file = str(i.filePath) ?? str(i.path) ?? str(i.file);
@@ -98,6 +105,7 @@ export function describeActivity(tool: string, input: Record<string, unknown> | 
 		case "task":
 			return "делегує підзадачу";
 		default: {
+			if (tool.startsWith("silpo_")) return describeSilpo(tool.slice("silpo_".length), i);
 			if (tool.startsWith("sure_")) return describeSure(tool.slice("sure_".length), i);
 			const args = argSummary(i);
 			return cut(args ? `інструмент ${tool} (${args})` : `інструмент ${tool}`);

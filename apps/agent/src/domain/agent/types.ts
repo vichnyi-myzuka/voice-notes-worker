@@ -3,7 +3,7 @@
 
 // name: коротка назва за змістом задачі (kebab-case); з неї складаються тека й гілка сесії, без неї — технічний id
 // model: модель сесії — «opus» (провайдер Claude Agent) або «провайдер/модель»; без неї — модель за замовчуванням воркера
-export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; sure?: boolean };
+export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; sure?: boolean; silpo?: boolean };
 
 // working — агент виконує задачу; idle — завершив або чекає на відповідь; stopped — контейнер не працює (заснув або зупинений).
 export type AgentStatus = "working" | "idle" | "stopped";
@@ -48,6 +48,15 @@ export type RemovedSession = { id: string; chatId?: number; postId?: number };
 
 // Пост чату, який потім треба оновити (запит на схвалення деплою → його результат); живе у сховищі воркера.
 export type PostRef = { chatId: number | string; messageId: number; text: string };
+
+// Вхід у Сільпо (офіційний MCP з OAuth): токени живуть у сховищі агента, у контейнер іде лише короткий access-токен.
+export type SilpoLogin = {
+	// Адреса входу в Сільпо (origin — адреса воркера, куди Сільпо поверне користувача).
+	silpoLoginUrl(origin: string): Promise<string>;
+	// Завершує вхід кодом з повернення; false — state не збігся.
+	silpoCallback(code: string, state: string): Promise<boolean>;
+	silpoConnected(): Promise<boolean>;
+};
 
 // Деплой PR сесії для її поста: text — рядки під станом сесії; repo+runId — чекає схвалення (кнопки); done — деплой завершено, сесію прибрано.
 export type DeployInfo = { text: string; repo?: string; runId?: number; done?: boolean };
@@ -114,4 +123,4 @@ export type Deploys = {
 };
 
 // Усе разом: те, що реалізує адаптер (infrastructure/container). Обробники беруть лише потрібну частину.
-export type Agent = Sessions & Computer & Deploys;
+export type Agent = Sessions & Computer & Deploys & SilpoLogin;

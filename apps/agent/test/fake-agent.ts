@@ -16,6 +16,7 @@ export function fakeAgent(origin = "https://agent.example") {
 	const choices = new Map<string, string[]>(); // id сесії → підписи варіантів поточного питання (тест задає)
 	const refs = new Map<string, PostRef>();
 	const deploys: { repo?: string; folder?: string; postId?: number; deploy: DeployInfo }[] = [];
+	const silpoCodes: string[] = [];
 	let snapshotError = "";
 	const get = (id: string) => {
 		const s = sessions.get(id);
@@ -118,6 +119,17 @@ export function fakeAgent(origin = "https://agent.example") {
 		},
 		async info() {
 			return { running: true, activeAt: 1, alarmAt: null, snapshot: null, streams: [] };
+		},
+		async silpoLoginUrl(o) {
+			return `https://mcp.silpo.example/authorize?redirect_uri=${o}/silpo/callback`;
+		},
+		async silpoCallback(code, state) {
+			if (state !== "good") return false;
+			silpoCodes.push(code);
+			return true;
+		},
+		async silpoConnected() {
+			return silpoCodes.length > 0;
 		},
 		async resetComputer(unlessBusy) {
 			if (unlessBusy && [...sessions.values()].some((s) => s.status === "working")) return false;

@@ -24,7 +24,7 @@ export type SavedSnapshot = { id: string; image: string; at: number };
 // Сесія агента в спільному контейнері: id сесії (наш ключ ідемпотентності) → сесія OpenCode і репозиторій.
 // folder: назва теки (і гілки agent/<folder>); у старих записів немає, тоді це сам id.
 // post: пост сесії в чаті, який агент оновлює на місці (стан, підсумок).
-export type Tracked = { ocId: string; repo?: string; folder?: string; model?: string; sure?: boolean; post?: { postId: number; header: string; chatId?: number; url?: string } };
+export type Tracked = { ocId: string; repo?: string; folder?: string; model?: string; sure?: boolean; silpo?: boolean; post?: { postId: number; header: string; chatId?: number; url?: string } };
 export const SESSION_PREFIX = "session:";
 export const sessionKey = (id: string) => `${SESSION_PREFIX}${id}`;
 export const sessionId = (key: string) => key.slice(SESSION_PREFIX.length);

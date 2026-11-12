@@ -22,6 +22,9 @@ export type SessionObject = {
 	pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined>;
 	snapshot(): Promise<SnapshotInfo>;
 	resetComputer(unlessBusy?: boolean): Promise<boolean>;
+	silpoLoginUrl(origin: string): Promise<string>;
+	silpoCallback(code: string, state: string): Promise<boolean>;
+	silpoConnected(): Promise<boolean>;
 	info(): Promise<ComputerInfo>;
 	connections(detail: boolean): Promise<ConnectionsInfo>;
 	fetch(req: Request): Promise<Response>;
@@ -59,6 +62,9 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		takeRef: (key) => computer().takeRef(key),
 		snapshot: () => computer().snapshot(),
 		resetComputer: (unlessBusy) => computer().resetComputer(unlessBusy),
+		silpoLoginUrl: (origin) => computer().silpoLoginUrl(origin),
+		silpoCallback: (code, state) => computer().silpoCallback(code, state),
+		silpoConnected: () => computer().silpoConnected(),
 		info: () => computer().info(),
 		connections: (detail) => computer().connections(detail),
 	};
