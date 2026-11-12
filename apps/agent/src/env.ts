@@ -10,7 +10,7 @@ export interface Env {
 	OPENCODE_PASSWORD: string;
 	// Ключі моделей і доступ до git, що передаються в контейнер (усе необов'язкове)
 	ANTHROPIC_API_KEY?: string;
-	OPENAI_API_KEY?: string;
+	OPENAI_API_KEY?: string; // також використовує мала модель, що описує дію агента в пості (gpt-6-luna)
 	GITHUB_TOKEN?: string;
 	// Підписка Claude замість API-ключа: токен з `claude setup-token`; тоді сесії йдуть через провайдер Claude Agent
 	CLAUDE_CODE_OAUTH_TOKEN?: string;
