@@ -9,7 +9,7 @@ import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
 import { describeActivity, describeForm, formChoices, type Choice } from "./activity";
 import { describeCall, narrate, remember } from "./narrate";
-import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, readEvents, type OpencodeEvent, type OpencodeForm, replyForm, sessionExists, type ModelRef, type Opencode } from "./opencode";
+import { OPENCODE_PORT, activeSessions, basicAuth, connectClaudeAgent, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isAnyBusy, isBusy, isReady, prompt, readEvents, type OpencodeEvent, type OpencodeForm, replyForm, sessionExists, switchModel, type ModelRef, type Opencode } from "./opencode";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 const DEFAULT_INACTIVITY_MS = 60 * 60 * 1000;
@@ -52,7 +52,7 @@ type SavedSnapshot = { id: string; image: string; at: number };
 // Сесія агента в спільному контейнері: id сесії (наш ключ ідемпотентності) → сесія OpenCode і репозиторій.
 // folder: назва теки (і гілки agent/<folder>); у старих записів немає, тоді це сам id.
 // post: пост сесії в чаті, який агент оновлює на місці (стан, підсумок).
-type Tracked = { ocId: string; repo?: string; folder?: string; post?: { postId: number; header: string; chatId?: number; url?: string } };
+type Tracked = { ocId: string; repo?: string; folder?: string; model?: string; post?: { postId: number; header: string; chatId?: number; url?: string } };
 
 type LastShown = { status: string; final: boolean; mergeable: boolean };
 const deployKey = (postId: number) => `deploy:${postId}`;
@@ -113,8 +113,24 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Із токеном підписки сесії йдуть через Claude Agent; без нього — модель за замовчуванням OpenCode (ключі з env).
-	private model(): ModelRef | undefined {
-		return this.env.CLAUDE_CODE_OAUTH_TOKEN ? { providerID: "claude-agent", id: this.env.CLAUDE_MODEL || "sonnet" } : undefined;
+	// requested: «opus» (Claude Agent) або «провайдер/модель»; без нього — CLAUDE_MODEL/sonnet.
+	private model(requested?: string): ModelRef | undefined {
+		const [providerID, ...rest] = requested?.split("/") ?? [];
+		if (requested && rest.length) return { providerID, id: rest.join("/") };
+		return this.env.CLAUDE_CODE_OAUTH_TOKEN ? { providerID: "claude-agent", id: requested || this.env.CLAUDE_MODEL || "sonnet" } : undefined;
+	}
+
+	// Змінює модель сесії для наступних ходів і запам'ятовує її (нова сесія OpenCode після сну теж піде на ній).
+	async setModel(id: string, requested: string): Promise<boolean> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		if (!tracked) throw new Error(`unknown session ${id}`);
+		const model = this.model(requested);
+		if (!model) return false;
+		await this.ensureRunning();
+		if (!(await hasModel(this.opencode(), model))) return false;
+		if (await sessionExists(this.opencode(), tracked.ocId)) await switchModel(this.opencode(), tracked.ocId, model);
+		await this.ctx.storage.put(sessionKey(id), { ...tracked, model: requested } satisfies Tracked);
+		return true;
 	}
 
 	// Стартує контейнер (якщо ще не працює) і чекає, поки OpenCode відповість.
@@ -442,8 +458,8 @@ export class AgentSession extends DurableObject<Env> {
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
 			const directory = await this.prepare(folder, input.repo);
-			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.model());
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder } satisfies Tracked);
+			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.model(input.model));
+			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }) } satisfies Tracked);
 			await prompt(this.opencode(), ocId, input.prompt);
 			await this.markActive();
 			return { sessionId: ocId };
@@ -466,7 +482,7 @@ export class AgentSession extends DurableObject<Env> {
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.serial(async () => {
 				const directory = await this.prepare(tracked.folder ?? id, tracked.repo);
-				return createSession(this.opencode(), text.slice(0, 80), directory, this.model());
+				return createSession(this.opencode(), text.slice(0, 80), directory, this.model(tracked.model));
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
 		}

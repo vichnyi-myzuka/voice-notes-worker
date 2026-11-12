@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], formReplies: [] as { path: string; body: unknown }[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -104,6 +104,11 @@ function fakeContainer() {
 				}
 				if (path === "/api/model") return ok(opencode.connected && ++opencode.modelChecks > opencode.modelsAfter ? [{ id: "sonnet", providerID: "claude-agent" }, { id: "opus", providerID: "claude-agent" }] : []);
 				if (path === "/api/session/active") return ok(Object.fromEntries([...opencode.busy].map((id) => [id, { type: "running" }])));
+				const sw = path.match(/^\/api\/session\/([^/]+)\/model$/);
+				if (req.method === "POST" && sw) {
+					opencode.switches.push({ id: sw[1], model: (await req.json<{ model: unknown }>()).model });
+					return new Response(null, { status: 204 });
+				}
 				const m = path.match(/^\/api\/session\/([^/]+)(?:\/(prompt|interrupt))?$/);
 				if (m && !opencode.sessions.has(m[1])) return new Response("not found", { status: 404 });
 				if (req.method === "DELETE" && m && !m[2]) {
@@ -191,6 +196,20 @@ describe("AgentSession", () => {
 		expect(opencode.modelChecks).toBe(4);
 		expect(opencode.requests.filter((r) => r.includes("connect/external"))).toHaveLength(1);
 		expect(opencode.models).toEqual([{ providerID: "claude-agent", id: "sonnet" }]);
+	});
+
+	it("модель сесії: задається при старті, змінюється setModel і зберігається для нової сесії OpenCode після сну", async () => {
+		const { session, container, opencode } = setup({ CLAUDE_CODE_OAUTH_TOKEN: "tok" });
+		await session.start(ID, { prompt: "Задача", model: "opus" });
+		expect(opencode.models).toEqual([{ providerID: "claude-agent", id: "opus" }]);
+		expect(await session.setModel(ID, "sonnet")).toBe(true);
+		expect(opencode.switches).toEqual([{ id: "ses_oc1", model: { providerID: "claude-agent", id: "sonnet" } }]);
+		expect(await session.setModel(ID, "gpt-nope")).toBe(false); // моделі немає в списку
+		expect(opencode.switches).toHaveLength(1);
+		container.sleep();
+		opencode.sessions.clear(); // диск не відновився
+		await session.followUp(ID, "Ще раз");
+		expect(opencode.models.at(-1)).toEqual({ providerID: "claude-agent", id: "sonnet" });
 	});
 
 	it("без токена підписки модель не задається й Claude Agent не підключається", async () => {

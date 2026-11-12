@@ -230,6 +230,23 @@ describe("вебхук Telegram", () => {
 			expect(replies()).toEqual(["⏳ Працює", "⏹ Зупинено. Відповідь на пост із сесією продовжить роботу.", "Нічого зупиняти: ⏹ Зупинена", "⏹ Зупинена"]);
 		});
 
+		it("«@opus задача» задає модель нової сесії (разом з репозиторієм), префікс не потрапляє в задачу", async () => {
+			const { send, sessions } = setup();
+			await send(msg({ text: "@opus acme/site: Поправ README" }));
+			expect(sessions.get(SID)?.input).toMatchObject({ prompt: "Поправ README", repo: "acme/site", model: "opus" });
+		});
+
+		it("/model змінює модель відповіддю на пост; без відповіді чи з недоступною моделлю — підказка", async () => {
+			const { send, sessions, replies } = await withSession();
+			await send(msg({ text: "/model opus", reply_to_message: botPost() }, 8));
+			expect(sessions.get(SID)?.input.model).toBe("opus");
+			await send(msg({ text: "/model nope", reply_to_message: botPost() }, 9));
+			await send(msg({ text: "/model" }, 10));
+			expect(replies()[0]).toContain("Модель сесії: opus");
+			expect(replies()[1]).toContain("недоступна");
+			expect(replies()[2]).toContain("/model <модель>");
+		});
+
 		it("/delete видаляє сесію й пост; наступні команди бачать, що її немає", async () => {
 			const { send, sessions, replies } = await withSession();
 			await send(msg({ text: "/delete", reply_to_message: botPost() }, 8));
