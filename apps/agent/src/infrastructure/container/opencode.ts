@@ -60,6 +60,15 @@ export async function replyForm(oc: Opencode, sessionId: string, formId: string,
 	await res.body?.cancel();
 }
 
+// Скасування форми (питання агента без вибраного варіанта): агент отримує message і продовжує.
+export async function cancelForm(oc: Opencode, sessionId: string, formId: string, message?: string): Promise<void> {
+	const query = message ? `?message=${encodeURIComponent(message)}` : "";
+	const res = await oc.fetch(`/api/session/${sessionId}/form/${formId}${query}`, { method: "DELETE" });
+	const status = res.status;
+	await res.body?.cancel();
+	if (!res.ok && status !== 404 && status !== 409) throw new Error(`opencode form cancel: ${status}`);
+}
+
 export async function sessionExists(oc: Opencode, sessionId: string): Promise<boolean> {
 	const res = await oc.fetch(`/api/session/${sessionId}`);
 	await res.body?.cancel();

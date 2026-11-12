@@ -1,7 +1,7 @@
 import type { Posts } from "./posts";
 import { WORKING } from "./config";
 import { formKey, watchKey, type PendingForm, type Watch } from "./state";
-import { replyForm, type Opencode } from "./opencode";
+import { cancelForm, replyForm, type Opencode } from "./opencode";
 
 // Питання агента з кнопками-відповідями: стан форми живе у сховищі, відповідь передається агентові й показується в пості.
 export class Forms {
@@ -18,6 +18,16 @@ export class Forms {
 	// Питання, що лишилось без відповіді (сесія завершилась чи видалена), неактуальне.
 	drop(id: string): Promise<void> {
 		return this.storage.delete(formKey(id)).then(() => undefined);
+	}
+
+	// Користувач написав текст замість кнопки: питання скасовується, текст іде агентові як відповідь.
+	async cancel(id: string, message: string): Promise<void> {
+		const form = await this.storage.get<PendingForm>(formKey(id));
+		if (!form) return;
+		await this.storage.delete(formKey(id));
+		await cancelForm(this.opencode(), form.ocId, form.formId, message).catch((err) => console.error("form cancel failed:", err));
+		const w = await this.storage.get<Watch>(watchKey(id));
+		if (w) await this.posts.show(w, `${WORKING} · відповідь: ${message.slice(0, 100)}`).catch(() => {});
 	}
 
 	// Відповідь кнопкою: передає вибраний варіант агентові й показує його в пості. undefined — питання вже неактуальне.
