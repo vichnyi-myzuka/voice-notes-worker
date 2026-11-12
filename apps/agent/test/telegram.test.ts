@@ -243,7 +243,7 @@ describe("вебхук Telegram", () => {
 				const { send, sessions, replies } = setup("", (user) => (user.includes("our bot") ? { repo: "me/bot", evidence: "нашим ботом", type: "test", name: "session-tests" } : null));
 				await send(msg({ text: "Давай попрацюємо над нашим ботом, додай тести" }));
 				expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Давай попрацюємо над нашим ботом, додай тести", repo: "me/bot", name: "test-session-tests" }]);
-				expect(replies()[0]).toMatch(/📦 me\/bot · 🌿 agent\/test-session-tests-\d+\n/);
+				expect(replies()[0]).toMatch(/📦 me\/bot\n🌿 agent\/test-session-tests-\d+\n/);
 			});
 
 			it("репозиторій без цитати з фрази (вигаданий моделлю) відкидається, назва лишається", async () => {

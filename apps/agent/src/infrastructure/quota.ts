@@ -32,15 +32,23 @@ export function parseQuota(headers: Headers): Quota {
 	return { fiveHour: win("5h"), sevenDay: win("7d"), status: headers.get("anthropic-ratelimit-unified-status") ?? undefined };
 }
 
-// Текст для людини: «5 годин: 63% (скидання через 2 год 10 хв)».
+const BAR_CELLS = 20; // одна клітинка = 5%
+
+// Смужка заповнення: «██████████████░░░░░░» (63% → 13 клітинок із 20, округлення до найближчої).
+export function progressBar(utilization: number): string {
+	const filled = Math.round(Math.min(1, Math.max(0, utilization)) * BAR_CELLS);
+	return "█".repeat(filled) + "░".repeat(BAR_CELLS - filled);
+}
+
+// Текст для людини: назва вікна, смужка з відсотком і час до скидання.
 export function describeQuota(q: Quota, now = Date.now()): string {
-	const line = (label: string, w?: Window) => {
+	const block = (label: string, w?: Window) => {
 		if (!w) return "";
 		const left = w.resetAt ? Math.max(0, w.resetAt * 1000 - now) : undefined;
-		return `${label}: ${Math.round(w.utilization * 100)}%${left === undefined ? "" : ` (скидання через ${duration(left)})`}`;
+		return `${label}\n${progressBar(w.utilization)} ${Math.round(w.utilization * 100)}%${left === undefined ? "" : `\nскидання через ${duration(left)}`}`;
 	};
-	const blocked = q.status && q.status !== "allowed" ? "\n⛔ Ліміт вичерпано." : "";
-	return `📊 Ліміти Claude\n${[line("5 годин", q.fiveHour), line("Тиждень", q.sevenDay)].filter(Boolean).join("\n")}${blocked}`;
+	const blocked = q.status && q.status !== "allowed" ? "\n\n⛔ Ліміт вичерпано." : "";
+	return `📊 Ліміти Claude\n\n${[block("5 годин", q.fiveHour), block("Тиждень", q.sevenDay)].filter(Boolean).join("\n\n")}${blocked}`;
 }
 
 function duration(ms: number): string {
