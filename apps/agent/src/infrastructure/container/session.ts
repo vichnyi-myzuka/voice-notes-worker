@@ -1,8 +1,8 @@
 import { tg, workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import type { AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { editChat, sendChat, type Answers } from "../chat";
+import { folderFor, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { editChat, sendChat, QUOTE_CLOSE, QUOTE_OPEN, type Answers } from "../chat";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
@@ -56,7 +56,6 @@ const sessionKey = (id: string) => `session:${id}`;
 const watchKey = (id: string) => `watch:${id}`;
 const sessionDir = (folder: string) => `/workspace/sessions/${folder}`;
 // Тека й гілка за змістом задачі: `<назва>-<останній сегмент id>` (номер повідомлення робить її унікальною); без назви — id.
-const folderFor = (id: string, name?: string) => (name ? `${name}-${id.split("-").at(-1)}` : id);
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -244,6 +243,7 @@ export class AgentSession extends DurableObject<Env> {
 		const byOc = new Map([...watches].map(([key, w]) => [w.ocId, [key, w] as const]));
 
 		for (const ocId of active) {
+			if (!byOc.has(ocId)) await this.watchPrompted(ocId).catch((err) => console.error("rewatch failed:", err)); // працює без стеження (страховка до подій)
 			const info = await getSession(oc, ocId);
 			const tokens = totalTokens(info);
 			const over = (info.cost ?? 0) > maxCost ? `вартість $${(info.cost ?? 0).toFixed(2)} (ліміт $${maxCost})` : tokens > maxTokens ? `${tokens} токенів (ліміт ${maxTokens})` : "";
@@ -290,7 +290,12 @@ export class AgentSession extends DurableObject<Env> {
 	// Пост сесії: шапка (завдання) і поточний стан чи підсумок. З підсумком шапка скорочується, щоб усе влізло в 4096 символів.
 	private postText(w: WatchTarget, status: string, final: boolean): string {
 		const header = (w.header ?? "").trim();
-		return [final && header.length > HEADER_FINAL_MAX ? `${header.slice(0, HEADER_FINAL_MAX)}…` : header, status].filter(Boolean).join("\n\n");
+		let head = header;
+		if (final && header.length > HEADER_FINAL_MAX) {
+			head = `${header.slice(0, HEADER_FINAL_MAX)}…`;
+			if (head.includes(QUOTE_OPEN) && !head.includes(QUOTE_CLOSE)) head += QUOTE_CLOSE; // обрізана цитата лишається закритою
+		}
+		return [head, status].filter(Boolean).join("\n\n");
 	}
 
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
@@ -519,7 +524,11 @@ export class AgentSession extends DurableObject<Env> {
 		const kind = event.type.startsWith("session.execution.") ? event.type.slice("session.execution.".length) : "";
 		if (!ocId || !["started", "succeeded", "failed", "interrupted"].includes(kind)) return;
 		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: "watch:" }))].find(([, w]) => w.ocId === ocId);
-		if (!entry) return;
+		if (!entry) {
+			// Сесія знову працює без стеження (агент сам продовжив хід, напр. після фонової команди): беремо її під нагляд, щоб підсумок дійшов у чат.
+			if (kind === "started") await this.watchPrompted(ocId).catch((err) => console.error("rewatch failed:", err));
+			return;
+		}
 		const [key, w] = entry;
 		if (kind === "started") return void (w.seenBusy || (await this.ctx.storage.put(key, { ...w, seenBusy: true } satisfies Watch)));
 		await this.finishWatch(key, w, await this.summary(this.opencode(), w));
@@ -578,7 +587,7 @@ export class AgentSession extends DurableObject<Env> {
 		// Що відбувається, каже маленька модель за завданням і останніми діями; без неї (збій, тайм-аут) — технічний підпис.
 		let activity = "";
 		if (!announcement) {
-			activity = (await narrate(workersLlm({ AI: this.env.AI, OPENAI_KEY: this.env.OPENAI_API_KEY }), w.header ?? "", this.recent.get(ocId) ?? [], this.narration.get(ocId))) ?? "";
+			activity = (await narrate(workersLlm({ AI: this.env.AI, OPENAI_KEY: this.env.OPENAI_API_KEY }), (w.header ?? "").replace(/[\uE000\uE001]/g, ""), this.recent.get(ocId) ?? [], this.narration.get(ocId))) ?? "";
 			if (activity) this.narration.set(ocId, activity);
 		}
 		const text = announcement ?? `${WORKING} · ${activity || describeActivity(tool, input)}`;

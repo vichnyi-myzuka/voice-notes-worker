@@ -79,7 +79,7 @@ describe("вебхук Telegram", () => {
 		await send(msg({ voice: { file_id: "f1", file_size: 1000, mime_type: "audio/ogg" } }));
 		expect(llm.transcribe).toHaveBeenCalledWith(expect.any(ArrayBuffer), "audio/ogg");
 		expect([...sessions.values()][0].input.prompt).toBe("Додай CHANGELOG");
-		expect(replies()).toEqual([`🗣 Додай CHANGELOG\n\n⏳ Запускаю\n\n🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
+		expect(replies()).toEqual([`<blockquote expandable>🗣 Додай CHANGELOG</blockquote>\n\n⏳ Запускаю\n\n🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
 	});
 
 	it("повторна доставка того самого повідомлення не створює другу сесію", async () => {
@@ -115,13 +115,19 @@ describe("вебхук Telegram", () => {
 		expect(sessions.size).toBe(1);
 		const posts = calls.filter((c) => c.method === "sendMessage");
 		expect(posts).toHaveLength(1);
-		expect(posts[0].body.text).toContain("🗣 Додай CHANGELOG");
+		expect(posts[0].body.text).toContain("<blockquote expandable>🗣 Додай CHANGELOG</blockquote>");
 	});
 
 	it("у приваті оригінал лишається: нічого не видаляється", async () => {
 		const { send, calls } = setup();
 		await send(msg({ text: "Поправ README" }));
 		expect(calls.some((c) => c.method === "deleteMessage")).toBe(false);
+	});
+
+	it("у приваті голосове видаляється: транскрипт уже в пості сесії", async () => {
+		const { send, calls } = setup();
+		await send(post({ voice: { file_id: "f1", file_size: 10 } }));
+		expect(calls.some((c) => c.method === "deleteMessage")).toBe(true);
 	});
 
 	it("чужий користувач, чужий канал і група ігноруються", async () => {
@@ -237,7 +243,7 @@ describe("вебхук Telegram", () => {
 				const { send, sessions, replies } = setup("", (user) => (user.includes("our bot") ? { repo: "me/bot", evidence: "нашим ботом", type: "test", name: "session-tests" } : null));
 				await send(msg({ text: "Давай попрацюємо над нашим ботом, додай тести" }));
 				expect([...sessions.values()].map((s) => s.input)).toEqual([{ prompt: "Давай попрацюємо над нашим ботом, додай тести", repo: "me/bot", name: "test-session-tests" }]);
-				expect(replies()[0]).toContain("📦 me/bot");
+				expect(replies()[0]).toMatch(/📦 me\/bot · 🌿 agent\/test-session-tests-\d+\n/);
 			});
 
 			it("репозиторій без цитати з фрази (вигаданий моделлю) відкидається, назва лишається", async () => {
