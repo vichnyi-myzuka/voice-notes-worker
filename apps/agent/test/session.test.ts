@@ -709,6 +709,7 @@ describe("AgentSession", () => {
 				expect(ids()).toEqual([["del:tg-1-1"]]);
 				await t.session.setDeploy("me/app", "card-1", { text: "✅ Деплой успішний", done: true });
 				expect(edits().at(-1)!.text).toContain("✅ Деплой успішний");
+				expect(edits().at(-1)!.text).not.toContain("✅ Готово"); // підсумок агента згорнуто
 				expect(ids()).toEqual([["dismiss"]]);
 				expect(await t.session.setDeploy("me/app", "other-1", { text: "x" })).toBe(false);
 			});

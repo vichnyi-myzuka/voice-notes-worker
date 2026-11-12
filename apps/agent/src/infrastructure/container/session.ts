@@ -38,6 +38,7 @@ const jobKey = (id: string) => `job:${id}`;
 type PendingForm = { formId: string; ocId: string; key: string; choices: Choice[]; multiple?: boolean; selected: number[]; text: string };
 const formKey = (id: string) => `form:${id}`;
 const PROGRESS_INTERVAL_MS = 4000; // не частіше: ліміти Telegram на редагування одного повідомлення
+const HEADER_DEPLOYED_MAX = 150; // шапка згорнутого поста після успішного деплою
 const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096
 const SUMMARY_MAX = 3000; // підсумок у чат: решта обрізається (ліміт повідомлення Telegram — 4096)
 
@@ -292,11 +293,11 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Пост сесії: шапка (завдання) і поточний стан чи підсумок. З підсумком шапка скорочується, щоб усе влізло в 4096 символів.
-	private postText(w: WatchTarget, status: string, final: boolean): string {
+	private postText(w: WatchTarget, status: string, final: boolean, max = HEADER_FINAL_MAX): string {
 		const header = (w.header ?? "").trim();
 		let head = header;
-		if (final && header.length > HEADER_FINAL_MAX) {
-			head = `${header.slice(0, HEADER_FINAL_MAX)}…`;
+		if (final && header.length > max) {
+			head = `${header.slice(0, max)}…`;
 			if (head.includes(QUOTE_OPEN) && !head.includes(QUOTE_CLOSE)) head += QUOTE_CLOSE; // обрізана цитата лишається закритою
 		}
 		return [head, status].filter(Boolean).join("\n\n");
@@ -311,7 +312,9 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ctx.storage.put(lastKey(w.postId), { status, final, mergeable } satisfies LastShown);
 		const buttons: Buttons = deploy?.done ? "dismiss" : final ? (mergeable && !deploy ? "mergeable" : "done") : "working";
 		const review = deploy?.runId && deploy.repo ? { repo: deploy.repo, runId: deploy.runId } : undefined;
-		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, deploy ? `${status}\n\n${deploy.text}` : status, final), w.url, buttons, answers, review);
+		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
+		const text = deploy?.done ? this.postText(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.postText(w, deploy ? `${status}\n\n${deploy.text}` : status, final);
+		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.url, buttons, answers, review);
 	}
 
 	// Дописує в пост сесії її деплой (запит на схвалення, результат) і перемальовує пост на місці. false — поста немає чи правка не вдалась.
