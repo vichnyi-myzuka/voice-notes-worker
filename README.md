@@ -37,10 +37,10 @@ apps/notes/src/<шар>/<модуль>/    шари: interface → application �
     tracker/           порт трекера задач (TaskTracker) і нейтральні типи (TriageItem, TaskOp, SetupPlan…); Todoist — лише адаптер
     note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
     published/         опублікована нотатка: Note і порт NoteRepository
-    recording/         ключі запису в R2, ліміти розміру, час запису
+    recording/         порт RecordingStore (записи, підписи, стан обробки), ключі запису, ліміти розміру, час запису
   infrastructure/      зовнішні сервіси й сховище
     env/               Env і Job
-    r2/                адаптери NoteRepository і TaskLedger (нотатки та задачі нотаток у R2)
+    r2/                адаптери RecordingStore, NoteRepository і TaskLedger (записи, нотатки та задачі нотаток у R2)
     todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
 AGENTS.md              правила роботи з репозиторієм для агентів
 .dev.vars.example      (в apps/notes) шаблон секретів для локального запуску
@@ -53,7 +53,7 @@ AGENTS.md              правила роботи з репозиторієм �
 - **`Channel`** (`packages/core`, `domain/channel`): звідки приходять записи й куди публікуються нотатки. Реалізація: `packages/core` → `infrastructure/telegram` (вебхук, Bot API, сутності тексту, реакції, ліміти підпису).
 - **`TaskTracker`** (`domain/tracker`): знімок проєктів і міток, тріаж, створення й оновлення задач, налаштування проєктів і міток. Реалізація: `infrastructure/todoist` (`/sync`, команди, промпти й валідація полів задач).
 
-- **`NoteRepository`** і **`TaskLedger`** (`domain/published`, `domain/tracker`): збереження нотаток і задач нотаток. Реалізація: `infrastructure/r2`.
+- **`RecordingStore`**, **`NoteRepository`** і **`TaskLedger`** (`domain/recording`, `domain/published`, `domain/tracker`): збереження сирих записів (разом із підписами й станом обробки), нотаток і задач нотаток. Реалізація: `infrastructure/r2`.
 - **`Llm`** (`packages/core`, `domain/llm`): structured output і розпізнавання голосу. Реалізація: `packages/core` → `infrastructure/llm`.
 
 Адаптери створюються в `src/index.ts` і передаються вниз як `{ channel, tracker, notes, ledger, llm }`. Домен не імпортує `infrastructure`. Запис у R2 (аудіо, `<key>.state.json`) лишається в `application` через `Env`. Щоб підключити інший канал чи трекер, потрібно реалізувати відповідний інтерфейс; промпти тріажу при цьому належать адаптеру, бо описують модель конкретного трекера.

@@ -1,7 +1,7 @@
 import type { Env } from "../../infrastructure/env";
 import { buildCaption } from "../../domain/note";
 import type { Note } from "../../domain/published";
-import { TELEGRAM_MAX_BYTES, TRANSCRIBE_MAX_BYTES, captionKey, formatRecordedAt, recordedTs } from "../../domain/recording";
+import { TELEGRAM_MAX_BYTES, TRANSCRIBE_MAX_BYTES, formatRecordedAt, recordedTs, stateKey } from "../../domain/recording";
 import { runSetup } from "../setup";
 import { openSteps } from "@voice-notes/core";
 import { syncIssues } from "../issues";
@@ -11,25 +11,21 @@ import { captionNotice, refreshNote } from "./show";
 import type { Ports, State } from "./types";
 
 export async function processNote(env: Env, ports: Ports, key: string, lastAttempt: boolean): Promise<void> {
-	const { channel, tracker, notes, ledger, llm } = ports;
-	const obj = await env.BUCKET.get(key);
+	const { channel, tracker, notes, ledger, llm, recordings } = ports;
+	const obj = await recordings.get(key);
 	if (!obj) {
 		// Аудіо видаляється лише після успішної відправки, тож це повторна доставка.
 		console.log(`${key} not found, already processed`);
 		return;
 	}
 
-	const stateKey = `${key}.state.json`;
-	const run = await openSteps<State>(env, stateKey, lastAttempt);
+	const run = await openSteps<State>(env, stateKey(key), lastAttempt);
 	const { step } = run;
 	const recordedAt = formatRecordedAt(key, env.TIMEZONE);
-	const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
+	const { contentType } = obj;
 	const isText = contentType.startsWith("text/"); // написаний текст: він і є транскриптом
 	const isPhoto = contentType.startsWith("image/"); // фото: «транскрипт» — підпис і текст із зображення
-	// Тіло об'єкта R2 читається лише раз, тож кешуємо.
-	let data: ArrayBuffer | undefined;
-	const read = async () => (data ??= await obj.arrayBuffer());
-	const source = { blob: async () => new Blob([await read()], { type: contentType }), metadata: obj.customMetadata };
+	const source = { blob: async () => new Blob([await obj.bytes()], { type: contentType }), metadata: obj.metadata };
 
 	// Задовгий для транскрипції в межах 15 хв: не ретраїмо, шлемо оригінал без транскрипту.
 	if (obj.size > TRANSCRIBE_MAX_BYTES) {
@@ -49,7 +45,7 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 			}
 			return true;
 		});
-		await env.BUCKET.delete([key, stateKey]);
+		await recordings.remove(key);
 		return;
 	}
 
@@ -57,16 +53,16 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 		isText
 			? (await obj.text()).trim()
 			: isPhoto
-				? await readImage(llm, await read(), contentType, (await (await env.BUCKET.get(captionKey(key)))?.text()) ?? "", lastAttempt)
-				: await llm.transcribe(await read(), contentType),
+				? await readImage(llm, await obj.bytes(), contentType, await recordings.caption(key), lastAttempt)
+				: await llm.transcribe(await obj.bytes(), contentType),
 	);
 	const meta = await step("meta", () => summarize(llm, transcript, recordedAt, lastAttempt));
 
 	// Тиша, шум або голосове «скасуй»: нічого не публікуємо, прибираємо все, включно з оригіналом у каналі.
 	if (meta.discard) {
 		console.log(`${key} discarded: ${meta.discard}`);
-		await channel.removeOrigin(obj.customMetadata);
-		await env.BUCKET.delete([key, stateKey, captionKey(key)]);
+		await channel.removeOrigin(obj.metadata);
+		await recordings.remove(key);
 		return;
 	}
 
@@ -138,9 +134,9 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 
 	// Голосове, надіслане в канал, видаляємо: нотатка вище містить те саме аудіо.
 	await step("originalDeleted", async () => {
-		await channel.removeOrigin(obj.customMetadata);
+		await channel.removeOrigin(obj.metadata);
 		return true;
 	});
 
-	await env.BUCKET.delete([key, stateKey, captionKey(key)]);
+	await recordings.remove(key);
 }

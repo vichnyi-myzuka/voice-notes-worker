@@ -43,10 +43,10 @@ src/<шар>/<модуль>/    шари: interface → application → domain, 
     tracker/           порт трекера задач (TaskTracker) і нейтральні типи (TriageItem, TaskOp, SetupPlan…); Todoist — лише адаптер
     note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
     published/         опублікована нотатка: Note і порт NoteRepository
-    recording/         ключі запису в R2, ліміти розміру, час запису
+    recording/         порт RecordingStore (записи, підписи, стан обробки), ключі запису, ліміти розміру, час запису
   infrastructure/      зовнішні сервіси й сховище
     env/               Env і Job
-    r2/                адаптери NoteRepository і TaskLedger (нотатки та задачі нотаток у R2)
+    r2/                адаптери RecordingStore, NoteRepository і TaskLedger (записи, нотатки та задачі нотаток у R2)
     todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
 ```
 

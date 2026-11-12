@@ -1,5 +1,6 @@
 import { type Channel, type Llm } from "@voice-notes/core";
 import type { ContentState } from "../../domain/note";
+import type { RecordingStore } from "../../domain/recording";
 import type { NoteRepository, PublishState } from "../../domain/published";
 import type { IssueLedger, IssueTracker } from "../../domain/issues";
 import type { TaskLedger, TaskTracker } from "../../domain/tracker";
@@ -12,5 +13,5 @@ import type { SyncState } from "../tasks";
 // і не шле в Telegram те, що вже відправлено.
 export type State = ContentState & SetupState & SyncState & IssueState & PublishState;
 
-// Зовнішні системи, з якими працює конвеєр: куди публікуємо нотатки, де ведемо задачі та issues і де це зберігаємо.
-export type Ports = { channel: Channel; tracker: TaskTracker; notes: NoteRepository; ledger: TaskLedger; issues: IssueTracker; issueLedger: IssueLedger; llm: Llm };
+// Зовнішні системи, з якими працює конвеєр: куди публікуємо нотатки, де ведемо задачі та issues і де це зберігаємо (записи, нотатки, задачі).
+export type Ports = { channel: Channel; tracker: TaskTracker; notes: NoteRepository; recordings: RecordingStore; ledger: TaskLedger; issues: IssueTracker; issueLedger: IssueLedger; llm: Llm };
