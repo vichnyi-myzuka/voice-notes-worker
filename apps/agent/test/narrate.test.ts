@@ -31,6 +31,7 @@ describe("describeCall", () => {
 		expect(describeCall("grep", { pattern: "describeActivity" })).toBe("grep: describeActivity");
 		expect(describeCall("read", { filePath: "/workspace/sessions/x-1/src/a.ts" })).toBe("read: src/a.ts");
 		expect(describeCall("custom", undefined)).toBe("custom");
+		expect(describeCall("sure_get_transactions", { category: "Їжа", start_date: "2025-10-01", page: 1 })).toBe("sure_get_transactions: category Їжа, start date 2025-10-01");
 	});
 });
 

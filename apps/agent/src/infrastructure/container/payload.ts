@@ -3,6 +3,7 @@ import agents from "../../../payload/AGENTS.md";
 import prePush from "../../../payload/pre-push.sh";
 import publish from "../../../payload/publish.sh";
 import sessionPrep from "../../../payload/session-prep.sh";
+import sureAgent from "../../../payload/sure-agent.md";
 
 // Файли, які воркер розкладає в контейнер сам (а не кладе в образ): вони змінюються часто, і від цього не мають скидатися знімки
 // та історія сесій. Нові сесії одразу працюють з актуальними версіями; старі сесії зберігають своє.
@@ -38,6 +39,12 @@ export function sureMcpConfig(env: Env, dir: string): PayloadFile | undefined {
 		headers["CF-Access-Client-Id"] = "{env:SURE_ACCESS_CLIENT_ID}";
 		headers["CF-Access-Client-Secret"] = "{env:SURE_ACCESS_CLIENT_SECRET}";
 	}
-	const config = { $schema: "https://opencode.ai/config.json", mcp: { servers: { sure: { type: "remote", url: env.SURE_MCP_URL, oauth: false, headers } } } };
+	// Агент `sure` (фінансовий аналітик з правилами роботи з даними й приватними сайтами) стає основним для сесії.
+	const config = {
+		$schema: "https://opencode.ai/config.json",
+		default_agent: "sure",
+		agents: { sure: { description: "Фінансовий аналітик: працює з даними власника в Sure", mode: "primary", system: sureAgent } },
+		mcp: { servers: { sure: { type: "remote", url: env.SURE_MCP_URL, oauth: false, headers } } },
+	};
 	return { path: `${dir}/.opencode/opencode.json`, mode: "644", content: JSON.stringify(config, null, 2) };
 }
