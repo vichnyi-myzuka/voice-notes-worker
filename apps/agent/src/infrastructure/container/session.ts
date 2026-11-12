@@ -2,7 +2,7 @@ import { tg, workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { editChat, sendChat, type Answers } from "../chat";
+import { editChat, sendChat, QUOTE_CLOSE, QUOTE_OPEN, type Answers } from "../chat";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
@@ -291,7 +291,12 @@ export class AgentSession extends DurableObject<Env> {
 	// Пост сесії: шапка (завдання) і поточний стан чи підсумок. З підсумком шапка скорочується, щоб усе влізло в 4096 символів.
 	private postText(w: WatchTarget, status: string, final: boolean): string {
 		const header = (w.header ?? "").trim();
-		return [final && header.length > HEADER_FINAL_MAX ? `${header.slice(0, HEADER_FINAL_MAX)}…` : header, status].filter(Boolean).join("\n\n");
+		let head = header;
+		if (final && header.length > HEADER_FINAL_MAX) {
+			head = `${header.slice(0, HEADER_FINAL_MAX)}…`;
+			if (head.includes(QUOTE_OPEN) && !head.includes(QUOTE_CLOSE)) head += QUOTE_CLOSE; // обрізана цитата лишається закритою
+		}
+		return [head, status].filter(Boolean).join("\n\n");
 	}
 
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
@@ -583,7 +588,7 @@ export class AgentSession extends DurableObject<Env> {
 		// Що відбувається, каже маленька модель за завданням і останніми діями; без неї (збій, тайм-аут) — технічний підпис.
 		let activity = "";
 		if (!announcement) {
-			activity = (await narrate(workersLlm({ AI: this.env.AI, OPENAI_KEY: this.env.OPENAI_API_KEY }), w.header ?? "", this.recent.get(ocId) ?? [], this.narration.get(ocId))) ?? "";
+			activity = (await narrate(workersLlm({ AI: this.env.AI, OPENAI_KEY: this.env.OPENAI_API_KEY }), (w.header ?? "").replace(/[\uE000\uE001]/g, ""), this.recent.get(ocId) ?? [], this.narration.get(ocId))) ?? "";
 			if (activity) this.narration.set(ocId, activity);
 		}
 		const text = announcement ?? `${WORKING} · ${activity || describeActivity(tool, input)}`;

@@ -1,7 +1,7 @@
 import { DOWNLOAD_MAX_BYTES, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import type { Agent, SessionReport } from "../../domain/agent";
 import type { Env } from "../../env";
-import { sendChat } from "../../infrastructure/chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, sendChat } from "../../infrastructure/chat";
 import { describeQuota, fetchQuota } from "../../infrastructure/quota";
 import { routeTask, type KnownRepo } from "./repo";
 
@@ -179,10 +179,14 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 
 	const url = agent.url(id);
 	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
-	const shown = inChannel || file ? `${file ? "🗣 " : ""}${prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt}\n\n` : "";
+	const clipped = prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt;
 	// Без прев'ю: інакше Telegram показує картку сторінки за Access.
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
-	const header = `${shown}${repo ? `📦 ${repo}` : ""}`.trim();
+	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
+	const header = (
+		file ? [repo ? `📦 ${repo}` : "", `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
+		: `${inChannel ? `${clipped}\n\n` : ""}${repo ? `📦 ${repo}` : ""}`
+	).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
 	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }) }, { chatId: chat, url, postId, header });

@@ -79,7 +79,7 @@ describe("вебхук Telegram", () => {
 		await send(msg({ voice: { file_id: "f1", file_size: 1000, mime_type: "audio/ogg" } }));
 		expect(llm.transcribe).toHaveBeenCalledWith(expect.any(ArrayBuffer), "audio/ogg");
 		expect([...sessions.values()][0].input.prompt).toBe("Додай CHANGELOG");
-		expect(replies()).toEqual([`🗣 Додай CHANGELOG\n\n⏳ Запускаю\n\n🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
+		expect(replies()).toEqual([`<blockquote expandable>🗣 Додай CHANGELOG</blockquote>\n\n⏳ Запускаю\n\n🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
 	});
 
 	it("повторна доставка того самого повідомлення не створює другу сесію", async () => {
@@ -115,7 +115,7 @@ describe("вебхук Telegram", () => {
 		expect(sessions.size).toBe(1);
 		const posts = calls.filter((c) => c.method === "sendMessage");
 		expect(posts).toHaveLength(1);
-		expect(posts[0].body.text).toContain("🗣 Додай CHANGELOG");
+		expect(posts[0].body.text).toContain("<blockquote expandable>🗣 Додай CHANGELOG</blockquote>");
 	});
 
 	it("у приваті оригінал лишається: нічого не видаляється", async () => {
