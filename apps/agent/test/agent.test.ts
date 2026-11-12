@@ -25,6 +25,9 @@ describe("durableAgent", () => {
 			report: vi.fn(async () => ({ status: "idle" as const })),
 			watch: vi.fn(async () => {}),
 			connections: vi.fn(async () => ({ running: false })),
+			silpoLoginUrl: vi.fn(async () => "https://mcp.silpo.ua/authorize"),
+			silpoCallback: vi.fn(async () => true),
+			silpoConnected: vi.fn(async () => true),
 			info: vi.fn(async () => ({ running: true, activeAt: null, alarmAt: null, snapshot: null, streams: [] })),
 			fetch: vi.fn(async () => new Response("ui")),
 		};

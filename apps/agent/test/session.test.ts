@@ -495,6 +495,39 @@ describe("AgentSession", () => {
 		expect(env.SURE_MCP_URL).toBeUndefined();
 	});
 
+	it("MCP Сільпо: токен у конфігу теки (права 600), окремий агент `silpo`, разом зі Sure — `finance`; без входу — примітка в завданні", async () => {
+		const base = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "w", TG_OWNER_ID: "1", CHAT_ID: "-100", ACCESS_AUD: "aud", ACCESS_TEAM_DOMAIN: "t" };
+		const sureEnv = { ...base, SURE_MCP_URL: "https://sure.example/mcp", SURE_MCP_TOKEN: "tok" };
+		const login = { client: { id: "cid", redirect: "r" }, tokens: { access: "silpo-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };
+		const written = (o: ReturnType<typeof setup>["opencode"]) => {
+			const [exec] = o.execs.filter((e) => e.cmd[0] === "sh");
+			const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
+			return { file, config: JSON.parse(file.content) };
+		};
+
+		const only = setup(base);
+		only.store.set("silpo", login);
+		await only.session.start(ID, { prompt: "Що я купував", silpo: true });
+		const { file, config } = written(only.opencode);
+		expect(file.mode).toBe("600");
+		expect(config.default_agent).toBe("silpo");
+		expect(config.mcp.servers).toEqual({ silpo: { type: "remote", url: "https://mcp.silpo.ua/mcp", oauth: false, headers: { Authorization: "Bearer silpo-acc" } } });
+		expect(only.store.get(`session:${ID}`)).toMatchObject({ silpo: true });
+
+		const both = setup(sureEnv);
+		both.store.set("silpo", login);
+		await both.session.start(ID, { prompt: "Зістав", silpo: true, sure: true });
+		const b = written(both.opencode).config;
+		expect(b.default_agent).toBe("finance");
+		expect(Object.keys(b.mcp.servers).sort()).toEqual(["silpo", "sure"]);
+		expect(b.agents.finance.system).toMatch(/Sure[\s\S]*Silpo/);
+
+		const out = setup(base);
+		await out.session.start(ID, { prompt: "Що я купував", silpo: true });
+		expect(out.opencode.execs.filter((e) => e.cmd[0] === "sh")).toEqual([]);
+		expect(JSON.stringify(out.opencode.prompts ?? out.opencode)).toContain("/silpo/login");
+	});
+
 	describe("відстеження сесій: підсумок у чаті й ліміти", () => {
 		const TARGET = { chatId: 5, url: "https://agent.example/s/session-0001" };
 		const sent: { chat_id: number; text: string }[] = [];

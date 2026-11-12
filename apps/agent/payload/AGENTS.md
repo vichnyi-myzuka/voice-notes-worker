@@ -39,6 +39,10 @@ You can publish a small static project (an HTML page, a report, a prototype, a g
 
 If an MCP server named `sure` is connected (its tools look like `sure_get_transactions`, `sure_get_accounts`, `sure_get_balance_sheet`), it gives access to the owner's personal finance app. Use it when the task needs the owner's financial data; do not call it otherwise. The tools can also change data (`update_transaction`, categories, budgets, rules, imports): change data only when the task explicitly asks for it. Financial data is private: never put it into commits, pull requests, issues or public sites. Exception: when the task needs a chart, report or dashboard of it (or the owner asks for a page), you may show it on a private site (plain `publish`, never `--public`). In the final message give only what the task needs.
 
+## Purchase data (Silpo)
+
+If an MCP server named `silpo` is connected (its tools start with `silpo_`), it gives access to the owner's Silpo supermarket account (orders, receipts, products). It is private data: same rules as the finance data above (never in commits, pull requests, issues or public sites; a private site is fine), the account is read-only unless the task explicitly asks otherwise, and never print or store the access token.
+
 ## Chat commands
 
 The owner controls sessions from the Telegram chat with commands that the worker handles before they reach you, so you never see them. Know what they do to your work:

@@ -20,10 +20,11 @@ const SYSTEM = `You route tasks for a coding agent. The owner dictates a task (u
 - "type": the kind of work, like a conventional-commit type: feat (new capability), fix (bug), docs, refactor, test, chore (tooling, config, maintenance).
 - "name": a short English kebab-case name for the task without the type, 2-4 words, only a-z, 0-9 and "-", e.g. "session-delete" or "readme-typos". Together with the type it becomes the folder and git branch name ("feat-session-delete"), so describe the work, not the wording of the request.
 - "finance": true only if doing the task requires reading or changing the owner's own personal finance data kept in their finance tracker (Sure): their spending, income, transactions, accounts, balances, budgets, net worth, subscriptions, or the finance app itself by name (Sure, Shure, "шур"). false for everything else, including building a finance-related page, app or script, or tasks about money in general that need none of the owner's data.
+- "groceries": true only if doing the task requires the owner's own purchase history from the Silpo supermarket (what products they bought, receipts, orders, grocery prices they paid, bonuses), or Silpo by name ("Сільпо", "silpo"). false for everything else, including generic questions about food, recipes or shops.
 - "evidence" (only if asked): an exact quote copied from the task where the owner explicitly refers to one of the known repositories (its name, or a phrase from its description such as "our bot" or "yourself", or a named file or feature of that project). Empty string if there is no such quote.
 - "repo" (only if asked): the repository the evidence refers to, otherwise "none". Default to "none". Creating something new and standalone (a page, a site, a script, a prototype, a report) is NEVER about a known repository, even if the topic sounds related; neither is a generic or ambiguous task.`;
 
-export type Route = { repo?: string; name?: string; sure?: boolean };
+export type Route = { repo?: string; name?: string; sure?: boolean; silpo?: boolean };
 
 const NAME = /^[a-z0-9][a-z0-9-]{1,39}$/;
 export const TYPES = ["feat", "fix", "docs", "refactor", "test", "chore"] as const;
@@ -35,13 +36,13 @@ export function cleanName(raw: unknown): string | undefined {
 	return NAME.test(name) ? name : undefined;
 }
 
-// Один виклик моделі: назва для теки/гілки за змістом задачі, чи потрібні їй особисті фінанси власника (MCP Sure) й (якщо є відомі репозиторії) репозиторій із вільної фрази
+// Один виклик моделі: назва для теки/гілки за змістом задачі, чи потрібні їй особисті фінанси власника (MCP Sure), покупки в Сільпо (MCP Сільпо) й (якщо є відомі репозиторії) репозиторій із вільної фрази
 // («давай попрацюємо над нашим ботом»). Збій моделі дає порожній результат: сесія просто отримає технічну назву.
 export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Promise<Route> {
 	const names = repos.map((r) => r.repo);
 	const list = repos.length ? `Known repositories:\n${repos.map((r) => `- ${r.repo}: ${r.about}`).join("\n")}\n\n` : "";
 	// evidence перед repo: модель спершу наводить цитату, а потім вирішує; порядок властивостей зберігається.
-	const properties = { type: { type: "string", enum: [...TYPES] }, name: { type: "string" }, finance: { type: "boolean" }, ...(repos.length && { evidence: { type: "string" }, repo: { type: "string", enum: [...names, "none"] } }) };
+	const properties = { type: { type: "string", enum: [...TYPES] }, name: { type: "string" }, finance: { type: "boolean" }, groceries: { type: "boolean" }, ...(repos.length && { evidence: { type: "string" }, repo: { type: "string", enum: [...names, "none"] } }) };
 	const picked = await llm.askJson(
 		{
 			name: "agent_route",
@@ -50,7 +51,7 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 			schema: { type: "object", properties, required: Object.keys(properties), additionalProperties: false },
 			reasoning: "none",
 		},
-		(text) => JSON.parse(text) as { repo?: string; evidence?: string; type?: string; name?: string; finance?: boolean },
+		(text) => JSON.parse(text) as { repo?: string; evidence?: string; type?: string; name?: string; finance?: boolean; groceries?: boolean },
 	);
 	if (!picked) return {};
 	// Тип іде префіксом (feat-…, fix-…): з гілки одразу видно, що це за робота; без придатного типу — лише назва.
@@ -59,5 +60,5 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 	// Репозиторій приймається лише з цитатою, що справді є у фразі: вигадане моделлю відкидається.
 	const quote = picked.evidence?.trim().toLowerCase() ?? "";
 	const grounded = quote.length >= 3 && task.toLowerCase().includes(quote);
-	return { ...(picked.finance === true && { sure: true }), ...(grounded && picked.repo && names.includes(picked.repo) && { repo: picked.repo }), ...(name && { name }) };
+	return { ...(picked.finance === true && { sure: true }), ...(picked.groceries === true && { silpo: true }), ...(grounded && picked.repo && names.includes(picked.repo) && { repo: picked.repo }), ...(name && { name }) };
 }

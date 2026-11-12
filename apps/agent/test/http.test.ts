@@ -168,3 +168,25 @@ describe("ручний знімок", () => {
 		expect(snapshots).toHaveLength(0);
 	});
 });
+
+describe("вхід у Сільпо", () => {
+	it("/silpo/login редіректить на Сільпо з адресою повернення на цей воркер", async () => {
+		const { agent } = fakeAgent();
+		const res = await handleFetch(call("/silpo/login"), env, agent);
+		expect(res.status).toBe(302);
+		expect(res.headers.get("location")).toContain("redirect_uri=https://agent.example/silpo/callback");
+	});
+
+	it("/silpo/callback з правильним state підключає Сільпо, з хибним чи без коду — 400", async () => {
+		const { agent } = fakeAgent();
+		expect((await handleFetch(call("/silpo/callback?code=c1&state=good"), env, agent)).status).toBe(200);
+		expect(await agent.silpoConnected()).toBe(true);
+		expect((await handleFetch(call("/silpo/callback?code=c2&state=bad"), env, agent)).status).toBe(400);
+		expect((await handleFetch(call("/silpo/callback"), env, agent)).status).toBe(400);
+	});
+
+	it("вхід лише за Access", async () => {
+		const { agent } = fakeAgent();
+		expect((await handleFetch(call("/silpo/login"), accessEnv, agent)).status).toBe(503);
+	});
+});
