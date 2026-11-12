@@ -9,8 +9,12 @@ export const TELEGRAM_PATH = "/telegram";
 
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
 // repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. repo.ts); без них репозиторій задає лише префікс.
-export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[] };
+export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void> };
 
+// Відповіді на команди (/status, /quota…) зникають з чату самі. Чекаємо в waitUntil, якому Cloudflare дає ~30 с після відповіді
+// вебхуку, тому трохи менше.
+export const EPHEMERAL_MS = 25_000;
+export const EPHEMERAL_MARK = "💨"; // позначка, що повідомлення зникне саме
 const POST_MAX = 3500; // запас до ліміту повідомлення Telegram (4096): решта — посилання
 
 // Вебхук чату з агентом: канал CHAT_ID (бот адмін) і особистий чат власника, як у боті нотаток. Це єдиний шлях повз
@@ -73,11 +77,11 @@ async function handleButton(bot: BotEnv, query: NonNullable<TgUpdate["callback_q
 const SESSION_URL = /https?:\/\/\S+\/s\/(tg-[\w-]+)/;
 // Примусове оновлення: контейнер зупиняється, знімок видаляється; наступне завдання стартує з поточного образу (деплой
 // і так робить це сам при першому зверненні, команда потрібна, коли оновити треба одразу). Працюючих агентів не чіпає без force.
-async function updateContainer(env: BotEnv, chat: number, agent: Agent, force: boolean): Promise<void> {
+async function updateContainer(say: Say, agent: Agent, force: boolean): Promise<void> {
 	if (!(await agent.resetComputer(!force))) {
-		return void (await tgSendMessage(env, chat, "⏳ Зараз працює агент. Дочекайся завершення або надішли /update force, щоб перервати."));
+		return void (await say("⏳ Зараз працює агент. Дочекайся завершення або надішли /update force, щоб перервати."));
 	}
-	await tgSendMessage(env, chat, "🔄 Контейнер зупинено: наступне завдання стартує з поточного образу. Старі сесії скинуто (гілки в GitHub лишились).");
+	await say("🔄 Контейнер зупинено: наступне завдання стартує з поточного образу. Старі сесії скинуто (гілки в GitHub лишились).");
 }
 
 // Ліміти підписки Claude (/quota): без токена підписки їх немає, збій запиту не валить обробник.
@@ -89,6 +93,15 @@ async function quotaText(token?: string): Promise<string> {
 		console.error("quota failed:", err);
 		return "⚠️ Не вдалося отримати ліміти Claude.";
 	}
+}
+
+type Say = (text: string) => Promise<unknown>;
+
+// Надсилає службову відповідь і видаляє її через EPHEMERAL_MS, щоб вона не лишалась в історії чату.
+// Саме видалення повертається окремо (cleanups), щоб команду можна було прибрати одразу, не чекаючи.
+async function sayTemporarily(env: BotEnv, chat: number, text: string, sleep: (ms: number) => Promise<void>, cleanups: Promise<unknown>[]): Promise<void> {
+	const sent = await tg(env, "sendMessage", { chat_id: chat, text: `${text} ${EPHEMERAL_MARK}` });
+	cleanups.push(sleep(EPHEMERAL_MS).then(() => removeMessage(env, chat, sent.message_id)));
 }
 
 const removeMessage = (env: BotEnv, chat: number, messageId: number) =>
@@ -111,24 +124,27 @@ function textWithLinks(m: TgMessage["reply_to_message"]): string {
 // «owner/name: задача» на початку тексту — репозиторій для сесії.
 const REPO_PREFIX = /^([\w-][\w.-]*\/[\w-][\w.-]*)\s*:\s*([\s\S]+)$/;
 
-async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [] }: TelegramDeps, claudeToken?: string): Promise<void> {
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const text = msg.text?.trim();
 	const replied = SESSION_URL.exec(textWithLinks(msg.reply_to_message));
 	const say = (t: string) => tgSendMessage(env, chat, t);
+	const cleanups: Promise<unknown>[] = [];
+	const sayTemp: Say = (t) => sayTemporarily(env, chat, t, sleep, cleanups);
 
 	if (!file && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
 		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер з поточного образу.");
-		else if (command === "/update") await updateContainer(env, chat, agent, /\bforce\b/i.test(text ?? ""));
-		else if (command === "/quota") await say(await quotaText(claudeToken));
+		else if (command === "/update") await updateContainer(sayTemp, agent, /\bforce\b/i.test(text ?? ""));
+		else if (command === "/quota") await sayTemp(await quotaText(claudeToken));
 		else if (command === "/status" || command === "/stop" || command === "/delete") {
-			if (!replied) await say(`Надішли ${command} відповіддю на пост із сесією.`);
-			else await sessionCommand(env, chat, agent, replied[1], command, msg.reply_to_message?.message_id);
+			if (!replied) await sayTemp(`Надішли ${command} відповіддю на пост із сесією.`);
+			else await sessionCommand(env, chat, agent, sayTemp, replied[1], command, msg.reply_to_message?.message_id);
 		}
 		// Команда виконана: саму команду з чату прибираємо (відповідь бота лишається), як і прийняті уточнення.
 		if (command === "/status" || command === "/stop" || command === "/delete" || command === "/update" || command === "/quota") await removeMessage(env, chat, msg.message_id);
+		await Promise.all(cleanups); // відповідь зникне через EPHEMERAL_MS
 		return;
 	}
 	if (file && (file.file_size ?? 0) > DOWNLOAD_MAX_BYTES) {
@@ -182,8 +198,8 @@ async function transcribe(env: BotEnv, llm: Llm, file: { file_id: string; mime_t
 	return llm.transcribe(await res.arrayBuffer(), file.mime_type ?? "audio/ogg");
 }
 
-async function sessionCommand(env: BotEnv, chat: number, agent: Agent, id: string, command: "/status" | "/stop" | "/delete", postId?: number): Promise<void> {
-	if (!(await agent.link(id))) return void (await tgSendMessage(env, chat, "⚠️ Сесію не знайдено."));
+async function sessionCommand(env: BotEnv, chat: number, agent: Agent, say: Say, id: string, command: "/status" | "/stop" | "/delete", postId?: number): Promise<void> {
+	if (!(await agent.link(id))) return void (await say("⚠️ Сесію не знайдено."));
 	if (command === "/delete") {
 		await agent.remove(id);
 		if (postId) await tg(env, "deleteMessage", { chat_id: chat, message_id: postId }).catch((err) => console.error("delete post failed:", err));
@@ -192,11 +208,11 @@ async function sessionCommand(env: BotEnv, chat: number, agent: Agent, id: strin
 	}
 	const report = await agent.report(id);
 	if (command === "/stop") {
-		if (report.status !== "working") return void (await tgSendMessage(env, chat, `Нічого зупиняти: ${describe(report)}`));
+		if (report.status !== "working") return void (await say(`Нічого зупиняти: ${describe(report)}`));
 		await agent.abort(id);
-		return void (await tgSendMessage(env, chat, "⏹ Зупинено. Відповідь на пост із сесією продовжить роботу."));
+		return void (await say("⏹ Зупинено. Відповідь на пост із сесією продовжить роботу."));
 	}
-	await tgSendMessage(env, chat, describe(report));
+	await say(describe(report));
 }
 
 // Стан сесії для людини: працює / чекає / завершила / помилка / зупинена / контейнер спить.

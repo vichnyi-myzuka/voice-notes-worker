@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Llm } from "@voice-notes/core";
 import type { Env } from "../src/env";
 import { handleTelegram, parseRepos } from "../src/interface/telegram";
-import { describe as describeReport } from "../src/interface/telegram/handle";
+import { describe as describeReport, EPHEMERAL_MS } from "../src/interface/telegram/handle";
 import { fakeAgent } from "./fake-agent";
 
 // timingSafeEqual є лише в workerd: у Node мокаємо порівняння (мок за шляхом файлу в core).
@@ -10,6 +10,7 @@ vi.mock("../../../packages/core/src/infrastructure/security", () => ({ safeEqual
 
 const env = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "secret", TG_OWNER_ID: "42", CHAT_ID: "-1001" } as unknown as Env;
 const OWNER = 42;
+const TEMP_ID = 500; // message_id, який мок Telegram віддає службовим відповідям з 💨
 const CHANNEL = -1001;
 
 // Telegram Bot API на підміненому fetch: запам'ятовує виклики методів і віддає файл для getFile.
@@ -22,7 +23,7 @@ function setup(transcript = "Поправ README", pick?: (user: string) => { re
 			if (input.includes("/file/bot")) return new Response(new Uint8Array([1, 2, 3]));
 			const method = input.split("/").pop()!;
 			calls.push({ method, body: JSON.parse(init!.body as string) });
-			return Response.json({ ok: true, result: method === "getFile" ? { file_path: "voice/a.oga" } : { message_id: 1 } });
+			return Response.json({ ok: true, result: method === "getFile" ? { file_path: "voice/a.oga" } : { message_id: method === "sendMessage" && String(JSON.parse(init!.body as string).text).endsWith(" 💨") ? TEMP_ID : 1 } });
 		}),
 	);
 	const llm: Llm = {
@@ -32,7 +33,8 @@ function setup(transcript = "Поправ README", pick?: (user: string) => { re
 		}) as Llm["askJson"],
 		transcribe: vi.fn(async () => transcript) };
 	const pending: Promise<unknown>[] = [];
-	const deps = { agent: agent.agent, llm, repos: parseRepos(JSON.stringify([{ repo: "me/bot", about: "our bot" }, { repo: "me/site", about: "the website" }])), defer: (w: Promise<unknown>) => void pending.push(w) };
+	const sleep = vi.fn(async (_ms: number) => {});
+	const deps = { agent: agent.agent, llm, repos: parseRepos(JSON.stringify([{ repo: "me/bot", about: "our bot" }, { repo: "me/site", about: "the website" }])), defer: (w: Promise<unknown>) => void pending.push(w), sleep };
 	const send = async (message: unknown, headers: HeadersInit = { "x-telegram-bot-api-secret-token": "secret" }) => {
 		const channel = (message as { chat: { type: string } }).chat.type === "channel";
 		const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers, body: JSON.stringify({ update_id: 1, ...(channel ? { channel_post: message } : { message }) }) }), env, deps);
@@ -46,8 +48,8 @@ function setup(transcript = "Поправ README", pick?: (user: string) => { re
 		return res;
 	};
 	const answers = () => calls.filter((c) => c.method === "answerCallbackQuery").map((c) => c.body.text);
-	const replies = () => calls.filter((c) => c.method === "sendMessage").map((c) => c.body.text as string);
-	return { ...agent, llm, send, press, answers, calls, replies };
+	const replies = () => calls.filter((c) => c.method === "sendMessage").map((c) => (c.body.text as string).replace(/ 💨$/, ""));
+	return { ...agent, llm, sleep, send, press, answers, calls, replies };
 }
 
 const post = (extra: Record<string, unknown>, id = 9) => ({ message_id: id, date: 1, chat: { id: CHANNEL, type: "channel" }, ...extra });
@@ -279,7 +281,7 @@ describe("вебхук Telegram", () => {
 			const { send, calls } = await withSession();
 			await send(msg({ text: "/status", reply_to_message: botPost() }, 8));
 			await send(msg({ text: "/stop", reply_to_message: botPost() }, 9));
-			const deleted = () => calls.filter((c) => c.method === "deleteMessage").map((c) => c.body.message_id);
+			const deleted = () => calls.filter((c) => c.method === "deleteMessage" && c.body.message_id !== TEMP_ID).map((c) => c.body.message_id);
 			expect(deleted()).toEqual([8, 9]);
 			await send(msg({ text: "/delete", reply_to_message: botPost() }, 10));
 			expect(deleted()).toEqual([8, 9, 100, 7, 10]); // пост сесії, оригінал у приваті (7) і сама команда
@@ -297,14 +299,26 @@ describe("вебхук Telegram", () => {
 			sessions.get(SID)!.status = "working";
 			await send(msg({ text: "/update force" }, 10));
 			expect(resets).toHaveLength(2);
-			expect(calls.filter((c) => c.method === "deleteMessage").map((c) => c.body.message_id)).toEqual([8, 9, 10]); // команди прибрано
+			expect(calls.filter((c) => c.method === "deleteMessage" && c.body.message_id !== TEMP_ID).map((c) => c.body.message_id)).toEqual([8, 9, 10]); // команди прибрано
 		});
 
 		it("/quota без токена підписки пояснює, чому ліміти недоступні, і прибирає команду", async () => {
 			const { send, replies, calls } = setup();
 			await send(msg({ text: "/quota" }, 12));
 			expect(replies()).toEqual(["ℹ️ Ліміти доступні лише за підписки Claude (потрібен CLAUDE_CODE_OAUTH_TOKEN)."]);
-			expect(calls.filter((c) => c.method === "deleteMessage").map((c) => c.body.message_id)).toEqual([12]);
+			expect(calls.filter((c) => c.method === "deleteMessage" && c.body.message_id !== TEMP_ID).map((c) => c.body.message_id)).toEqual([12]);
+		});
+
+		it("відповідь команди має 💨 і видаляється через EPHEMERAL_MS; /start лишається", async () => {
+			const { send, calls, sleep } = setup();
+			await send(msg({ text: "/quota" }, 12));
+			const sent = calls.find((c) => c.method === "sendMessage")!.body.text as string;
+			expect(sent.endsWith(" 💨")).toBe(true);
+			expect(sleep.mock.calls).toEqual([[EPHEMERAL_MS]]);
+			expect(calls.filter((c) => c.method === "deleteMessage").map((c) => c.body.message_id).sort()).toEqual([12, TEMP_ID]); // і команда, і відповідь
+			calls.length = 0;
+			await send(msg({ text: "/start" }, 13));
+			expect(calls.filter((c) => c.method === "deleteMessage" && c.body.message_id === TEMP_ID)).toEqual([]);
 		});
 
 		it("команда без відповіді на пост просить відповісти на пост із сесією", async () => {
