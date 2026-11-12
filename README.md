@@ -436,6 +436,8 @@ GET  /s/<id>                                           → редірект на
 3. Секрети агента (`cd apps/agent`): `npx wrangler secret put PUBLIC_R2_ACCESS_KEY_ID`, `PUBLIC_R2_SECRET_ACCESS_KEY`, `PUBLIC_SITES_BASE_URL` (значення `https://share.<домен>`). Access для `share.` **не створюй**: хост відкритий навмисно.
 4. Після мержу CI розгорне `share.` разом із `sites`; токен Cloudflare у CI має право на DNS/маршрути зони (як для решти доменів). Потім `npm run deploy -w apps/agent` (схвалення `production-agent`).
 
+**Єдиний стиль сайтів-звітів.** Щоб усі звіти й дашборди (покупки, фінанси, діаграми) виглядали однаково, воркер кладе в контейнер скіл `report-site` (`payload/report-site-skill.md` → `~/.config/opencode/skills/report-site/SKILL.md` і `~/.claude/skills/report-site/SKILL.md`) та команду `new-report-site <тека>` (`payload/new-report-site.sh`). Агент підхоплює скіл сам за описом, без згадки в `AGENTS.md`. Скіл фіксує стек (Vite, React, Tailwind 4, компоненти в стилі shadcn/ui, Recharts, світла й темна тема, `uk-UA`, ₴) і правила вигляду, а команда створює робочий стартовий проєкт з KPI-картками, графіками й таблицею; агент лише підставляє дані. Змінити стиль усіх майбутніх звітів: поправ токени й компоненти у `new-report-site.sh` та правила в скілі. Шаблон збирається з нуля (перевірено `npm run build`).
+
 ### MCP Sure (особисті фінанси)
 
 Агент може читати й змінювати дані фінансового застосунку [Sure](https://github.com/we-promise/sure) власника через його вбудований MCP (`POST /mcp`, Bearer-токен). Це **не для всіх сесій**: воркер пише `.opencode/opencode.json` з MCP-сервером `sure` у теку лише тієї сесії, якій Sure потрібен (з git файл виключається через `info/exclude`). Sure вмикається, коли:
