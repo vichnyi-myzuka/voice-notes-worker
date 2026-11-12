@@ -3,6 +3,9 @@
 // Підпис до фото — окремим об'єктом: у customMetadata R2 (2 КБ) 1024 символи кирилиці можуть не влізти.
 export const captionKey = (key: string) => `${key}.caption`;
 
+// Проміжний стан обробки запису (див. openSteps): поруч із самим записом.
+export const stateKey = (key: string) => `${key}.state.json`;
+
 export function recordedTs(key: string): number {
 	return Number(key.split("-")[0]);
 }

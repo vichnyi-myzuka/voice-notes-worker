@@ -1,13 +1,13 @@
 import { safeEqual, tg, type BotEnv } from "@voice-notes/core";
-import type { Agent } from "../../domain/agent";
+import type { Deploys, Sessions } from "../../domain/agent";
 import type { Env } from "../../env";
 import { commitPulls, deleteBranch } from "../../infrastructure/github";
-import { removeMessage, removeOriginal } from "../telegram/handle";
+import { callback, removeMessage, removeOriginal } from "../../infrastructure/chat";
 import { reviewButtons } from "./review";
 
 export const GITHUB_PATH = "/github";
 
-export type GithubDeps = { agent: Agent; defer: (work: Promise<unknown>) => void };
+export type GithubDeps = { agent: Sessions & Deploys; defer: (work: Promise<unknown>) => void };
 
 type Payload = {
 	action?: string;
@@ -73,7 +73,7 @@ async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, re
 	}
 	if (shown) return;
 	const text = [title, repo, ...pulls.map((pr) => `PR #${pr.number}: ${pr.title}\n${pr.url}`), run.html_url, cleaned && "🧹 Сесію, worktree і гілку прибрано."].filter(Boolean).join("\n");
-	const reply_markup = { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: "dismiss" }]] };
+	const reply_markup = { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: callback.dismiss }]] };
 	// Якщо цей запуск чекав схвалення в окремому пості, результат дописуємо в нього (а не шлемо новий).
 	const asked = await agent.takeRef(refKey(repo, run.id)).catch(() => undefined);
 	if (asked && (await tg(bot, "editMessageText", { chat_id: asked.chatId, message_id: asked.messageId, text: `${asked.text}\n\n${text}`, reply_markup, link_preview_options: { is_disabled: true } }).then(() => true, (err) => (console.error("edit approval post failed:", err), false)))) return;
@@ -81,7 +81,7 @@ async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, re
 }
 
 // Прибирає сесію гілки (як /delete) і віддалену гілку; пост у чаті видаляє, лише якщо він не показує результату (keepPost). true, якщо сесію знайдено.
-async function cleanup(bot: BotEnv, env: Env, agent: Agent, repo: string, branch: string, keepPost: boolean): Promise<boolean> {
+async function cleanup(bot: BotEnv, env: Env, agent: Sessions & Deploys, repo: string, branch: string, keepPost: boolean): Promise<boolean> {
 	const removed = await agent.removeByBranch(repo, branch.slice("agent/".length));
 	if (env.GITHUB_TOKEN) await deleteBranch(env.GITHUB_TOKEN, repo, branch).catch((err) => console.error("delete remote branch failed:", err));
 	if (!removed) return false;

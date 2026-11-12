@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { workersLlm, type Channel, type Incoming } from "@voice-notes/core";
 import type { Ports } from "../src/application/pipeline";
 import { githubIssues } from "../src/infrastructure/github";
-import { r2IssueLedger, r2Ledger, r2Notes } from "../src/infrastructure/r2";
+import { r2IssueLedger, r2Ledger, r2Notes, r2Recordings } from "../src/infrastructure/r2";
 import { todoistTracker } from "../src/infrastructure/todoist";
 import { handleFetch } from "../src/interface/inbox";
 import { fakeEnv } from "./fake-env";
@@ -26,7 +26,7 @@ function fakeChannel(incoming?: { key: string; body: ArrayBuffer; incoming: Inco
 const ports = (channel: Channel, env: ReturnType<typeof envWith>): Ports => ({
 	channel,
 	tracker: todoistTracker(env),
-	notes: r2Notes(env),
+	notes: r2Notes(env), recordings: r2Recordings(env),
 	ledger: r2Ledger(env),
 	issues: githubIssues(env),
 	issueLedger: r2IssueLedger(env),

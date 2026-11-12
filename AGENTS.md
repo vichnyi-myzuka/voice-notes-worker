@@ -25,7 +25,7 @@
 Порти `Channel` і `Llm`, їхні адаптери (`telegram`, `llm`), `openSteps`, `safeEqual` і JSON-типи живуть у `packages/core` (імпорт `@voice-notes/core`); решта шляхів нижче — всередині `apps/notes/`. У тестах мок внутрішнього модуля core (напр. `safeEqual`) робиться за шляхом файлу в `packages/core/src`. Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../../application/tasks`; в межах шару — `../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`. Ядро (domain, application, interface) нічого не знає про Telegram і Todoist: воно працює з портами `Channel`, `TaskTracker`, `NoteRepository`, `TaskLedger`, `Llm` (у `domain`), адаптери — `infrastructure/{todoist,r2}` тут і `telegram`, `llm` у `packages/core`, складання — у `src/index.ts`. Службові дані каналу (`fileId`, `deleteChatId` тощо) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
 
 ```
-apps/agent/src/        domain/agent (порт Agent), infrastructure/{container (AgentSession — один Durable Object `main` з єдиним контейнером і всіма сесіями, durableAgent — адаптер порту)}, interface/{http, telegram (вебхук чату з агентом повз Access)}; container/ — образ (лише системне: Node, git, OpenCode, claude, entrypoint); payload/ — те, що воркер розкладає в контейнер сам (AGENTS.md агента, publish, session-prep, git-хук; підключаються як текст); тести з фейком `test/fake-agent.ts`
+apps/agent/src/        domain/agent (порт Agent = Sessions & Computer & Deploys), infrastructure/{container (AgentSession — один Durable Object `main` з єдиним контейнером і всіма сесіями: лише сесії, завдання, стеження й підсумки; решта в модулях поруч: `computer` — контейнер і знімки, `posts` — пост у чаті й деплой, `forms` — питання агента, `proxy` — веб-інтерфейс, `state` — типи й ключі сховища, `config` — ліміти й env; durableAgent — адаптер порту)}, interface/{http, telegram (вебхук чату з агентом повз Access: `handle` — маршрутизація, `commands` — /status, /update…, `buttons` — кнопки), github (вебхук GitHub)}; infrastructure/chat — пости й кнопки в чаті, формат callback_data (`callback.ts`) і спільні дії над повідомленнями (`messages.ts`); interface-модулі залежать від нього, але не один від одного; container/ — образ (лише системне: Node, git, OpenCode, claude, entrypoint); payload/ — те, що воркер розкладає в контейнер сам (AGENTS.md агента, publish, session-prep, git-хук; підключаються як текст); тести з фейком `test/fake-agent.ts`
 packages/core/src/      спільне: domain/{channel,llm,json}, infrastructure/{telegram,llm,steps,security,access}; публічний вхід — index.ts
 apps/sites/src/        serve (шлях → ключ R2, віддача), index (перевірка Access); тести з R2 у пам'яті
 apps/notes/src/index.ts  entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
@@ -43,10 +43,10 @@ src/<шар>/<модуль>/    шари: interface → application → domain, 
     tracker/           порт трекера задач (TaskTracker) і нейтральні типи (TriageItem, TaskOp, SetupPlan…); Todoist — лише адаптер
     note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
     published/         опублікована нотатка: Note і порт NoteRepository
-    recording/         ключі запису в R2, ліміти розміру, час запису
+    recording/         порт RecordingStore (записи, підписи, стан обробки), ключі запису, ліміти розміру, час запису
   infrastructure/      зовнішні сервіси й сховище
     env/               Env і Job
-    r2/                адаптери NoteRepository і TaskLedger (нотатки та задачі нотаток у R2)
+    r2/                адаптери RecordingStore, NoteRepository і TaskLedger (записи, нотатки та задачі нотаток у R2)
     todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
 ```
 

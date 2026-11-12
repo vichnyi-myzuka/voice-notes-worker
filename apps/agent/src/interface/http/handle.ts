@@ -1,4 +1,4 @@
-import type { Agent } from "../../domain/agent";
+import type { Computer, Sessions } from "../../domain/agent";
 import type { Env } from "../../env";
 import { verifyAccess } from "@voice-notes/core";
 
@@ -23,7 +23,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   DELETE /api/computer/snapshot             → видаляє знімок і зупиняє контейнер: наступний старт з чистого образу (сесії зникають)
 //   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
 //   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)
-export async function handleFetch(req: Request, env: Env, agent: Agent): Promise<Response> {
+export async function handleFetch(req: Request, env: Env, agent: Sessions & Computer): Promise<Response> {
 	if (!env.LOCAL_DEV) {
 		if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return new Response("Access is not configured", { status: 503 });
 		if (!(await verifyAccess(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD }))) return new Response("Forbidden", { status: 403 });
@@ -86,7 +86,7 @@ export async function handleFetch(req: Request, env: Env, agent: Agent): Promise
 // Для сервера на тому самому домені це origin; перевірено лише за кодом інтерфейсу, тож перевіряється в браузері.
 const sessionPath = (origin: string, ocId: string) => `/server/${btoa(origin).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")}/session/${ocId}`;
 
-async function create(req: Request, agent: Agent): Promise<Response> {
+async function create(req: Request, agent: Sessions & Computer): Promise<Response> {
 	const body = await req.json<{ prompt?: string; repo?: string; id?: string }>().catch(() => null);
 	if (!body?.prompt?.trim()) return json({ error: "prompt is required" }, 400);
 	const id = body.id ?? crypto.randomUUID();

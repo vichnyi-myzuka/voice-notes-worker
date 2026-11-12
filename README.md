@@ -37,10 +37,10 @@ apps/notes/src/<шар>/<модуль>/    шари: interface → application �
     tracker/           порт трекера задач (TaskTracker) і нейтральні типи (TriageItem, TaskOp, SetupPlan…); Todoist — лише адаптер
     note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
     published/         опублікована нотатка: Note і порт NoteRepository
-    recording/         ключі запису в R2, ліміти розміру, час запису
+    recording/         порт RecordingStore (записи, підписи, стан обробки), ключі запису, ліміти розміру, час запису
   infrastructure/      зовнішні сервіси й сховище
     env/               Env і Job
-    r2/                адаптери NoteRepository і TaskLedger (нотатки та задачі нотаток у R2)
+    r2/                адаптери RecordingStore, NoteRepository і TaskLedger (записи, нотатки та задачі нотаток у R2)
     todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
 AGENTS.md              правила роботи з репозиторієм для агентів
 .dev.vars.example      (в apps/notes) шаблон секретів для локального запуску
@@ -53,7 +53,7 @@ AGENTS.md              правила роботи з репозиторієм �
 - **`Channel`** (`packages/core`, `domain/channel`): звідки приходять записи й куди публікуються нотатки. Реалізація: `packages/core` → `infrastructure/telegram` (вебхук, Bot API, сутності тексту, реакції, ліміти підпису).
 - **`TaskTracker`** (`domain/tracker`): знімок проєктів і міток, тріаж, створення й оновлення задач, налаштування проєктів і міток. Реалізація: `infrastructure/todoist` (`/sync`, команди, промпти й валідація полів задач).
 
-- **`NoteRepository`** і **`TaskLedger`** (`domain/published`, `domain/tracker`): збереження нотаток і задач нотаток. Реалізація: `infrastructure/r2`.
+- **`RecordingStore`**, **`NoteRepository`** і **`TaskLedger`** (`domain/recording`, `domain/published`, `domain/tracker`): збереження сирих записів (разом із підписами й станом обробки), нотаток і задач нотаток. Реалізація: `infrastructure/r2`.
 - **`Llm`** (`packages/core`, `domain/llm`): structured output і розпізнавання голосу. Реалізація: `packages/core` → `infrastructure/llm`.
 
 Адаптери створюються в `src/index.ts` і передаються вниз як `{ channel, tracker, notes, ledger, llm }`. Домен не імпортує `infrastructure`. Запис у R2 (аудіо, `<key>.state.json`) лишається в `application` через `Env`. Щоб підключити інший канал чи трекер, потрібно реалізувати відповідний інтерфейс; промпти тріажу при цьому належать адаптеру, бо описують модель конкретного трекера.
@@ -388,7 +388,7 @@ GET  /s/<id>                                           → редірект на
 
 Наш `id` лишається ключем ідемпотентності, відповідність `id → id сесії OpenCode` лежить у сховищі Durable Object. Підготовку теки (`git clone`/`fetch`, `git worktree add --no-track -b agent/<id>`, а для нового worktree з `package.json` — `npm ci` (є `package-lock.json`) або `npm install`; збій встановлення лише логується) робить ідемпотентний `session-prep` з образу: Durable Object запускає його через `container.exec` (exec не успадковує env контейнера, тож токен GitHub передається явно) і по черзі, щоб паралельні клони не псували один одного. Worktree видаляються лише вручну (автоприбирання потрібне в #7).
 
-Порт `Agent` (`domain/agent`: start, followUp, status, abort, serve, link, snapshot) реалізує `infrastructure/container` (Durable Object `AgentSession` + контейнер; назва історична, перейменування потребувало б міграції); HTTP-шар знає лише порт. Статус не будить контейнер, що спить (`stopped`). Диск контейнера тимчасовий, тому стан зберігається знімками (див. «Знімки диска»).
+Порт `Agent` (`domain/agent`) складається з трьох частин: `Sessions` (start, followUp, status, abort, link…), `Computer` (serve, info, snapshot, resetComputer…) і `Deploys` (деплой у пості, refs); обробники беруть лише потрібні (наприклад, GitHub — `Sessions & Deploys`). Його реалізує `infrastructure/container` (Durable Object `AgentSession` + контейнер; назва історична, перейменування потребувало б міграції). Клас тримає лише сесії (завдання, стеження, підсумки); контейнер і знімки (`computer.ts`), пост у чаті з деплоєм (`posts.ts`), питання агента (`forms.ts`) і проксі веб-інтерфейсу (`proxy.ts`) — окремі модулі поруч, типи й ключі сховища — у `state.ts`, ліміти й env — у `config.ts`; HTTP-шар знає лише порт. Статус не будить контейнер, що спить (`stopped`). Диск контейнера тимчасовий, тому стан зберігається знімками (див. «Знімки диска»).
 
 Усі сесії ділять ресурси `standard-1` (4 ГБ, 1 vCPU), контейнер не засинає, поки хоч одна працює.
 

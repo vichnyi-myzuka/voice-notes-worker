@@ -7,6 +7,6 @@ import { shortcutUpload } from "./shortcut";
 export async function handleFetch(req: Request, env: Env, ports: Ports): Promise<Response> {
 	if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 	const { channel } = ports;
-	if (new URL(req.url).pathname !== channel.webhookPath) return shortcutUpload(req, env);
+	if (new URL(req.url).pathname !== channel.webhookPath) return shortcutUpload(req, env, ports.recordings);
 	return channel.webhook(req, (key, body, incoming) => acceptIncoming(env, ports, key, body, incoming));
 }

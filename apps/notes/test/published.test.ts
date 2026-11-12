@@ -3,7 +3,7 @@ import { captionNotice, refreshNote, showNote } from "../src/application/pipelin
 import type { Note } from "../src/domain/published";
 import { telegramChannel, workersLlm } from "@voice-notes/core";
 import { githubIssues } from "../src/infrastructure/github";
-import { r2IssueLedger, r2Ledger, r2Notes } from "../src/infrastructure/r2";
+import { r2IssueLedger, r2Ledger, r2Notes, r2Recordings } from "../src/infrastructure/r2";
 import { todoistTracker } from "../src/infrastructure/todoist";
 import type { Env } from "../src/infrastructure/env";
 import { fakeEnv } from "./fake-env";
@@ -11,7 +11,7 @@ import { fakeEnv } from "./fake-env";
 const meta = { title: "Назва", summary: "Коротко.", ideas: [], tasks: [] };
 const note = (extra: Partial<Note> = {}): Note => ({ transcript: "Оригінал.", edits: [], meta, triage: null, messageId: 42, recordedTs: 1762700000000, ...extra });
 
-const ports = (env: Env) => ({ channel: telegramChannel(env), tracker: todoistTracker(env), notes: r2Notes(env), ledger: r2Ledger(env), issues: githubIssues(env), issueLedger: r2IssueLedger(env), llm: workersLlm(env) });
+const ports = (env: Env) => ({ channel: telegramChannel(env), tracker: todoistTracker(env), notes: r2Notes(env), recordings: r2Recordings(env), ledger: r2Ledger(env), issues: githubIssues(env), issueLedger: r2IssueLedger(env), llm: workersLlm(env) });
 
 afterEach(() => vi.unstubAllGlobals());
 

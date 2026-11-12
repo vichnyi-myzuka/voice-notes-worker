@@ -1,4 +1,8 @@
 import { tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes/core";
+import { callback } from "./callback";
+
+export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
+export { EPHEMERAL_MARK, EPHEMERAL_MS, removeMessage, removeOriginal, sayTemporarily } from "./messages";
 
 const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -62,15 +66,14 @@ function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, 
 	const id = sessionUrl && buttons ? SESSION_ID.exec(sessionUrl)?.[1] : undefined;
 	if (!id) return undefined;
 	const row = [
-		...(buttons === "working" ? [{ text: "⏹ Стоп", callback_data: `stop:${id}` }] : []),
-		...(buttons === "mergeable" ? [{ text: "🔀 Змерджити", callback_data: `merge:${id}` }] : []),
-		{ text: "🗑 Видалити", callback_data: buttons === "dismiss" ? "dismiss" : `del:${id}` },
+		...(buttons === "working" ? [{ text: "⏹ Стоп", callback_data: callback.stop(id) }] : []),
+		...(buttons === "mergeable" ? [{ text: "🔀 Змерджити", callback_data: callback.merge(id) }] : []),
+		{ text: "🗑 Видалити", callback_data: buttons === "dismiss" ? callback.dismiss : callback.del(id) },
 	];
-	const approval = review ? [[{ text: "✅ Схвалити", callback_data: `appr:${review.repo}:${review.runId}` }, { text: "❌ Відхилити", callback_data: `rej:${review.repo}:${review.runId}` }]] : [];
+	const approval = review ? [[{ text: "✅ Схвалити", callback_data: callback.approve(review.repo, review.runId) }, { text: "❌ Відхилити", callback_data: callback.reject(review.repo, review.runId) }]] : [];
 	// Варіанти відповіді на питання агента: по кнопці в рядку над службовими (callback_data `ans:<id>:<номер варіанта>`)
-	const action = answers?.multiple ? "tog" : "ans";
-	const choices = (answers?.labels ?? []).map((label, i) => [{ text: label.length > 32 ? `${label.slice(0, 31)}…` : label, callback_data: `${action}:${id}:${i}` }]);
-	const confirm = answers?.multiple ? [[{ text: "✅ Підтвердити", callback_data: `ok:${id}` }]] : [];
+	const choices = (answers?.labels ?? []).map((label, i) => [{ text: label.length > 32 ? `${label.slice(0, 31)}…` : label, callback_data: answers?.multiple ? callback.toggle(id, i) : callback.answer(id, i) }]);
+	const confirm = answers?.multiple ? [[{ text: "✅ Підтвердити", callback_data: callback.confirm(id) }]] : [];
 	return { inline_keyboard: [...choices, ...confirm, ...approval, row] };
 }
 

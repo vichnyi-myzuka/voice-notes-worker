@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Llm } from "@voice-notes/core";
 import type { Env } from "../src/env";
 import { handleTelegram, parseRepos } from "../src/interface/telegram";
-import { describe as describeReport, EPHEMERAL_MS } from "../src/interface/telegram/handle";
+import { describe as describeReport } from "../src/interface/telegram/commands";
+import { EPHEMERAL_MS } from "../src/infrastructure/chat";
 import { fakeAgent } from "./fake-agent";
 
 // timingSafeEqual є лише в workerd: у Node мокаємо порівняння (мок за шляхом файлу в core).

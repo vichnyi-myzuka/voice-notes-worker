@@ -1,6 +1,6 @@
 import type { Env } from "../../infrastructure/env";
 import type { Note } from "../../domain/published";
-import { formatRecordedAt } from "../../domain/recording";
+import { formatRecordedAt, stateKey } from "../../domain/recording";
 import { runSetup } from "../setup";
 import { openSteps } from "@voice-notes/core";
 import { closeIssues, syncIssues } from "../issues";
@@ -10,16 +10,15 @@ import { captionNotice, showNote } from "./show";
 import type { Ports, State } from "./types";
 
 export async function processEdit(env: Env, ports: Ports, key: string, noteId: string, lastAttempt: boolean): Promise<void> {
-	const { channel, tracker, notes, ledger, llm } = ports;
-	const obj = await env.BUCKET.get(key);
+	const { channel, tracker, notes, ledger, llm, recordings } = ports;
+	const obj = await recordings.get(key);
 	if (!obj) return; // уже оброблено
-	const stateKey = `${key}.state.json`;
 	const cleanup = async (messageId?: number) => {
 		if (messageId) await channel.setBusy(messageId, false);
-		await channel.removeOrigin(obj.customMetadata); // інструкцію з каналу прибираємо
-		await env.BUCKET.delete([key, stateKey]);
+		await channel.removeOrigin(obj.metadata); // інструкцію з каналу прибираємо
+		await recordings.remove(key);
 	};
-	const run = await openSteps<State>(env, stateKey, lastAttempt);
+	const run = await openSteps<State>(env, stateKey(key), lastAttempt);
 	const { state, step } = run;
 
 	const note = await notes.load(noteId);
@@ -32,8 +31,7 @@ export async function processEdit(env: Env, ports: Ports, key: string, noteId: s
 	const instruction = await step("transcript", async () => {
 		await channel.setBusy(note.messageId, true);
 		// Текстова відповідь на нотатку — без Whisper.
-		const contentType = obj.httpMetadata?.contentType ?? "audio/mp4";
-		return contentType.startsWith("text/") ? (await obj.text()).trim() : await llm.transcribe(await obj.arrayBuffer(), contentType);
+		return obj.contentType.startsWith("text/") ? (await obj.text()).trim() : await llm.transcribe(await obj.bytes(), obj.contentType);
 	});
 	// Команди налаштування Todoist — до правки, щоб модель уже бачила нові назви проєктів і міток.
 	const setup = await runSetup(llm, tracker, instruction, run);
