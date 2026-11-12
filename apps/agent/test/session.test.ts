@@ -466,6 +466,22 @@ describe("AgentSession", () => {
 		};
 		const ocId = "ses_oc1";
 
+		it("повідомлення з веб-інтерфейсу в сесію з постом у чаті вмикає стеження: підсумок приходить у пост", async () => {
+			const t = setup({ BOT_TOKEN: "bot" });
+			await t.session.start(ID, { prompt: "Задача" });
+			await t.session.watch(ID, { ...TARGET, postId: 77, header: "🗣 Задача" });
+			t.opencode.busy.clear();
+			await t.session.alarm(); // перше стеження завершилось: спостережень немає
+			sent.length = 0;
+			expect(await t.store.get(`watch:${ID}`)).toBeUndefined();
+			await t.session.fetch(new Request(`https://agent.example/api/session/${ocId}/prompt`, { method: "POST", body: JSON.stringify({ text: "З інтерфейсу" }) }));
+			expect(await t.store.get(`watch:${ID}`)).toMatchObject({ ocId, chatId: 5, postId: 77 });
+			// Сесія без поста (запущена не з чату) не стежиться.
+			await t.session.start("session-0002", { prompt: "Інша" });
+			await t.session.fetch(new Request("https://agent.example/api/session/ses_oc2/prompt", { method: "POST", body: "{}" }));
+			expect(await t.store.get("watch:session-0002")).toBeUndefined();
+		});
+
 		it("поки сесія працює, повідомлення немає, alarm частий; по завершенню приходить підсумок один раз", async () => {
 			const { session, opencode, alarm } = await watched();
 			opencode.lastText = "Зробив PR: https://github.com/me/app/pull/7";

@@ -49,7 +49,7 @@ type SavedSnapshot = { id: string; image: string; at: number };
 // Сесія агента в спільному контейнері: id сесії (наш ключ ідемпотентності) → сесія OpenCode і репозиторій.
 // folder: назва теки (і гілки agent/<folder>); у старих записів немає, тоді це сам id.
 // post: пост сесії в чаті, який агент оновлює на місці (стан, підсумок).
-type Tracked = { ocId: string; repo?: string; folder?: string; post?: { postId: number; header: string } };
+type Tracked = { ocId: string; repo?: string; folder?: string; post?: { postId: number; header: string; chatId?: number; url?: string } };
 
 const sessionKey = (id: string) => `session:${id}`;
 const watchKey = (id: string) => `watch:${id}`;
@@ -464,7 +464,7 @@ export class AgentSession extends DurableObject<Env> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked) throw new Error(`unknown session ${id}`);
 		// Пост сесії: новий (з першого виклику) запам'ятовується, у наступних (уточнення) береться зі сховища.
-		const post = target.postId ? { postId: target.postId, header: target.header ?? "" } : tracked.post;
+		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url } : tracked.post;
 		if (target.postId) await this.ctx.storage.put(sessionKey(id), { ...tracked, post } satisfies Tracked);
 		const full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
@@ -635,11 +635,21 @@ export class AgentSession extends DurableObject<Env> {
 		return { running: true, ...parseConnections(new TextDecoder().decode(out.stdout), OPENCODE_PORT) };
 	}
 
+	// Повідомлення з веб-інтерфейсу в сесію, що має пост у чаті: стежимо за нею так само, як за запущеною з чату (стан, питання, підсумок
+	// у пості). Повідомлення з чату йдуть повз цей проксі, тому дублів немає.
+	private async watchPrompted(ocId: string): Promise<void> {
+		for (const [key, tracked] of await this.ctx.storage.list<Tracked>({ prefix: "session:" })) {
+			if (tracked.ocId !== ocId || !tracked.post?.chatId || !tracked.post.url) continue;
+			return this.watch(key.slice("session:".length), { chatId: tracked.post.chatId, url: tracked.post.url });
+		}
+	}
+
 	// Веб-інтерфейс OpenCode: запити (разом із SSE) проксуються в контейнер.
 	async fetch(request: Request): Promise<Response> {
 		await this.ensureRunning();
 		// Зміни з веб-інтерфейсу (повідомлення, правки) теж треба зберегти; читання й SSE — ні.
 		if (!["GET", "HEAD"].includes(request.method)) await this.markActive();
+		const promptedOc = request.method === "POST" ? new URL(request.url).pathname.match(/^\/api\/session\/([^/]+)\/prompt$/)?.[1] : undefined;
 		const url = new URL(request.url);
 		const headers = new Headers(request.headers);
 		headers.set("authorization", basicAuth(this.env.OPENCODE_PASSWORD));
@@ -650,7 +660,11 @@ export class AgentSession extends DurableObject<Env> {
 		headers.delete("origin");
 		const upstream = new Request(`http://container${url.pathname}${url.search}`, new Request(request, { headers })) as unknown as Request<unknown, CfProperties>;
 		const port = this.ctx.container!.getTcpPort(OPENCODE_PORT);
-		if (!(request.headers.get("accept") ?? "").includes("text/event-stream")) return port.fetch(upstream);
+		if (!(request.headers.get("accept") ?? "").includes("text/event-stream")) {
+			const res = await port.fetch(upstream);
+			if (promptedOc && res.ok) await this.watchPrompted(promptedOc).catch((err) => console.error("watch of web prompt failed:", err));
+			return res;
+		}
 
 		// SSE: обмежуємо час життя потоку й ведемо облік для діагностики.
 		const id = ++this.streamSeq;
