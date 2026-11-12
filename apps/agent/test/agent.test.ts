@@ -15,6 +15,7 @@ describe("durableAgent", () => {
 			snapshot: vi.fn(async () => ({ id: "snap1", bytes: 1, ms: 2 })),
 			resetComputer: vi.fn(async () => true),
 			remove: vi.fn(async () => {}),
+			removeByBranch: vi.fn(async () => undefined),
 			report: vi.fn(async () => ({ status: "idle" as const })),
 			watch: vi.fn(async () => {}),
 			connections: vi.fn(async () => ({ running: false })),

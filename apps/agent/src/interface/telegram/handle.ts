@@ -3,6 +3,7 @@ import { folderFor, type Agent, type SessionReport } from "../../domain/agent";
 import type { Env } from "../../env";
 import { QUOTE_CLOSE, QUOTE_OPEN, sendChat } from "../../infrastructure/chat";
 import { describeQuota, fetchQuota } from "../../infrastructure/quota";
+import { handleReviewButton } from "../github/review";
 import { routeTask, type KnownRepo } from "./repo";
 
 export const TELEGRAM_PATH = "/telegram";
@@ -55,6 +56,8 @@ async function handleButton(bot: BotEnv, query: NonNullable<TgUpdate["callback_q
 	const answer = (text: string) => tg(bot, "answerCallbackQuery", { callback_query_id: query.id, text }).catch((err) => console.error("answer failed:", err));
 	const chat = query.message?.chat;
 	const allowed = !!env.TG_OWNER_ID && String(query.from.id) === env.TG_OWNER_ID && !!chat && (String(chat.id) === env.CHAT_ID || (chat.type === "private" && String(chat.id) === env.TG_OWNER_ID));
+	const review = /^(appr|rej):([\w.-]+\/[\w.-]+):(\d+)$/.exec(query.data ?? "");
+	if (review && allowed && query.message) return handleReviewButton(bot, query, env, review[1] === "appr", review[2], Number(review[3]));
 	const [, action, id, choice] = /^(stop|del|ans|tog|ok):(tg-[\w-]+)(?::(\d+))?$/.exec(query.data ?? "") ?? [];
 	if (!allowed || !action || !query.message) return void (await answer(allowed ? "Невідома дія." : "Недоступно."));
 	if (!(await agent.link(id))) return void (await answer("Сесію не знайдено."));
@@ -99,17 +102,17 @@ type Say = (text: string) => Promise<unknown>;
 
 // Надсилає службову відповідь і видаляє її через EPHEMERAL_MS, щоб вона не лишалась в історії чату.
 // Саме видалення повертається окремо (cleanups), щоб команду можна було прибрати одразу, не чекаючи.
-async function sayTemporarily(env: BotEnv, chat: number, text: string, sleep: (ms: number) => Promise<void>, cleanups: Promise<unknown>[]): Promise<void> {
+export async function sayTemporarily(env: BotEnv, chat: number, text: string, sleep: (ms: number) => Promise<void>, cleanups: Promise<unknown>[]): Promise<void> {
 	const sent = await tg(env, "sendMessage", { chat_id: chat, text: `${text} ${EPHEMERAL_MARK}` });
 	cleanups.push(sleep(EPHEMERAL_MS).then(() => removeMessage(env, chat, sent.message_id)));
 }
 
-const removeMessage = (env: BotEnv, chat: number, messageId: number) =>
+export const removeMessage = (env: BotEnv, chat: number, messageId: number) =>
 	tg(env, "deleteMessage", { chat_id: chat, message_id: messageId }).catch((err) => console.error("delete message failed:", err));
 
 // Оригінал, з якого почалась сесія (id сесії = tg-<чат>-<повідомлення>). У каналі його прибрано одразу, у приваті він лишається
 // до видалення сесії; тут прибираємо лише приватний чат (id > 0), у каналі нічого не лишилось.
-function removeOriginal(env: BotEnv, chat: number, sessionId: string): Promise<unknown> {
+export function removeOriginal(env: BotEnv, chat: number, sessionId: string): Promise<unknown> {
 	const [, origChat, origId] = /^tg-(-?\d+)-(\d+)$/.exec(sessionId) ?? [];
 	if (!origId || Number(origChat) !== chat || chat < 0) return Promise.resolve();
 	return removeMessage(env, chat, Number(origId));

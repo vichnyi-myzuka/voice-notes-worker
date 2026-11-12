@@ -1,7 +1,7 @@
 import { tg, workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { folderFor, type AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { folderFor, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { editChat, sendChat, QUOTE_CLOSE, QUOTE_OPEN, type Answers } from "../chat";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
@@ -632,6 +632,19 @@ export class AgentSession extends DurableObject<Env> {
 		});
 		await this.ctx.storage.delete(sessionKey(id));
 		await this.ctx.storage.delete(watchKey(id));
+	}
+
+	// PR з гілки agent/<folder> змерджено: прибирає сесію цієї гілки (див. remove). Повертає сесію й її пост у чаті, щоб
+	// викликач прибрав і його; undefined, якщо такої сесії немає.
+	async removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined> {
+		const all = await this.ctx.storage.list<Tracked>({ prefix: "session:" });
+		for (const [key, tracked] of all) {
+			const id = key.slice("session:".length);
+			if ((tracked.folder ?? id) !== folder || tracked.repo !== repo) continue;
+			await this.remove(id);
+			return { id, chatId: tracked.post?.chatId, postId: tracked.post?.postId };
+		}
+		return undefined;
 	}
 
 	// Стан для діагностики: чому контейнер не засинає, коли був знімок.
