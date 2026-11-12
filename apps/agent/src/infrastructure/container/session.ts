@@ -225,6 +225,7 @@ export class AgentSession extends DurableObject<Env> {
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
 		}
+		await this.forms.cancel(id, text); // текст замість кнопки: відкрите питання не чекає далі
 		await prompt(this.opencode(), ocId, text);
 		await this.computer.markActive();
 	}
@@ -384,7 +385,8 @@ export class AgentSession extends DurableObject<Env> {
 		const id = watchId(entry[0]);
 		const found = form.id ? formChoices(form) : undefined;
 		const text = describeForm(form);
-		if (found && form.id) await this.forms.save(id, { formId: form.id, ocId: entry[1].ocId, key: found.key, choices: found.choices, multiple: found.multiple, selected: [], text } satisfies PendingForm);
+		// Форму без кнопок (кілька питань, довільний текст) теж зберігаємо: відповідь текстом її скасує (див. followUp)
+		if (form.id) await this.forms.save(id, { formId: form.id, ocId: entry[1].ocId, key: found?.key ?? "", choices: found?.choices ?? [], multiple: found?.multiple, selected: [], text } satisfies PendingForm);
 		await this.progress(entry[1].ocId, "", undefined, text, found && { labels: found.choices.map((c) => c.label), multiple: found.multiple });
 	}
 

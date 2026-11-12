@@ -16,7 +16,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -96,6 +96,10 @@ function fakeContainer() {
 				}
 				if (req.method === "POST" && path === "/api/integration/claude-agent/connect/external") {
 					opencode.connected = true;
+					return new Response(null, { status: 204 });
+				}
+				if (req.method === "DELETE" && /^\/api\/session\/[^/]+\/form\/[^/]+$/.test(path)) {
+					opencode.formCancels.push(`${path}?message=${new URL(req.url).searchParams.get("message")}`);
 					return new Response(null, { status: 204 });
 				}
 				if (req.method === "POST" && /^\/api\/session\/[^/]+\/form\/[^/]+\/reply$/.test(path)) {
@@ -874,6 +878,28 @@ describe("AgentSession", () => {
 						expect(t.opencode.formReplies).toEqual([{ path: `/api/session/${ocId}/form/form1/reply`, body: { answer: { style: "bold" } } }]);
 						expect(edits().at(-1)!.text).toContain("відповідь: Яскравий");
 						expect(await t.session.answer(SID, 1)).toBeUndefined(); // вже відповіли
+					});
+
+					it("текст замість кнопки скасовує питання й іде агентові", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача" });
+						await t.session.watch(SID, POST_TG);
+						t.opencode.emit(form([style]));
+						await flush();
+						await t.session.followUp(SID, "Роби інакше");
+						expect(t.opencode.formCancels).toEqual([`/api/session/${ocId}/form/form1?message=Роби інакше`]);
+						expect(t.opencode.prompts.at(-1)!.text).toBe("Роби інакше");
+						expect(await t.session.answer(SID, 1)).toBeUndefined(); // питання вже неактуальне
+					});
+
+					it("форма без кнопок (кілька питань): текстова відповідь теж скасовує її", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача" });
+						await t.session.watch(SID, POST_TG);
+						t.opencode.emit(form([style, { key: "extra", type: "string" }]));
+						await flush();
+						await t.session.followUp(SID, "Ось відповідь");
+						expect(t.opencode.formCancels).toEqual([`/api/session/${ocId}/form/form1?message=Ось відповідь`]);
 					});
 
 					it("так/ні дає булеві значення; одиночний multiselect — масив", async () => {
