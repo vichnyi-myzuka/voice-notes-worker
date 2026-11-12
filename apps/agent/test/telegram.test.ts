@@ -282,7 +282,7 @@ describe("вебхук Telegram", () => {
 			const deleted = () => calls.filter((c) => c.method === "deleteMessage").map((c) => c.body.message_id);
 			expect(deleted()).toEqual([8, 9]);
 			await send(msg({ text: "/delete", reply_to_message: botPost() }, 10));
-			expect(deleted()).toEqual([8, 9, 100, 10]); // пост сесії й сама команда
+			expect(deleted()).toEqual([8, 9, 100, 7, 10]); // пост сесії, оригінал у приваті (7) і сама команда
 		});
 
 		it("/update: без працюючих агентів скидає контейнер; зайнятий — просить force; /update force перериває", async () => {
@@ -356,6 +356,12 @@ describe("вебхук Telegram", () => {
 			expect(t.sessions.has(SESSION)).toBe(false);
 			expect(t.calls.filter((c) => c.method === "deleteMessage").map((c) => c.body)).toEqual([{ chat_id: CHANNEL, message_id: 100 }]);
 			expect(t.answers()).toEqual(["Сесію видалено."]);
+		});
+
+		it("«Видалити» у приваті прибирає ще й оригінальне повідомлення, з якого почалась сесія", async () => {
+			const t = await started();
+			await t.press(`del:${SESSION}`);
+			expect(t.calls.filter((c) => c.method === "deleteMessage").map((c) => c.body)).toEqual([{ chat_id: OWNER, message_id: 100 }, { chat_id: OWNER, message_id: 7 }]);
 		});
 
 		it("«відповідь» передає номер варіанта агентові й показує вибране спливаючою підказкою", async () => {
