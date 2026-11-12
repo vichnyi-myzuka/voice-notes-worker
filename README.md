@@ -386,7 +386,7 @@ GET  /s/<id>                                           → редірект на
 будь-який інший шлях                                   → проксі у веб-інтерфейс OpenCode
 ```
 
-Наш `id` лишається ключем ідемпотентності, відповідність `id → id сесії OpenCode` лежить у сховищі Durable Object. Підготовку теки (`git clone`/`fetch`, `git worktree add --no-track -b agent/<id>`) робить ідемпотентний `session-prep` з образу: Durable Object запускає його через `container.exec` (exec не успадковує env контейнера, тож токен GitHub передається явно) і по черзі, щоб паралельні клони не псували один одного. Worktree видаляються лише вручну (автоприбирання потрібне в #7).
+Наш `id` лишається ключем ідемпотентності, відповідність `id → id сесії OpenCode` лежить у сховищі Durable Object. Підготовку теки (`git clone`/`fetch`, `git worktree add --no-track -b agent/<id>`, а для нового worktree з `package.json` — `npm ci` (є `package-lock.json`) або `npm install`; збій встановлення лише логується) робить ідемпотентний `session-prep` з образу: Durable Object запускає його через `container.exec` (exec не успадковує env контейнера, тож токен GitHub передається явно) і по черзі, щоб паралельні клони не псували один одного. Worktree видаляються лише вручну (автоприбирання потрібне в #7).
 
 Порт `Agent` (`domain/agent`: start, followUp, status, abort, serve, link, snapshot) реалізує `infrastructure/container` (Durable Object `AgentSession` + контейнер; назва історична, перейменування потребувало б міграції); HTTP-шар знає лише порт. Статус не будить контейнер, що спить (`stopped`). Диск контейнера тимчасовий, тому стан зберігається знімками (див. «Знімки диска»).
 
