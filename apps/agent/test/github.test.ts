@@ -113,6 +113,22 @@ describe("вебхук GitHub", () => {
 		expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("✅ Схвалено");
 	});
 
+	it("результат деплою дописується в пост зі схваленням того ж запуску, а не йде новим повідомленням", async () => {
+		const s = setup();
+		const repository = { full_name: "me/bot", default_branch: "main" };
+		await s.hook("workflow_job", { action: "waiting", repository, workflow_job: { run_id: 123, name: "deploy-agent / deploy", workflow_name: "deploy", head_branch: "main", html_url: "u" } });
+		expect(s.tgCalls("sendMessage")).toHaveLength(1);
+		await s.hook("workflow_run", deploy({ id: 123 }));
+		expect(s.tgCalls("sendMessage")).toHaveLength(1); // нового повідомлення немає
+		const edit = s.tgCalls("editMessageText")[0] as { chat_id: string; message_id: number; text: string; reply_markup: { inline_keyboard: { callback_data: string }[][] } };
+		expect(edit).toMatchObject({ chat_id: "42", message_id: 500 });
+		expect(edit.text).toContain("🚀 Деплой чекає схвалення");
+		expect(edit.text).toContain("✅ Деплой успішний");
+		expect(edit.reply_markup.inline_keyboard[0][0].callback_data).toBe("dismiss");
+		await s.hook("workflow_run", deploy({ id: 123 })); // повторно пост уже не знайдеться: звичайне повідомлення
+		expect(s.tgCalls("sendMessage")).toHaveLength(2);
+	});
+
 	it("результат деплою на main → пост з PR; чужі workflow і гілки ігноруються", async () => {
 		const s = setup();
 		const run = (over: Record<string, unknown>) => ({ action: "completed", repository: { full_name: "me/bot", default_branch: "main" }, workflow_run: { id: 1, name: "deploy", head_branch: "main", head_sha: "abc", html_url: "https://github.com/me/bot/actions/runs/1", conclusion: "success", ...over } });
@@ -126,6 +142,66 @@ describe("вебхук GitHub", () => {
 		expect(texts[0]).toContain("✅ Деплой успішний");
 		expect(texts[0]).toContain("PR #5: Fix");
 		expect(texts[1]).toContain("❌ Деплой не вдався");
+	});
+
+	describe("кнопка «Змерджити» під постом сесії", () => {
+		const press = async (s: ReturnType<typeof setup>, from = 42) => {
+			const query = { id: "q", from: { id: from }, message: { message_id: 77, chat: { id: -1001, type: "channel" }, text: "x" }, data: "merge:tg--1001-7" };
+			await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret" }, body: JSON.stringify({ callback_query: query }) }), env, { ...s.deps, llm: {} as never });
+			await Promise.all(s.pending.splice(0));
+		};
+		const withPulls = (s: ReturnType<typeof setup>, pulls: unknown[], mergeStatus = 200) => {
+			const base = globalThis.fetch;
+			vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+				if (input.includes("/pulls?state=open")) { s.calls.push({ url: input, method: "GET" }); return Response.json(pulls); }
+				if (input.endsWith("/merge")) { s.calls.push({ url: input, method: init?.method ?? "", body: JSON.parse(init!.body as string) }); return mergeStatus === 200 ? Response.json({ merged: true }) : Response.json({ message: "Required status check is expected" }, { status: mergeStatus }); }
+				return base(input, init);
+			}));
+		};
+
+		it("мерджить PR гілки сесії і прибирає кнопку з поста", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			withPulls(s, [{ number: 5 }]);
+			await press(s);
+			expect(s.calls.find((c) => c.url.includes("/pulls?state=open"))?.url).toContain("head=me%3Aagent%2Ffix-7");
+			expect(s.calls.find((c) => c.method === "PUT")).toMatchObject({ url: "https://api.github.com/repos/me/bot/pulls/5/merge", body: { merge_method: "merge" } });
+			expect(s.tgCalls("editMessageReplyMarkup")[0]).toMatchObject({ message_id: 77, reply_markup: { inline_keyboard: [[{ callback_data: "del:tg--1001-7" }]] } });
+			expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("🔀 PR #5 змерджено");
+		});
+
+		it("відмова GitHub (перевірки не пройшли) показується в підказці, кнопка лишається", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			withPulls(s, [{ number: 5 }], 405);
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			await press(s);
+			expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("Не вдалося змерджити: Required status check is expected");
+			expect(s.tgCalls("editMessageReplyMarkup")).toEqual([]);
+		});
+
+		it("без відкритого PR і від чужого нічого не мерджить", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			withPulls(s, []);
+			await press(s);
+			expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("Відкритого PR не знайдено.");
+			await press(s, 1);
+			expect(s.calls.some((c) => c.method === "PUT")).toBe(false);
+		});
+	});
+
+	it("помилка схвалення деплою містить причину від GitHub", async () => {
+		const s = setup();
+		vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+			s.calls.push({ url: input, method: init?.method ?? "GET", body: init?.body ? JSON.parse(init.body as string) : undefined });
+			return input.includes("/pending_deployments") ? new Response(null, { status: 403 }) : Response.json({ ok: true, result: { message_id: 1 } });
+		}));
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		const query = { id: "q", from: { id: 42 }, message: { message_id: 8, chat: { id: -1001, type: "channel" }, text: "x" }, data: "appr:me/bot:123" };
+		await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret" }, body: JSON.stringify({ callback_query: query }) }), env, { ...s.deps, llm: {} as never });
+		await Promise.all(s.pending.splice(0));
+		expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("Не вдалося звернутись до GitHub: pending deployments 403");
 	});
 
 	it("кнопку схвалення від чужого натиснути не можна", async () => {

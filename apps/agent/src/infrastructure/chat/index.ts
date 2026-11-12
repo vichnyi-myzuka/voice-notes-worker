@@ -50,14 +50,19 @@ const NO_PREVIEW = { is_disabled: true }; // без карток сторіно�
 // Кнопки під постом сесії: поки агент працює — «Стоп» і «Видалити», після завершення — лише «Видалити». Id сесії береться з її
 // посилання (…/s/<id>), у callback_data лежить `<дія>:<id>` (обробляє interface/telegram). Редагування без reply_markup кнопки
 // прибирає, тому їх передає кожен виклик sendChat/editChat.
-export type Buttons = "working" | "done";
+// "mergeable": сесія завершена, а в її гілки є відкритий PR: додається «Змерджити» (`merge:<id>`).
+export type Buttons = "working" | "done" | "mergeable";
 // Кнопки-відповіді на питання агента: підписи (для множинного вибору з позначками) й режим: одразу відповісти чи перемикати + «Підтвердити».
 export type Answers = { labels: string[]; multiple?: boolean };
 const SESSION_ID = /\/s\/(tg-[\w-]+)/;
 function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, answers?: Answers): TgInlineKeyboard | undefined {
 	const id = sessionUrl && buttons ? SESSION_ID.exec(sessionUrl)?.[1] : undefined;
 	if (!id) return undefined;
-	const row = [...(buttons === "working" ? [{ text: "⏹ Стоп", callback_data: `stop:${id}` }] : []), { text: "🗑 Видалити", callback_data: `del:${id}` }];
+	const row = [
+		...(buttons === "working" ? [{ text: "⏹ Стоп", callback_data: `stop:${id}` }] : []),
+		...(buttons === "mergeable" ? [{ text: "🔀 Змерджити", callback_data: `merge:${id}` }] : []),
+		{ text: "🗑 Видалити", callback_data: `del:${id}` },
+	];
 	// Варіанти відповіді на питання агента: по кнопці в рядку над службовими (callback_data `ans:<id>:<номер варіанта>`)
 	const action = answers?.multiple ? "tog" : "ans";
 	const choices = (answers?.labels ?? []).map((label, i) => [{ text: label.length > 32 ? `${label.slice(0, 31)}…` : label, callback_data: `${action}:${id}:${i}` }]);

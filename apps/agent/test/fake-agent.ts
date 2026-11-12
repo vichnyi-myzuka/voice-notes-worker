@@ -1,4 +1,4 @@
-import type { Agent, AgentStatus, SessionReport, StartInput, WatchTarget } from "../src/domain/agent";
+import type { Agent, PostRef, AgentStatus, SessionReport, StartInput, WatchTarget } from "../src/domain/agent";
 
 // Агент у пам'яті: те саме, що робить Durable Object з контейнером, але без контейнера й мережі.
 // Поведінка як у реальної реалізації: start ідемпотентний за id, abort повертає сесію у idle,
@@ -14,6 +14,7 @@ export function fakeAgent(origin = "https://agent.example") {
 	const resets: string[] = [];
 	const watches: { id: string; target: WatchTarget }[] = [];
 	const choices = new Map<string, string[]>(); // id сесії → підписи варіантів поточного питання (тест задає)
+	const refs = new Map<string, PostRef>();
 	let snapshotError = "";
 	const get = (id: string) => {
 		const s = sessions.get(id);
@@ -79,6 +80,18 @@ export function fakeAgent(origin = "https://agent.example") {
 		},
 		async link(id) {
 			return sessions.has(id) ? `ses_${id}` : undefined;
+		},
+		async saveRef(key, ref) {
+			refs.set(key, ref);
+		},
+		async takeRef(key) {
+			const ref = refs.get(key);
+			refs.delete(key);
+			return ref;
+		},
+		async pullTarget(id) {
+			const s = sessions.get(id);
+			return s?.input.repo ? { repo: s.input.repo, branch: `agent/${s.input.name ?? id}-${id.split("-").at(-1)}` } : undefined;
 		},
 		async connections() {
 			return { running: true, ssh: { listening: true, connections: 1 }, opencode: { listening: true, connections: 2 } };

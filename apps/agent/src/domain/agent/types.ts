@@ -45,7 +45,13 @@ export type SnapshotInfo = { id: string; bytes: number; ms: number };
 // Прибрана сесія і її пост у чаті (щоб прибрати й пост).
 export type RemovedSession = { id: string; chatId?: number; postId?: number };
 
+// Пост чату, який потім треба оновити (запит на схвалення деплою → його результат); живе у сховищі воркера.
+export type PostRef = { chatId: number | string; messageId: number; text: string };
+
 export type Agent = {
+	// Запам'ятовує пост за ключем і віддає його один раз (take забирає): так результат деплою редагує пост зі схваленням.
+	saveRef(key: string, ref: PostRef): Promise<void>;
+	takeRef(key: string): Promise<PostRef | undefined>;
 	// Адреса сесії в веб-інтерфейсі (від id, без звернення до контейнера): потрібна для посилання в пості до старту.
 	url(id: string): string;
 	// Приймає завдання й одразу повертається: холодний старт контейнера й клонування займають хвилини, а відповідь вебхуку
@@ -71,6 +77,8 @@ export type Agent = {
 	remove(id: string): Promise<void>;
 	// Прибирає сесію, чия гілка agent/<folder> у репозиторії repo змерджена (PR у main). undefined, якщо такої сесії немає.
 	removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined>;
+	// Репозиторій і гілка сесії (agent/<тека>), щоб знайти її PR; undefined, якщо сесія без репозиторію чи невідома.
+	pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined>;
 	// Веб-інтерфейс: проксі запиту в спільний контейнер (усі сесії в одному інтерфейсі).
 	serve(req: Request): Promise<Response>;
 	// Id сесії в OpenCode для прямого посилання на сесію; undefined, якщо такої сесії немає.

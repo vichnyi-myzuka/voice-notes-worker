@@ -1,8 +1,9 @@
 import { tg, workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { folderFor, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { folderFor, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { editChat, sendChat, QUOTE_CLOSE, QUOTE_OPEN, type Answers } from "../chat";
+import { openPullNumber } from "../github";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
@@ -299,9 +300,33 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
-	private async show(w: WatchTarget, status: string, final = false, answers?: Answers): Promise<boolean> {
+	private async show(w: WatchTarget, status: string, final = false, answers?: Answers, mergeable = false): Promise<boolean> {
 		if (!w.postId || !this.env.BOT_TOKEN) return false;
-		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, status, final), w.url, final ? "done" : "working", answers);
+		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, status, final), w.url, final ? (mergeable ? "mergeable" : "done") : "working", answers);
+	}
+
+	// Пости, які пізніше оновлює вебхук GitHub (ключ → пост); забирається один раз.
+	async saveRef(key: string, ref: PostRef): Promise<void> {
+		await this.ctx.storage.put(`ref:${key}`, ref);
+	}
+
+	async takeRef(key: string): Promise<PostRef | undefined> {
+		const ref = await this.ctx.storage.get<PostRef>(`ref:${key}`);
+		if (ref) await this.ctx.storage.delete(`ref:${key}`);
+		return ref;
+	}
+
+	// Гілка сесії й репозиторій (для кнопки «Змерджити»); undefined, якщо сесія без репозиторію.
+	async pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		return tracked?.repo ? { repo: tracked.repo, branch: `agent/${tracked.folder ?? id}` } : undefined;
+	}
+
+	// Чи є в гілки сесії відкритий PR (тоді під підсумком з'являється «Змерджити»). Збій GitHub кнопку просто не показує.
+	private async hasOpenPull(id: string): Promise<boolean> {
+		const target = this.env.GITHUB_TOKEN ? await this.pullTarget(id) : undefined;
+		if (!target || !this.env.GITHUB_TOKEN) return false;
+		return !!(await openPullNumber(this.env.GITHUB_TOKEN, target.repo, target.branch).catch((err) => (console.error("open pull lookup failed:", err), undefined)));
 	}
 
 	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
@@ -315,8 +340,10 @@ export class AgentSession extends DurableObject<Env> {
 		await this.postQueue.catch(() => undefined); // проміжна правка вже в дорозі: підсумок іде після неї
 		await this.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
-		if (await this.show(w, text, true)) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, "done").catch((err) => console.error("notify failed:", err));
+		// Підсумок успішної роботи: якщо агент відкрив PR, додаємо «Змерджити» (зупинену чи невдалу сесію не мерджимо з чату)
+		const mergeable = text.startsWith("✅") && (await this.hasOpenPull(key.slice("watch:".length)));
+		if (await this.show(w, text, true, undefined, mergeable)) return;
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done").catch((err) => console.error("notify failed:", err));
 	}
 
 	private async saveSnapshot(): Promise<SnapshotInfo> {

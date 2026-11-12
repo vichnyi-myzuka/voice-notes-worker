@@ -46,7 +46,7 @@ export async function handleGithub(req: Request, env: Env, deps: GithubDeps): Pr
 	const repo = payload.repository?.full_name;
 	if (!repo || !REPO.test(repo)) return new Response("ok");
 	const event = req.headers.get("x-github-event");
-	if (event === "workflow_job") deps.defer(onReviewRequested(bot, env, repo, payload).catch((err) => console.error("github review failed:", err)));
+	if (event === "workflow_job") deps.defer(onReviewRequested(bot, env, deps, repo, payload).catch((err) => console.error("github review failed:", err)));
 	else if (event === "workflow_run") deps.defer(onDeployFinished(bot, env, deps, repo, payload).catch((err) => console.error("github deploy result failed:", err)));
 	return new Response("ok");
 }
@@ -70,8 +70,15 @@ async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, re
 		}
 	}
 	const text = [title, repo, ...pulls.map((pr) => `PR #${pr.number}: ${pr.title}\n${pr.url}`), run.html_url, cleaned && "🧹 Сесію, worktree і гілку прибрано."].filter(Boolean).join("\n");
-	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup: { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: "dismiss" }]] }, link_preview_options: { is_disabled: true } });
+	const reply_markup = { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: "dismiss" }]] };
+	// Якщо цей запуск чекав схвалення в чаті, результат дописуємо в той самий пост (а не шлемо новий).
+	const asked = await agent.takeRef(refKey(repo, run.id)).catch(() => undefined);
+	if (asked && (await tg(bot, "editMessageText", { chat_id: asked.chatId, message_id: asked.messageId, text: `${asked.text}\n\n${text}`, reply_markup, link_preview_options: { is_disabled: true } }).then(() => true, (err) => (console.error("edit approval post failed:", err), false)))) return;
+	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup, link_preview_options: { is_disabled: true } });
 }
+
+// Ключ посту зі схваленням: репозиторій і id запуску (однаковий у workflow_job і workflow_run).
+const refKey = (repo: string, runId: number) => `deploy:${repo}:${runId}`;
 
 // Прибирає сесію гілки (як /delete), віддалену гілку і пост у чаті. true, якщо сесію знайдено.
 async function cleanup(bot: BotEnv, env: Env, agent: Agent, repo: string, branch: string): Promise<boolean> {
@@ -84,10 +91,11 @@ async function cleanup(bot: BotEnv, env: Env, agent: Agent, repo: string, branch
 }
 
 // Job чекає схвалення environment (workflow_job зі статусом waiting): пост із кнопками.
-async function onReviewRequested(bot: BotEnv, env: Env, repo: string, p: Payload): Promise<void> {
+async function onReviewRequested(bot: BotEnv, env: Env, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
 	const job = p.workflow_job;
 	const chat = env.TG_OWNER_ID ?? env.CHAT_ID;
 	if (p.action !== "waiting" || !job || !chat) return;
 	const text = `🚀 Деплой чекає схвалення\n${repo} · ${job.name}\n${job.workflow_name ?? "workflow"}${job.head_branch ? ` (${job.head_branch})` : ""}\n${job.html_url}`;
-	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup: reviewButtons(repo, job.run_id), link_preview_options: { is_disabled: true } });
+	const sent = await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup: reviewButtons(repo, job.run_id), link_preview_options: { is_disabled: true } });
+	await agent.saveRef(refKey(repo, job.run_id), { chatId: chat, messageId: sent.message_id, text }).catch((err) => console.error("save approval post failed:", err));
 }
