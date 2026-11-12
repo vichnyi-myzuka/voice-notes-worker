@@ -38,4 +38,10 @@ if git -C "$base" show-ref --verify --quiet "refs/heads/agent/$id"; then
 else
 	git -C "$base" worktree add --no-track -b "agent/$id" "$dir" "$default" >&2
 fi
+
+# Залежності проєкту: лише для нового worktree і лише якщо є package.json. Збій встановлення не зупиняє сесію (агент побачить і розбереться).
+if [ -f "$dir/package.json" ]; then
+	if [ -f "$dir/package-lock.json" ]; then install="npm ci"; else install="npm install"; fi
+	(cd "$dir" && $install --no-audit --no-fund >&2) || echo "не вдалося встановити залежності ($install)" >&2
+fi
 echo "$dir"

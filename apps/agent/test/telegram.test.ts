@@ -124,6 +124,12 @@ describe("вебхук Telegram", () => {
 		expect(calls.some((c) => c.method === "deleteMessage")).toBe(false);
 	});
 
+	it("у приваті голосове видаляється: транскрипт уже в пості сесії", async () => {
+		const { send, calls } = setup();
+		await send(post({ voice: { file_id: "f1", file_size: 10 } }));
+		expect(calls.some((c) => c.method === "deleteMessage")).toBe(true);
+	});
+
 	it("чужий користувач, чужий канал і група ігноруються", async () => {
 		const { send, sessions, calls } = setup();
 		await send({ ...msg({ text: "задача" }), from: { id: 7 }, chat: { id: 7, type: "private" } });
