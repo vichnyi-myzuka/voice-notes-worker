@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { workersLlm, type Channel, type Incoming } from "@voice-notes/core";
 import type { Ports } from "../src/application/pipeline";
-import { r2Ledger, r2Notes } from "../src/infrastructure/r2";
+import { githubIssues } from "../src/infrastructure/github";
+import { r2IssueLedger, r2Ledger, r2Notes } from "../src/infrastructure/r2";
 import { todoistTracker } from "../src/infrastructure/todoist";
 import { handleFetch } from "../src/interface/inbox";
 import { fakeEnv } from "./fake-env";
@@ -27,6 +28,8 @@ const ports = (channel: Channel, env: ReturnType<typeof envWith>): Ports => ({
 	tracker: todoistTracker(env),
 	notes: r2Notes(env),
 	ledger: r2Ledger(env),
+	issues: githubIssues(env),
+	issueLedger: r2IssueLedger(env),
 	llm: workersLlm(env),
 });
 

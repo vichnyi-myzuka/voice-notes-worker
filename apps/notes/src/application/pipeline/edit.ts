@@ -3,6 +3,7 @@ import type { Note } from "../../domain/published";
 import { formatRecordedAt } from "../../domain/recording";
 import { runSetup } from "../setup";
 import { openSteps } from "@voice-notes/core";
+import { closeIssues, syncIssues } from "../issues";
 import { syncTasks } from "../tasks";
 import { editNote } from "../understand";
 import { captionNotice, showNote } from "./show";
@@ -52,10 +53,11 @@ export async function processEdit(env: Env, ports: Ports, key: string, noteId: s
 		// «Видали нотатку»: відкриті задачі в Todoist, саму нотатку в каналі й записи в R2.
 		const ids = Object.values(await ledger.get(noteId)).map((t) => t.id);
 		const deleted = await tracker.deleteOpenTasks(ids);
+		const closed = await closeIssues(ports, noteId); // GitHub не видаляє issues через API: закриваємо
 		await channel.remove(note.messageId);
 		await notes.remove(noteId, note);
 		await ledger.remove(noteId);
-		console.log(`note ${noteId} deleted by request: ${deleted} open tasks deleted in Todoist`);
+		console.log(`note ${noteId} deleted by request: ${deleted} open tasks deleted in Todoist, ${closed} issues closed in GitHub`);
 		await cleanup();
 		return;
 	}
@@ -73,9 +75,17 @@ export async function processEdit(env: Env, ports: Ports, key: string, noteId: s
 		messageUrl: channel.linkTo(note.messageId),
 	});
 
+	// Так само з issues: нові задачі проєкту створюємо, змінені оновлюємо, прибрані закриваємо.
+	const issuesApplied = await syncIssues(ports, run, {
+		noteId,
+		items: triaged,
+		description: `${meta.title} (${formatRecordedAt(String(note.recordedTs), env.TIMEZONE)})`,
+		messageUrl: channel.linkTo(note.messageId),
+	});
+
 	const allSetup = [...(note.setup ?? []), ...setup];
 	await step("captionEdited", async () => {
-		const notice = captionNotice(allSetup, applied === false);
+		const notice = captionNotice(allSetup, applied === false, issuesApplied === false);
 		await showNote(env, ports, noteId, note, { meta, triage: triaged, notice });
 		return true;
 	});

@@ -11,6 +11,8 @@ enabled = true
 
 [vars]
 TIMEZONE = "Europe/Kyiv" # для fallback-назви "дата й час запису"
+# Репозиторії для GitHub issues (задачі про проєкт); без секрету GITHUB_ISSUES_TOKEN вимкнено
+ISSUE_REPOS = '[{"repo":"vichnyi-myzuka/voice-notes-worker","description":"Telegram-бот голосових нотаток (Cloudflare Workers): apps/notes, apps/agent, apps/sites, packages/core, CI/CD"}]'
 
 [ai]
 binding = "AI" # Workers AI: whisper-large-v3-turbo

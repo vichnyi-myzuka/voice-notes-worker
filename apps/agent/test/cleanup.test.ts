@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CLEANUP } from "../src/infrastructure/container/cleanup";
 
-// Справжній git: «GitHub» (bare), спільний клон і worktree сесії в /workspace/sessions-подібній теці.
-const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+// Справжній git: «GitHub» (bare), спільний клон і worktree сесії в /workspace/sessions-подібній теці. Хуки вимкнено: системний pre-push (агент) забороняє пуш у main, а тест пушить у власний тимчасовий bare-репозиторій.
+const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
 function setup() {
 	const root = mkdtempSync(join(tmpdir(), "cleanup-"));
