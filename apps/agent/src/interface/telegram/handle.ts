@@ -10,7 +10,31 @@ export const TELEGRAM_PATH = "/telegram";
 
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
 // repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. repo.ts); без них репозиторій задає лише префікс.
-export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void> };
+// syncCommands: виставляти меню `/`-команд (див. syncCommands); у тестах вимкнено.
+export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean };
+
+// Меню `/`-команд у приваті. Єдине місце, де вони перелічені: додаєш команду в обробник — додай і сюди.
+export const COMMANDS = [
+	{ command: "status", description: "Стан сесії (відповіддю на її пост)" },
+	{ command: "stop", description: "Зупинити сесію (відповіддю на пост)" },
+	{ command: "model", description: "Змінити модель сесії: /model opus (відповіддю на пост)" },
+	{ command: "delete", description: "Видалити сесію (відповіддю на пост)" },
+	{ command: "quota", description: "Ліміти підписки Claude" },
+	{ command: "update", description: "Перезапустити контейнер з поточного образу" },
+];
+
+// Воркер не має хука «після деплою», тож меню виставляє перший вебхук нового екземпляра воркера (а екземпляр після деплою
+// новий): setMyCommands ідемпотентний і дешевий. Той самий список не надсилається вдруге, збій дозволяє повторити.
+let syncedCommands = "";
+export async function syncCommands(bot: BotEnv): Promise<void> {
+	const body = JSON.stringify(COMMANDS);
+	if (syncedCommands === body) return;
+	syncedCommands = body;
+	await tg(bot, "setMyCommands", { commands: COMMANDS, scope: { type: "all_private_chats" } }).catch((err) => {
+		syncedCommands = "";
+		console.error("setMyCommands failed:", err);
+	});
+}
 
 // Відповіді на команди (/status, /quota…) зникають з чату самі. Чекаємо в waitUntil, якому Cloudflare дає ~30 с після відповіді
 // вебхуку, тому трохи менше.
@@ -29,6 +53,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	}
 	if (!env.BOT_TOKEN) return new Response("bot is not configured", { status: 503 });
 	const bot = { BOT_TOKEN: env.BOT_TOKEN };
+	if (deps.syncCommands) deps.defer(syncCommands(bot));
 	const update = await req.json<TgUpdate>().catch(() => null);
 	if (update?.callback_query) {
 		deps.defer(handleButton(bot, update.callback_query, env, deps.agent).catch((err) => console.error("telegram button failed:", err)));

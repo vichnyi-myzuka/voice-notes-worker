@@ -57,6 +57,26 @@ const msg = (extra: Record<string, unknown>, id = 7) => ({ message_id: id, date:
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("меню команд", () => {
+	it("setMyCommands виставляється з першим вебхуком, збій повторюється, успішний — не повторюється", async () => {
+		const { agent, llm, calls } = setup();
+		const fetchMock = vi.mocked(fetch);
+		const pending: Promise<unknown>[] = [];
+		const ping = async () => {
+			await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret" }, body: JSON.stringify({ update_id: 1 }) }), env, { agent, llm, defer: (w) => void pending.push(w), syncCommands: true });
+			await Promise.all(pending.splice(0));
+		};
+		fetchMock.mockImplementationOnce(async () => Response.json({ ok: false, description: "boom" }, { status: 500 }));
+		await ping(); // збій
+		await ping(); // повтор успішний
+		await ping(); // вже виставлено
+		const sets = calls.filter((c) => c.method === "setMyCommands");
+		expect(sets).toHaveLength(1);
+		expect(sets[0].body).toMatchObject({ scope: { type: "all_private_chats" } });
+		expect((sets[0].body.commands as { command: string }[]).map((c) => c.command)).toEqual(["status", "stop", "model", "delete", "quota", "update"]);
+	});
+});
+
 describe("вебхук Telegram", () => {
 	it("без секрета чи з чужим — 401, нічого не створює", async () => {
 		const { send, sessions, calls } = setup();

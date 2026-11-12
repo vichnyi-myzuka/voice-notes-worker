@@ -60,6 +60,7 @@ export type TgMethods = {
 	};
 	answerCallbackQuery: { params: { callback_query_id: string; text?: string }; result: boolean };
 	deleteMessage: { params: { chat_id: ChatId; message_id: number }; result: boolean };
+	setMyCommands: { params: { commands: { command: string; description: string }[]; scope?: { type: "all_private_chats" } }; result: boolean };
 	setMessageReaction: {
 		params: { chat_id: ChatId; message_id: number; reaction: { type: "emoji"; emoji: string }[] };
 		result: boolean;
