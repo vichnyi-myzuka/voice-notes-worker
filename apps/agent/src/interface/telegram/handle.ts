@@ -96,6 +96,27 @@ function modelPrefix(transcript: string): { model: string; task: string } | unde
 	return spoken && model ? { model, task: spoken[2] } : undefined;
 }
 
+// Явне ввімкнення MCP Sure (фінанси власника): «@sure задача» чи голосом «шур, задача» на початку. Без префікса Sure вмикає висновок
+// моделі (routeTask: задача потребує особистих фінансів власника), тож слово «шур» не обов'язкове.
+const SURE_PREFIX = /^(?:@sure|shure|шур|шюр|шуре)[\s,.:;!—–-]+([\s\S]+)$/iu;
+
+// Шукає префікси моделі й Sure в будь-якому порядку; повертає задачу без них.
+function parsePrefixes(transcript: string): { task: string; model?: string; sure: boolean } {
+	let task = transcript;
+	let model: string | undefined;
+	let sure = false;
+	for (let i = 0; i < 2; i++) {
+		const m = !model && modelPrefix(task);
+		if (m) ({ model, task } = m);
+		const sm = !sure && SURE_PREFIX.exec(task);
+		if (sm) {
+			task = sm[1];
+			sure = true;
+		}
+	}
+	return { task: task.trim(), model, sure };
+}
+
 async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
@@ -150,13 +171,13 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const transcript = await transcribe(env, llm, file, text);
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
-	const withModel = modelPrefix(transcript);
-	const task = withModel ? withModel.task.trim() : transcript;
-	const model = withModel?.model;
+	const { task, model, sure: forced } = parsePrefixes(transcript);
 	const withRepo = REPO_PREFIX.exec(task);
 	const prompt = withRepo ? withRepo[2].trim() : task;
 	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
 	const repo = withRepo ? withRepo[1] : route.repo;
+	// Sure підключається, коли власник назвав його явно («шур, …», «@sure») або модель побачила, що задача про його фінанси.
+	const sure = forced || route.sure === true;
 
 	const url = agent.url(id);
 	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
@@ -165,14 +186,14 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
-	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : ""].filter(Boolean).join("\n");
+	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : ""].filter(Boolean).join("\n");
 	const header = (
 		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
 		: `${inChannel ? `${clipped}\n\n` : ""}${where}`
 	).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }) }, { chatId: chat, url, postId, header });
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }) }, { chatId: chat, url, postId, header });
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст.
 	if (inChannel || file) await removeMessage(env, chat, msg.message_id);
 }

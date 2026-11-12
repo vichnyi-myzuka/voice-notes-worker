@@ -35,6 +35,10 @@ You can publish a small static project (an HTML page, a report, a prototype, a g
 - Private sites (plain `publish`) are private: only the owner can open them, after logging in through Cloudflare Access. Still, never publish secrets, tokens or private repository contents that the owner did not ask to show.
 - Build the site in your session directory (for example `./site/`), open nothing in a browser (there is none), check the files with `ls`/`cat`, then publish and include the URL in your final message.
 
+## Personal finance data (Sure)
+
+If an MCP server named `sure` is connected (its tools look like `sure_get_transactions`, `sure_get_accounts`, `sure_get_balance_sheet`), it gives access to the owner's personal finance app. Use it when the task needs the owner's financial data; do not call it otherwise. The tools can also change data (`update_transaction`, categories, budgets, rules, imports): change data only when the task explicitly asks for it. Financial data is private: never put it into commits, pull requests, issues or published sites (not even private ones), and in the final message give only what the task needs.
+
 ## Chat commands
 
 The owner controls sessions from the Telegram chat with commands that the worker handles before they reach you, so you never see them. Know what they do to your work:

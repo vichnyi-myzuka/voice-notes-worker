@@ -42,6 +42,12 @@ export interface Env {
 	PUBLIC_R2_ACCESS_KEY_ID?: string;
 	PUBLIC_R2_SECRET_ACCESS_KEY?: string;
 	PUBLIC_SITES_BASE_URL?: string;
+	// MCP-сервер Sure (`https://<host>/mcp`): адреса, Bearer-токен (MCP_API_TOKEN у Sure) і Service Token Cloudflare Access для тунелю.
+	// Без адреси й токена MCP не підключається. Токен і Service Token йдуть у контейнер.
+	SURE_MCP_URL?: string;
+	SURE_MCP_TOKEN?: string;
+	SURE_ACCESS_CLIENT_ID?: string;
+	SURE_ACCESS_CLIENT_SECRET?: string;
 	// JSON-масив [{repo: "owner/name", about: "як власник його називає"}]: з нього бот вибирає репозиторій за вільною фразою (не секрет, див. wrangler.toml)
 	AGENT_REPOS?: string;
 	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access

@@ -436,9 +436,21 @@ GET  /s/<id>                                           → редірект на
 3. Секрети агента (`cd apps/agent`): `npx wrangler secret put PUBLIC_R2_ACCESS_KEY_ID`, `PUBLIC_R2_SECRET_ACCESS_KEY`, `PUBLIC_SITES_BASE_URL` (значення `https://share.<домен>`). Access для `share.` **не створюй**: хост відкритий навмисно.
 4. Після мержу CI розгорне `share.` разом із `sites`; токен Cloudflare у CI має право на DNS/маршрути зони (як для решти доменів). Потім `npm run deploy -w apps/agent` (схвалення `production-agent`).
 
+### MCP Sure (особисті фінанси)
+
+Агент може читати й змінювати дані фінансового застосунку [Sure](https://github.com/we-promise/sure) власника через його вбудований MCP (`POST /mcp`, Bearer-токен). Це **не для всіх сесій**: воркер пише `.opencode/opencode.json` з MCP-сервером `sure` у теку лише тієї сесії, якій Sure потрібен (з git файл виключається через `info/exclude`). Sure вмикається, коли:
+- задача починається з `@sure …` чи голосом «шур, …» («shure», «шюр»), префікс можна поєднувати з моделлю («модель опус, шур, …»);
+- або модель-роутер (`routeTask`, той самий виклик, що дає назву гілки) вирішила, що задача потребує особистих фінансів власника (витрати, рахунки, бюджет, транзакції), навіть без ключового слова. У пості сесії з'являється рядок «💰 Sure».
+Прапорець зберігається в сесії, тож після сну контейнера конфіг відновлюється. Без налаштованого Sure нічого не підключається. MCP дає і запис (категорії, транзакції, бюджети), права обмежує лише користувач `MCP_USER_EMAIL` у Sure. У `AGENTS.md` агента є правило не публікувати фінансові дані ні в комітах, ні на сайтах.
+
+Налаштування:
+1. У Sure (compose): `MCP_API_TOKEN` (`openssl rand -base64 32`) і `MCP_USER_EMAIL`, перезапусти контейнер.
+2. Якщо Sure за тунелем з Access: Zero Trust → Access → Service Auth → створи Service Token; у політиках застосунку Sure додай правило **Service Auth** з цим токеном.
+3. Секрети агента (`cd apps/agent`): `npx wrangler secret put SURE_MCP_URL` (`https://<host>/mcp`), `SURE_MCP_TOKEN`, а з Access ще `SURE_ACCESS_CLIENT_ID` і `SURE_ACCESS_CLIENT_SECRET`. Адреса йде у конфіг сесії, токени лише в env контейнера (конфіг містить посилання `{env:…}`).
+
 ### Запобіжники агента
 
-- **Секрети.** У контейнер передається лише `OPENCODE_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` і змінні публікації сайтів (`R2_*`, `SITES_BASE_URL`, `PUBLIC_*`; білий список `containerEnv`, є тест). Токени Todoist і бота нотаток живуть в іншому воркері й у воркері агента їх немає; секрети чату (`BOT_TOKEN`, `TG_WEBHOOK_SECRET`, `CHAT_ID`) і Access до контейнера не потрапляють.
+- **Секрети.** У контейнер передається лише `OPENCODE_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` змінні публікації сайтів (`R2_*`, `SITES_BASE_URL`, `PUBLIC_*`) і доступ до Sure (`SURE_MCP_TOKEN`, `SURE_ACCESS_CLIENT_*`; білий список `containerEnv`, є тест). Токени Todoist і бота нотаток живуть в іншому воркері й у воркері агента їх немає; секрети чату (`BOT_TOKEN`, `TG_WEBHOOK_SECRET`, `CHAT_ID`) і Access до контейнера не потрапляють.
 - **Гілки.** У образі системний `core.hooksPath` вказує на теку, куди воркер кладе `pre-push` (з `payload/`), що відхиляє пуш у `main` і `master`; агент працює в `agent/<id>`. Це запобіжник від випадковості (`--no-verify` його обходить), справжній захист налаштовується в GitHub: для кожного репозиторію, яким користується агент, увімкни **rule/branch protection** на `main` (вимагати PR, заборонити прямі пуші й force-push), а токен `GITHUB_TOKEN` зроби fine-grained лише для потрібних репозиторіїв із правами Contents і Pull requests (read/write), без Workflows і Administration. Токен не вміє пушити в захищену гілку.
 - **Сон.** Контейнер засинає через годину без запитів (`AGENT_INACTIVITY_MS`); `exec`, відкриті з'єднання й SSE продовжують його життя (див. `GET /api/computer`).
 - **Ліміти.** Поки хтось працює, alarm кожні 15 с перевіряє всі активні сесії (і з чату, і з веб-інтерфейсу): вартість понад `AGENT_MAX_COST_USD` (за замовчуванням 5) чи токенів (вхід + вихід + reasoning, без кешу) понад `AGENT_MAX_TOKENS` (за замовчуванням 3 млн) перериває сесію, а для сесій із чату приходить `⛔ Сесію зупинено: …`. Перша перевірка сесії з веб-інтерфейсу може відбутись із затримкою до 5 хв (до першого alarm). За підписки Claude `cost` у OpenCode може бути нульовим чи умовним, тож надійніший ліміт за токенами; реальні значення подивись у `/status`.
