@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chatHtml, editChat, sendChat } from "../src/infrastructure/chat";
+import { chatHtml, editChat, QUOTE_CLOSE, QUOTE_OPEN, sendChat } from "../src/infrastructure/chat";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -15,6 +15,10 @@ describe("chatHtml", () => {
 		expect(chatHtml("**Готово**: `npm run check` і [PR](https://github.com/me/app/pull/1)")).toBe('<b>Готово</b>: <code>npm run check</code> і <a href="https://github.com/me/app/pull/1">PR</a>');
 		expect(chatHtml("## Зміни\n- один\n* два")).toBe("<b>Зміни</b>\n• один\n• два");
 		expect(chatHtml("`**не жирний** https://x.dev`")).toBe("<code>**не жирний** https://x.dev</code>");
+	});
+
+	it("текст між маркерами цитати стає згорнутою цитатою, решта форматується як зазвичай", () => {
+		expect(chatHtml(`📦 me/app\n\n${QUOTE_OPEN}🗣 зроби <b> & **це**${QUOTE_CLOSE}\n\n⏳ Працює`)).toBe("📦 me/app\n\n<blockquote expandable>🗣 зроби &lt;b&gt; &amp; <b>це</b></blockquote>\n\n⏳ Працює");
 	});
 
 	it("HTML від моделі екранується", () => {

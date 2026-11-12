@@ -13,6 +13,19 @@ function label(url: string): string {
 // Текст агента (звичайний Markdown) → HTML Telegram: **жирний**, `код`, [текст](url), заголовки, списки; голі URL стають
 // клікабельними з коротким підписом. Усе інше екранується, тож HTML від моделі не потрапляє в розмітку.
 export function chatHtml(text: string): string {
+	// Фрагменти між QUOTE_OPEN і QUOTE_CLOSE — згорнута цитата (розшифровка голосового); решта — звичайний текст.
+	return text
+		.split(/\uE000([^\uE001]*)\uE001/)
+		.map((part, i) => (i % 2 ? `<blockquote expandable>${inline(part)}</blockquote>` : inline(part)))
+		.join("");
+}
+
+// Маркери згорнутої цитати в тексті шапки (символи приватної зони Unicode, у тексті агента не трапляються).
+export const QUOTE_OPEN = "\uE000";
+export const QUOTE_CLOSE = "\uE001";
+const stripQuote = (s: string) => s.replace(/[\uE000\uE001]/g, "");
+
+function inline(text: string): string {
 	return escape(text)
 		.split(/(`[^`\n]+`)/)
 		.map((part, i) => {
@@ -56,7 +69,7 @@ function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, 
 // посилання на сесію («🔗 Відкрити сесію»).
 function render(text: string, sessionUrl?: string): { html: string; plain: string } {
 	const tail = (html: boolean) => (sessionUrl ? `${text ? "\n\n" : ""}🔗 ${html ? `<a href="${escape(sessionUrl)}">Відкрити сесію</a>` : sessionUrl}` : "");
-	return { html: `${chatHtml(text)}${tail(true)}`, plain: `${text}${tail(false)}` };
+	return { html: `${chatHtml(text)}${tail(true)}`, plain: `${stripQuote(text)}${tail(false)}` };
 }
 
 // Надсилає повідомлення з форматуванням і необов'язковим посиланням на сесію внизу. Якщо Telegram відхилив розмітку, шле
