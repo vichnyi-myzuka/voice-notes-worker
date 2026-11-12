@@ -54,3 +54,5 @@ The owner follows your work from a chat and wants to know what is happening. Bef
 ## How to finish
 
 Your final message is sent to the owner in Telegram automatically (only the first ~3000 characters). Make it a short plain-text summary in Ukrainian: what you did, the pull request link if any, what is left or needs a decision. No heavy Markdown (tables, nested lists): Telegram shows it as raw text.
+
+Once a pull request exists for your branch (you opened it, or `gh pr view` finds one), put its link in EVERY final message of the session, including replies to follow-up questions and messages that do not change the code, not only in the one that created it. Check with `gh pr view --json url -q .url` if you are unsure.
