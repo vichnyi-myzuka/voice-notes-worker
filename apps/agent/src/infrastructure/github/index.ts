@@ -29,10 +29,11 @@ export async function reviewDeployments(token: string, repo: string, runId: numb
 	return ids.length;
 }
 
-// PR, змерджений у цей коміт (за ним показуємо результат деплою); undefined, якщо коміт пушили не через PR.
-export async function commitPull(token: string, repo: string, sha: string): Promise<{ number: number; title: string; url: string } | undefined> {
+// PR, змерджені в цей коміт (за ними показуємо результат деплою й прибираємо сесії); порожньо, якщо коміт пушили без PR.
+export type CommitPull = { number: number; title: string; url: string; branch: string; repo?: string };
+export async function commitPulls(token: string, repo: string, sha: string): Promise<CommitPull[]> {
 	const res = await gh(token, "GET", `/repos/${repo}/commits/${sha}/pulls`);
 	if (!res.ok) throw new Error(`commit pulls ${res.status}`);
-	const pr = (await res.json<{ number: number; title: string; html_url: string }[]>())[0];
-	return pr && { number: pr.number, title: pr.title, url: pr.html_url };
+	const pulls = await res.json<{ number: number; title: string; html_url: string; head: { ref: string; repo?: { full_name: string } | null } }[]>();
+	return pulls.map((p) => ({ number: p.number, title: p.title, url: p.html_url, branch: p.head.ref, repo: p.head.repo?.full_name }));
 }
