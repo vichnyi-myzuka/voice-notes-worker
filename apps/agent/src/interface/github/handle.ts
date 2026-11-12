@@ -2,7 +2,7 @@ import { safeEqual, tg, type BotEnv } from "@voice-notes/core";
 import type { Deploys, Sessions } from "../../domain/agent";
 import type { Env } from "../../env";
 import { commitPulls, deleteBranch } from "../../infrastructure/github";
-import { removeMessage, removeOriginal } from "../telegram/handle";
+import { callback, removeMessage, removeOriginal } from "../../infrastructure/chat";
 import { reviewButtons } from "./review";
 
 export const GITHUB_PATH = "/github";
@@ -73,7 +73,7 @@ async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, re
 	}
 	if (shown) return;
 	const text = [title, repo, ...pulls.map((pr) => `PR #${pr.number}: ${pr.title}\n${pr.url}`), run.html_url, cleaned && "🧹 Сесію, worktree і гілку прибрано."].filter(Boolean).join("\n");
-	const reply_markup = { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: "dismiss" }]] };
+	const reply_markup = { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: callback.dismiss }]] };
 	// Якщо цей запуск чекав схвалення в окремому пості, результат дописуємо в нього (а не шлемо новий).
 	const asked = await agent.takeRef(refKey(repo, run.id)).catch(() => undefined);
 	if (asked && (await tg(bot, "editMessageText", { chat_id: asked.chatId, message_id: asked.messageId, text: `${asked.text}\n\n${text}`, reply_markup, link_preview_options: { is_disabled: true } }).then(() => true, (err) => (console.error("edit approval post failed:", err), false)))) return;
