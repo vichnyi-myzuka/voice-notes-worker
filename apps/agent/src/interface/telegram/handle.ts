@@ -170,7 +170,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
 	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }) }, { chatId: chat, url, postId, header });
-	if (inChannel) await tg(env, "deleteMessage", { chat_id: chat, message_id: msg.message_id }).catch((err) => console.error("delete original failed:", err));
+	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст.
+	if (inChannel || file) await removeMessage(env, chat, msg.message_id);
 }
 
 // Голосове → текст через Whisper; текст як є. Порожній рядок — не розібрали.
