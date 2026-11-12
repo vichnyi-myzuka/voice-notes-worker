@@ -1,5 +1,5 @@
 import { DOWNLOAD_MAX_BYTES, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
-import type { Agent, SessionReport } from "../../domain/agent";
+import { folderFor, type Agent, type SessionReport } from "../../domain/agent";
 import type { Env } from "../../env";
 import { QUOTE_CLOSE, QUOTE_OPEN, sendChat } from "../../infrastructure/chat";
 import { describeQuota, fetchQuota } from "../../infrastructure/quota";
@@ -183,9 +183,11 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Без прев'ю: інакше Telegram показує картку сторінки за Access.
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
+	// Гілка agent/<тека> є лише в сесії з репозиторієм.
+	const where = repo ? `📦 ${repo} · 🌿 agent/${folderFor(id, route.name)}` : "";
 	const header = (
-		file ? [repo ? `📦 ${repo}` : "", `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
-		: `${inChannel ? `${clipped}\n\n` : ""}${repo ? `📦 ${repo}` : ""}`
+		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
+		: `${inChannel ? `${clipped}\n\n` : ""}${where}`
 	).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.

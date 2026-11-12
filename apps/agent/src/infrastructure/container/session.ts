@@ -1,7 +1,7 @@
 import { tg, workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import type { AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { folderFor, type AgentStatus, ComputerInfo, ConnectionsInfo, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { editChat, sendChat, QUOTE_CLOSE, QUOTE_OPEN, type Answers } from "../chat";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
@@ -56,7 +56,6 @@ const sessionKey = (id: string) => `session:${id}`;
 const watchKey = (id: string) => `watch:${id}`;
 const sessionDir = (folder: string) => `/workspace/sessions/${folder}`;
 // Тека й гілка за змістом задачі: `<назва>-<останній сегмент id>` (номер повідомлення робить її унікальною); без назви — id.
-const folderFor = (id: string, name?: string) => (name ? `${name}-${id.split("-").at(-1)}` : id);
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
