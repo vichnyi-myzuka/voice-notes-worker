@@ -54,7 +54,7 @@ export type DeployInfo = { text: string; repo?: string; runId?: number; done?: b
 export type Agent = {
 	// Показує деплой у пості сесії гілки agent/<folder>; false — сесії з постом немає. setDeployByPost: те саме за постом, лише якщо він уже показує деплой.
 	setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean>;
-	setDeployByPost(postId: number, deploy: DeployInfo): Promise<boolean>;
+	setDeployByPost(postId: number, deploy: DeployInfo, force?: boolean): Promise<boolean>;
 	// Запам'ятовує пост за ключем і віддає його один раз (take забирає): так результат деплою редагує пост зі схваленням.
 	saveRef(key: string, ref: PostRef): Promise<void>;
 	takeRef(key: string): Promise<PostRef | undefined>;

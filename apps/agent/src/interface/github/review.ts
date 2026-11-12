@@ -23,7 +23,9 @@ export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env
 		if (!number) return void (await answer("Відкритого PR не знайдено."));
 		await mergePull(token, target.repo, number);
 		const message = query.message!;
-		await tg(bot, "editMessageReplyMarkup", { chat_id: message.chat.id, message_id: message.message_id, reply_markup: { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: `del:${id}` }]] } }).catch((err) => console.error("edit failed:", err));
+		// Пост одразу показує, що PR змерджено і йде деплой (кнопка «Змерджити» зникає); далі рядок замінить вебхук GitHub
+		const shown = await agent.setDeployByPost(message.message_id, { text: `🔀 PR #${number} змерджено, чекаємо на деплой` }, true).catch(() => false);
+		if (!shown) await tg(bot, "editMessageReplyMarkup", { chat_id: message.chat.id, message_id: message.message_id, reply_markup: { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: `del:${id}` }]] } }).catch((err) => console.error("edit failed:", err));
 		await answer(`🔀 PR #${number} змерджено`);
 	} catch (err) {
 		console.error("merge failed:", err);

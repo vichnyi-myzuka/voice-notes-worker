@@ -15,7 +15,7 @@ export type SessionObject = {
 	removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined>;
 	link(id: string): Promise<string | undefined>;
 	setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean>;
-	setDeployByPost(postId: number, deploy: DeployInfo): Promise<boolean>;
+	setDeployByPost(postId: number, deploy: DeployInfo, force?: boolean): Promise<boolean>;
 	saveRef(key: string, ref: PostRef): Promise<void>;
 	takeRef(key: string): Promise<PostRef | undefined>;
 	pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined>;
@@ -52,7 +52,7 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		link: (id) => computer().link(id),
 		pullTarget: (id) => computer().pullTarget(id),
 		setDeploy: (repo, folder, deploy) => computer().setDeploy(repo, folder, deploy),
-		setDeployByPost: (postId, deploy) => computer().setDeployByPost(postId, deploy),
+		setDeployByPost: (postId, deploy, force) => computer().setDeployByPost(postId, deploy, force),
 		saveRef: (key, ref) => computer().saveRef(key, ref),
 		takeRef: (key) => computer().takeRef(key),
 		snapshot: () => computer().snapshot(),

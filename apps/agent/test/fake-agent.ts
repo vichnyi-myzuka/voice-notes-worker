@@ -91,7 +91,7 @@ export function fakeAgent(origin = "https://agent.example") {
 			}
 			return false;
 		},
-		async setDeployByPost(postId, deploy) {
+		async setDeployByPost(postId, deploy, _force) {
 			deploys.push({ postId, deploy });
 			return postId === 77;
 		},
