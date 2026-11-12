@@ -693,6 +693,60 @@ describe("AgentSession", () => {
 				expect(edit.text).toBe(`🗣 ${"я".repeat(397)}…\n\n✅ Готово\n\nГотово: <b>ok</b>\n\n${link}`);
 			});
 
+			it("деплой PR сесії дописується в її пост: запит на схвалення з кнопками, потім результат лише з «Видалити»", async () => {
+				const t = setup({ BOT_TOKEN: "bot" });
+				const SID = "tg-1-1";
+				await t.session.start(SID, { prompt: "Задача", repo: "me/app", name: "card" });
+				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1" });
+				t.opencode.busy.clear();
+				t.opencode.info[ocId] = { outcome: "succeeded" };
+				await t.session.alarm();
+				const ids = () => ((edits().at(-1) as unknown as { reply_markup: { inline_keyboard: { callback_data: string }[][] } }).reply_markup.inline_keyboard).map((r) => r.map((b) => b.callback_data));
+				expect(await t.session.setDeploy("me/app", "card-1", { text: "🚀 Деплой чекає схвалення", repo: "me/app", runId: 9 })).toBe(true);
+				expect(edits().at(-1)!.text).toContain("✅ Готово\n\n🚀 Деплой чекає схвалення");
+				expect(ids()).toEqual([["appr:me/app:9", "rej:me/app:9"], ["del:tg-1-1"]]);
+				expect(await t.session.setDeployByPost(77, { text: "✅ Деплой схвалено, виконується" })).toBe(true);
+				expect(ids()).toEqual([["del:tg-1-1"]]);
+				await t.session.setDeploy("me/app", "card-1", { text: "✅ Деплой успішний", done: true });
+				expect(edits().at(-1)!.text).toContain("✅ Деплой успішний");
+				expect(ids()).toEqual([["dismiss"]]);
+				expect(await t.session.setDeploy("me/app", "other-1", { text: "x" })).toBe(false);
+			});
+
+			describe("кнопка «Змерджити»", () => {
+				const SID = "tg-1-1";
+				const POST_TG = { ...POST, url: "https://agent.example/s/tg-1-1" };
+				const buttons = () => ((edits().at(-1) as unknown as { reply_markup: { inline_keyboard: { callback_data: string }[][] } }).reply_markup.inline_keyboard[0]).map((b) => b.callback_data);
+				const finish = async (t: ReturnType<typeof setup>) => {
+					await t.session.start(SID, { prompt: "Задача", repo: "me/app", name: "card" });
+					await t.session.watch(SID, POST_TG);
+					await t.session.alarm();
+					t.opencode.busy.clear();
+					t.opencode.info[ocId] = { outcome: "succeeded" };
+					await t.session.alarm();
+				};
+
+				it("є відкритий PR гілки сесії → під підсумком «Змерджити»", async () => {
+					const calls: string[] = [];
+					const base = globalThis.fetch;
+					vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+						if (!String(url).includes("api.github.com")) return base(url, init);
+						calls.push(String(url));
+						return Response.json([{ number: 7 }]);
+					});
+					await finish(setup({ BOT_TOKEN: "bot", GITHUB_TOKEN: "gh" }));
+					expect(calls[0]).toContain("/repos/me/app/pulls?state=open&head=me%3Aagent%2Fcard-1");
+					expect(buttons()).toEqual(["merge:tg-1-1", "del:tg-1-1"]);
+				});
+
+				it("без PR (чи без токена) лишається лише «Видалити»", async () => {
+					const base = globalThis.fetch;
+					vi.stubGlobal("fetch", async (url: string, init: RequestInit) => (String(url).includes("api.github.com") ? Response.json([]) : base(url, init)));
+					await finish(setup({ BOT_TOKEN: "bot", GITHUB_TOKEN: "gh" }));
+					expect(buttons()).toEqual(["del:tg-1-1"]);
+				});
+			});
+
 			describe("прогрес у пості (події інструментів)", () => {
 				const flush = async () => {
 					for (let i = 0; i < 20; i++) await Promise.resolve();

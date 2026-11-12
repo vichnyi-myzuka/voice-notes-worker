@@ -1,9 +1,9 @@
-import type { Agent, AgentStatus, SessionReport, StartInput, WatchTarget } from "../src/domain/agent";
+import type { Agent, DeployInfo, PostRef, AgentStatus, SessionReport, StartInput, WatchTarget } from "../src/domain/agent";
 
 // Агент у пам'яті: те саме, що робить Durable Object з контейнером, але без контейнера й мережі.
 // Поведінка як у реальної реалізації: start ідемпотентний за id, abort повертає сесію у idle,
 // followUp будить сесію (working), а для невідомої сесії будь-яка дія — помилка. Веб-інтерфейс один на всі сесії.
-export type FakeSession = { input: StartInput; messages: string[]; status: AgentStatus; outcome?: SessionReport["outcome"]; cost?: number };
+export type FakeSession = { input: StartInput; messages: string[]; posted?: boolean; status: AgentStatus; outcome?: SessionReport["outcome"]; cost?: number };
 
 const CHAT = -1001; // чат, у якому «живе» пост сесії
 
@@ -14,6 +14,8 @@ export function fakeAgent(origin = "https://agent.example") {
 	const resets: string[] = [];
 	const watches: { id: string; target: WatchTarget }[] = [];
 	const choices = new Map<string, string[]>(); // id сесії → підписи варіантів поточного питання (тест задає)
+	const refs = new Map<string, PostRef>();
+	const deploys: { repo?: string; folder?: string; postId?: number; deploy: DeployInfo }[] = [];
 	let snapshotError = "";
 	const get = (id: string) => {
 		const s = sessions.get(id);
@@ -80,6 +82,31 @@ export function fakeAgent(origin = "https://agent.example") {
 		async link(id) {
 			return sessions.has(id) ? `ses_${id}` : undefined;
 		},
+		async setDeploy(repo, folder, deploy) {
+			for (const [id, s] of sessions) {
+				if (s.input.repo === repo && `${s.input.name}-${id.split("-").at(-1)}` === folder && s.posted) {
+					deploys.push({ repo, folder, deploy });
+					return true;
+				}
+			}
+			return false;
+		},
+		async setDeployByPost(postId, deploy) {
+			deploys.push({ postId, deploy });
+			return postId === 77;
+		},
+		async saveRef(key, ref) {
+			refs.set(key, ref);
+		},
+		async takeRef(key) {
+			const ref = refs.get(key);
+			refs.delete(key);
+			return ref;
+		},
+		async pullTarget(id) {
+			const s = sessions.get(id);
+			return s?.input.repo ? { repo: s.input.repo, branch: `agent/${s.input.name ?? id}-${id.split("-").at(-1)}` } : undefined;
+		},
 		async connections() {
 			return { running: true, ssh: { listening: true, connections: 1 }, opencode: { listening: true, connections: 2 } };
 		},
@@ -97,5 +124,5 @@ export function fakeAgent(origin = "https://agent.example") {
 			return { id: `snap${snapshots.length}`, bytes: 1, ms: 2 };
 		},
 	};
-	return { agent, choices, sessions, served, snapshots, resets, watches, failSnapshot: (message: string) => void (snapshotError = message) };
+	return { agent, deploys, choices, sessions, served, snapshots, resets, watches, failSnapshot: (message: string) => void (snapshotError = message) };
 }

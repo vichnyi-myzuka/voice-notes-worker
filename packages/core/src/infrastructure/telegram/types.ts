@@ -53,6 +53,7 @@ export type TgMethods = {
 		params: { chat_id: ChatId; message_id: number; text: string; parse_mode?: "HTML"; entities?: TgEntity[]; link_preview_options?: { is_disabled: boolean }; reply_markup?: TgInlineKeyboard };
 		result: MessageRef;
 	};
+	editMessageReplyMarkup: { params: { chat_id: ChatId; message_id: number; reply_markup: TgInlineKeyboard }; result: MessageRef };
 	editMessageCaption: {
 		params: { chat_id: ChatId; message_id: number; caption: string; caption_entities: TgEntity[] };
 		result: MessageRef;

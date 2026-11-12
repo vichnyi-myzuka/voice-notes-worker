@@ -1,8 +1,9 @@
 import { tg, workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { folderFor, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { editChat, sendChat, QUOTE_CLOSE, QUOTE_OPEN, type Answers } from "../chat";
+import { folderFor, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { editChat, sendChat, QUOTE_CLOSE, QUOTE_OPEN, type Answers, type Buttons } from "../chat";
+import { openPullNumber } from "../github";
 import { parseConnections } from "./connections";
 import { CLEANUP } from "./cleanup";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
@@ -52,6 +53,9 @@ type SavedSnapshot = { id: string; image: string; at: number };
 // post: пост сесії в чаті, який агент оновлює на місці (стан, підсумок).
 type Tracked = { ocId: string; repo?: string; folder?: string; post?: { postId: number; header: string; chatId?: number; url?: string } };
 
+type LastShown = { status: string; final: boolean; mergeable: boolean };
+const deployKey = (postId: number) => `deploy:${postId}`;
+const lastKey = (postId: number) => `last:${postId}`;
 const sessionKey = (id: string) => `session:${id}`;
 const watchKey = (id: string) => `watch:${id}`;
 const sessionDir = (folder: string) => `/workspace/sessions/${folder}`;
@@ -299,9 +303,64 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
-	private async show(w: WatchTarget, status: string, final = false, answers?: Answers): Promise<boolean> {
+	private async show(w: WatchTarget, status: string, final = false, answers?: Answers, mergeable = false): Promise<boolean> {
 		if (!w.postId || !this.env.BOT_TOKEN) return false;
-		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, status, final), w.url, final ? "done" : "working", answers);
+		// Стан деплою цього PR (запит на схвалення, результат) дописується під станом сесії; останній показаний стан запам'ятовується,
+		// щоб вебхук GitHub міг перемалювати пост (див. applyDeploy).
+		const deploy = await this.ctx.storage.get<DeployInfo>(deployKey(w.postId));
+		await this.ctx.storage.put(lastKey(w.postId), { status, final, mergeable } satisfies LastShown);
+		const buttons: Buttons = deploy?.done ? "dismiss" : final ? (mergeable && !deploy ? "mergeable" : "done") : "working";
+		const review = deploy?.runId && deploy.repo ? { repo: deploy.repo, runId: deploy.runId } : undefined;
+		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, this.postText(w, deploy ? `${status}\n\n${deploy.text}` : status, final), w.url, buttons, answers, review);
+	}
+
+	// Дописує в пост сесії її деплой (запит на схвалення, результат) і перемальовує пост на місці. false — поста немає чи правка не вдалась.
+	private async applyDeploy(post: NonNullable<Tracked["post"]>, deploy: DeployInfo): Promise<boolean> {
+		if (!post.chatId || !post.url) return false;
+		await this.ctx.storage.put(deployKey(post.postId), deploy);
+		const last = (await this.ctx.storage.get<LastShown>(lastKey(post.postId))) ?? { status: "✅ Готово", final: true, mergeable: false };
+		return this.show({ chatId: post.chatId, url: post.url, postId: post.postId, header: post.header }, last.status, last.final);
+	}
+
+	// Деплой PR з гілки agent/<folder> у репозиторії repo: показує його в пості цієї сесії. false — сесії з постом немає (тоді вебхук шле окреме повідомлення).
+	async setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean> {
+		for (const [key, tracked] of await this.ctx.storage.list<Tracked>({ prefix: "session:" })) {
+			if ((tracked.folder ?? key.slice("session:".length)) === folder && tracked.repo === repo && tracked.post) return this.applyDeploy(tracked.post, deploy);
+		}
+		return false;
+	}
+
+	// Те саме за постом (після натискання «Схвалити/Відхилити»); false, якщо цей пост не показує деплою.
+	async setDeployByPost(postId: number, deploy: DeployInfo): Promise<boolean> {
+		if (!(await this.ctx.storage.get(deployKey(postId)))) return false;
+		for (const tracked of (await this.ctx.storage.list<Tracked>({ prefix: "session:" })).values()) {
+			if (tracked.post?.postId === postId) return this.applyDeploy(tracked.post, deploy);
+		}
+		return false;
+	}
+
+	// Пости, які пізніше оновлює вебхук GitHub (ключ → пост); забирається один раз.
+	async saveRef(key: string, ref: PostRef): Promise<void> {
+		await this.ctx.storage.put(`ref:${key}`, ref);
+	}
+
+	async takeRef(key: string): Promise<PostRef | undefined> {
+		const ref = await this.ctx.storage.get<PostRef>(`ref:${key}`);
+		if (ref) await this.ctx.storage.delete(`ref:${key}`);
+		return ref;
+	}
+
+	// Гілка сесії й репозиторій (для кнопки «Змерджити»); undefined, якщо сесія без репозиторію.
+	async pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		return tracked?.repo ? { repo: tracked.repo, branch: `agent/${tracked.folder ?? id}` } : undefined;
+	}
+
+	// Чи є в гілки сесії відкритий PR (тоді під підсумком з'являється «Змерджити»). Збій GitHub кнопку просто не показує.
+	private async hasOpenPull(id: string): Promise<boolean> {
+		const target = this.env.GITHUB_TOKEN ? await this.pullTarget(id) : undefined;
+		if (!target || !this.env.GITHUB_TOKEN) return false;
+		return !!(await openPullNumber(this.env.GITHUB_TOKEN, target.repo, target.branch).catch((err) => (console.error("open pull lookup failed:", err), undefined)));
 	}
 
 	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
@@ -315,8 +374,10 @@ export class AgentSession extends DurableObject<Env> {
 		await this.postQueue.catch(() => undefined); // проміжна правка вже в дорозі: підсумок іде після неї
 		await this.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
-		if (await this.show(w, text, true)) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, "done").catch((err) => console.error("notify failed:", err));
+		// Підсумок успішної роботи: якщо агент відкрив PR, додаємо «Змерджити» (зупинену чи невдалу сесію не мерджимо з чату)
+		const mergeable = text.startsWith("✅") && (await this.hasOpenPull(key.slice("watch:".length)));
+		if (await this.show(w, text, true, undefined, mergeable)) return;
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done").catch((err) => console.error("notify failed:", err));
 	}
 
 	private async saveSnapshot(): Promise<SnapshotInfo> {
@@ -632,6 +693,7 @@ export class AgentSession extends DurableObject<Env> {
 		});
 		await this.ctx.storage.delete(sessionKey(id));
 		await this.ctx.storage.delete(watchKey(id));
+		if (tracked.post) await Promise.all([this.ctx.storage.delete(deployKey(tracked.post.postId)), this.ctx.storage.delete(lastKey(tracked.post.postId))]);
 	}
 
 	// PR з гілки agent/<folder> змерджено: прибирає сесію цієї гілки (див. remove). Повертає сесію й її пост у чаті, щоб

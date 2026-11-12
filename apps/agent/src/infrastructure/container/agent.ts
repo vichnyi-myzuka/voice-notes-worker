@@ -1,4 +1,4 @@
-import type { Agent, AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import type { Agent, DeployInfo, PostRef, AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 
 // Що має вміти Durable Object, щоб за ним працював порт Agent: він володіє єдиним контейнером і всіма сесіями в ньому.
 export type SessionObject = {
@@ -14,6 +14,11 @@ export type SessionObject = {
 	remove(id: string): Promise<void>;
 	removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined>;
 	link(id: string): Promise<string | undefined>;
+	setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean>;
+	setDeployByPost(postId: number, deploy: DeployInfo): Promise<boolean>;
+	saveRef(key: string, ref: PostRef): Promise<void>;
+	takeRef(key: string): Promise<PostRef | undefined>;
+	pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined>;
 	snapshot(): Promise<SnapshotInfo>;
 	resetComputer(unlessBusy?: boolean): Promise<boolean>;
 	info(): Promise<ComputerInfo>;
@@ -45,6 +50,11 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		removeByBranch: (repo, folder) => computer().removeByBranch(repo, folder),
 		serve: (req) => computer().fetch(req),
 		link: (id) => computer().link(id),
+		pullTarget: (id) => computer().pullTarget(id),
+		setDeploy: (repo, folder, deploy) => computer().setDeploy(repo, folder, deploy),
+		setDeployByPost: (postId, deploy) => computer().setDeployByPost(postId, deploy),
+		saveRef: (key, ref) => computer().saveRef(key, ref),
+		takeRef: (key) => computer().takeRef(key),
 		snapshot: () => computer().snapshot(),
 		resetComputer: (unlessBusy) => computer().resetComputer(unlessBusy),
 		info: () => computer().info(),

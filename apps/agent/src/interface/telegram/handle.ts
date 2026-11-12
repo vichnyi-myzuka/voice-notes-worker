@@ -3,7 +3,7 @@ import { folderFor, type Agent, type SessionReport } from "../../domain/agent";
 import type { Env } from "../../env";
 import { QUOTE_CLOSE, QUOTE_OPEN, sendChat } from "../../infrastructure/chat";
 import { describeQuota, fetchQuota } from "../../infrastructure/quota";
-import { handleReviewButton } from "../github/review";
+import { handleMergeButton, handleReviewButton } from "../github/review";
 import { routeTask, type KnownRepo } from "./repo";
 
 export const TELEGRAM_PATH = "/telegram";
@@ -57,18 +57,19 @@ async function handleButton(bot: BotEnv, query: NonNullable<TgUpdate["callback_q
 	const chat = query.message?.chat;
 	const allowed = !!env.TG_OWNER_ID && String(query.from.id) === env.TG_OWNER_ID && !!chat && (String(chat.id) === env.CHAT_ID || (chat.type === "private" && String(chat.id) === env.TG_OWNER_ID));
 	const review = /^(appr|rej):([\w.-]+\/[\w.-]+):(\d+)$/.exec(query.data ?? "");
-	if (review && allowed && query.message) return handleReviewButton(bot, query, env, review[1] === "appr", review[2], Number(review[3]));
+	if (review && allowed && query.message) return handleReviewButton(bot, query, env, agent, review[1] === "appr", review[2], Number(review[3]));
 	if (query.data === "dismiss" && allowed && query.message) {
 		await removeMessage(bot, chat!.id, query.message.message_id);
 		return void (await answer("Видалено."));
 	}
-	const [, action, id, choice] = /^(stop|del|ans|tog|ok):(tg-[\w-]+)(?::(\d+))?$/.exec(query.data ?? "") ?? [];
+	const [, action, id, choice] = /^(stop|del|merge|ans|tog|ok):(tg-[\w-]+)(?::(\d+))?$/.exec(query.data ?? "") ?? [];
 	if (!allowed || !action || !query.message) return void (await answer(allowed ? "Невідома дія." : "Недоступно."));
 	if (!(await agent.link(id))) return void (await answer("Сесію не знайдено."));
 	if (action === "ans" || action === "tog" || action === "ok") {
 		const note = await agent.answer(id, action === "ok" ? "ok" : Number(choice)).catch((err) => (console.error("answer failed:", err), null));
 		return void (await answer(note === null ? "Не вдалося відповісти." : (note ?? "Питання вже неактуальне.")));
 	}
+	if (action === "merge") return handleMergeButton(bot, query, env, agent, id);
 	if (action === "del") {
 		await agent.remove(id);
 		await removeMessage(bot, chat.id, query.message.message_id);

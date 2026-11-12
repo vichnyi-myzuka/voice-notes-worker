@@ -29,6 +29,23 @@ export async function reviewDeployments(token: string, repo: string, runId: numb
 	return ids.length;
 }
 
+// Номер відкритого PR з гілки цього ж репозиторію (не форка); undefined, якщо PR немає.
+export async function openPullNumber(token: string, repo: string, branch: string): Promise<number | undefined> {
+	const owner = repo.split("/")[0];
+	const res = await gh(token, "GET", `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${branch}`)}`);
+	if (!res.ok) throw new Error(`open pulls ${res.status}`);
+	return (await res.json<{ number: number }[]>())[0]?.number;
+}
+
+// Мерджить PR (звичайний merge-коміт, як і решта PR репозиторію). GitHub відмовляє, якщо перевірки не пройшли чи є конфлікт:
+// тоді кидаємо його пояснення.
+export async function mergePull(token: string, repo: string, number: number): Promise<void> {
+	const res = await gh(token, "PUT", `/repos/${repo}/pulls/${number}/merge`, { merge_method: "merge" });
+	if (res.ok) return;
+	const detail = await res.json<{ message?: string }>().then((b) => b.message, () => undefined);
+	throw new Error(detail ?? `merge ${res.status}`);
+}
+
 // PR, змерджені в цей коміт (за ними показуємо результат деплою й прибираємо сесії); порожньо, якщо коміт пушили без PR.
 export type CommitPull = { number: number; title: string; url: string; branch: string; repo?: string };
 export async function commitPulls(token: string, repo: string, sha: string): Promise<CommitPull[]> {
