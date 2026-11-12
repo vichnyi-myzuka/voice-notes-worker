@@ -57,6 +57,26 @@ const msg = (extra: Record<string, unknown>, id = 7) => ({ message_id: id, date:
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("меню команд", () => {
+	it("setMyCommands виставляється з першим вебхуком, збій повторюється, успішний — не повторюється", async () => {
+		const { agent, llm, calls } = setup();
+		const fetchMock = vi.mocked(fetch);
+		const pending: Promise<unknown>[] = [];
+		const ping = async () => {
+			await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret" }, body: JSON.stringify({ update_id: 1 }) }), env, { agent, llm, defer: (w) => void pending.push(w), syncCommands: true });
+			await Promise.all(pending.splice(0));
+		};
+		fetchMock.mockImplementationOnce(async () => Response.json({ ok: false, description: "boom" }, { status: 500 }));
+		await ping(); // збій
+		await ping(); // повтор успішний
+		await ping(); // вже виставлено
+		const sets = calls.filter((c) => c.method === "setMyCommands");
+		expect(sets).toHaveLength(1);
+		expect(sets[0].body).toMatchObject({ scope: { type: "all_private_chats" } });
+		expect((sets[0].body.commands as { command: string }[]).map((c) => c.command)).toEqual(["status", "stop", "model", "delete", "quota", "update"]);
+	});
+});
+
 describe("вебхук Telegram", () => {
 	it("без секрета чи з чужим — 401, нічого не створює", async () => {
 		const { send, sessions, calls } = setup();
@@ -228,6 +248,23 @@ describe("вебхук Telegram", () => {
 			await send(msg({ text: "/stop", reply_to_message: botPost() }, 10));
 			await send(msg({ text: "/status", reply_to_message: botPost() }, 11));
 			expect(replies()).toEqual(["⏳ Працює", "⏹ Зупинено. Відповідь на пост із сесією продовжить роботу.", "Нічого зупиняти: ⏹ Зупинена", "⏹ Зупинена"]);
+		});
+
+		it("«@opus задача» задає модель нової сесії (разом з репозиторієм), префікс не потрапляє в задачу", async () => {
+			const { send, sessions } = setup();
+			await send(msg({ text: "@opus acme/site: Поправ README" }));
+			expect(sessions.get(SID)?.input).toMatchObject({ prompt: "Поправ README", repo: "acme/site", model: "opus" });
+		});
+
+		it("/model змінює модель відповіддю на пост; без відповіді чи з недоступною моделлю — підказка", async () => {
+			const { send, sessions, replies } = await withSession();
+			await send(msg({ text: "/model opus", reply_to_message: botPost() }, 8));
+			expect(sessions.get(SID)?.input.model).toBe("opus");
+			await send(msg({ text: "/model nope", reply_to_message: botPost() }, 9));
+			await send(msg({ text: "/model" }, 10));
+			expect(replies()[0]).toContain("Модель сесії: opus");
+			expect(replies()[1]).toContain("недоступна");
+			expect(replies()[2]).toContain("/model <модель>");
 		});
 
 		it("/delete видаляє сесію й пост; наступні команди бачать, що її немає", async () => {

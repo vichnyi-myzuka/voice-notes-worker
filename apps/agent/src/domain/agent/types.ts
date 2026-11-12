@@ -2,7 +2,8 @@
 // Реалізація — infrastructure/container (Durable Object + контейнер з OpenCode).
 
 // name: коротка назва за змістом задачі (kebab-case); з неї складаються тека й гілка сесії, без неї — технічний id
-export type StartInput = { prompt: string; repo?: string; name?: string };
+// model: модель сесії — «opus» (провайдер Claude Agent) або «провайдер/модель»; без неї — модель за замовчуванням воркера
+export type StartInput = { prompt: string; repo?: string; name?: string; model?: string };
 
 // working — агент виконує задачу; idle — завершив або чекає на відповідь; stopped — контейнер не працює (заснув або зупинений).
 export type AgentStatus = "working" | "idle" | "stopped";
@@ -72,6 +73,8 @@ export type Agent = {
 	answer(id: string, choice: number | "ok"): Promise<string | undefined>;
 	// Уточнення в ту саму сесію (голос чи текст після транскрипції).
 	followUp(id: string, text: string): Promise<void>;
+	// Змінює модель наявної сесії (діє з наступного ходу, поточний не переривається). false — такої моделі немає.
+	setModel(id: string, model: string): Promise<boolean>;
 	status(id: string): Promise<AgentStatus>;
 	// Докладніше за status: результат останньої роботи, вартість. Контейнер, що спить, не будить.
 	report(id: string): Promise<SessionReport>;

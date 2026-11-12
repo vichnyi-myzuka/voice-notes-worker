@@ -47,6 +47,12 @@ export function fakeAgent(origin = "https://agent.example") {
 			s.status = "working";
 			s.outcome = undefined;
 		},
+		async setModel(id, model) {
+			const s = get(id);
+			if (model === "nope") return false;
+			s.input = { ...s.input, model };
+			return true;
+		},
 		async status(id) {
 			return sessions.get(id)?.status ?? "stopped";
 		},
