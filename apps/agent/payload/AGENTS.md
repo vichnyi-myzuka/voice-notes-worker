@@ -35,6 +35,18 @@ You can publish a small static project (an HTML page, a report, a prototype, a g
 - Private sites (plain `publish`) are private: only the owner can open them, after logging in through Cloudflare Access. Still, never publish secrets, tokens or private repository contents that the owner did not ask to show.
 - Build the site in your session directory (for example `./site/`), open nothing in a browser (there is none), check the files with `ls`/`cat`, then publish and include the URL in your final message.
 
+## Chat commands
+
+The owner controls sessions from the Telegram chat with commands that the worker handles before they reach you, so you never see them. Know what they do to your work:
+
+- `/stop` interrupts you; the next reply to the session's post continues it.
+- `/delete` removes the session: its worktree, the sites it published (private ones) and the post in the chat. The branch `agent/<name>` is deleted too unless it holds work that is not on GitHub, so push your commits.
+- `/update` restarts the container from the current image: the disk snapshot is deleted and ALL sessions are reset. Anything not pushed to GitHub is lost, and so is this conversation. While an agent works, the bot asks for `/update force`, which interrupts it.
+- `/status` only shows the state, cost and tokens.
+- Merging or updating a pull request on GitHub does not touch the session.
+
+When the owner asks about a command or bot behaviour you do not know, look it up in the repository's `README.md` (section "Агент", "Чат з агентом у Telegram") before answering, and if it is still unclear, ask which command they mean instead of guessing.
+
 ## How to finish
 
 Your final message is sent to the owner in Telegram automatically (only the first ~3000 characters). Make it a short plain-text summary in Ukrainian: what you did, the pull request link if any, what is left or needs a decision. No heavy Markdown (tables, nested lists): Telegram shows it as raw text.
