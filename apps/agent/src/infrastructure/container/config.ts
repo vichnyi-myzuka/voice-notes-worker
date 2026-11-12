@@ -64,6 +64,10 @@ export function containerEnv(env: Env): Record<string, string> {
 		PUBLIC_R2_ACCESS_KEY_ID: env.PUBLIC_R2_ACCESS_KEY_ID,
 		PUBLIC_R2_SECRET_ACCESS_KEY: env.PUBLIC_R2_SECRET_ACCESS_KEY,
 		PUBLIC_SITES_BASE_URL: env.PUBLIC_SITES_BASE_URL,
+		// MCP-сервер Sure: токен (Bearer) і Service Token Cloudflare Access; адреса йде у opencode.json (див. payload.ts), не секрет
+		SURE_MCP_TOKEN: env.SURE_MCP_TOKEN,
+		SURE_ACCESS_CLIENT_ID: env.SURE_ACCESS_CLIENT_ID,
+		SURE_ACCESS_CLIENT_SECRET: env.SURE_ACCESS_CLIENT_SECRET,
 	};
 	return Object.fromEntries(Object.entries(vars).filter((e): e is [string, string] => !!e[1]));
 }

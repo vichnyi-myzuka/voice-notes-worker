@@ -267,6 +267,27 @@ describe("вебхук Telegram", () => {
 			expect(b.sessions.get(SID)?.input.prompt).toBe("Модель користувача поправ README");
 		});
 
+		it("явне «шур, задача» / «@sure задача» вмикає MCP Sure для сесії (разом із моделлю в будь-якому порядку)", async () => {
+			const a = setup();
+			await a.send(msg({ text: "Шур, скільки я витратив у жовтні" }));
+			expect(a.sessions.get(SID)?.input).toMatchObject({ prompt: "скільки я витратив у жовтні", sure: true });
+			const b = setup();
+			await b.send(msg({ text: "модель опус, @sure покажи бюджет" }));
+			expect(b.sessions.get(SID)?.input).toMatchObject({ prompt: "покажи бюджет", model: "opus", sure: true });
+			const c = setup();
+			await c.send(msg({ text: "Sure, поправ README" }));
+			expect(c.sessions.get(SID)?.input.sure).toBeUndefined();
+		});
+
+		it("Sure вмикає й висновок моделі про фінанси власника без жодного ключового слова; інакше MCP не підключається", async () => {
+			const yes = setup("", (user) => (user.includes("мої фінанси") ? { repo: "none", type: "feat", name: "finance-check", finance: true } : null));
+			await yes.send(msg({ text: "Хочу перевірити мої фінанси за жовтень" }));
+			expect(yes.sessions.get(SID)?.input).toMatchObject({ prompt: "Хочу перевірити мої фінанси за жовтень", sure: true });
+			const no = setup("", () => ({ repo: "none", type: "feat", name: "finance-page", finance: false }));
+			await no.send(msg({ text: "Зроби сторінку калькулятора фінансів" }));
+			expect(no.sessions.get(SID)?.input.sure).toBeUndefined();
+		});
+
 		it("/model змінює модель відповіддю на пост; без відповіді чи з недоступною моделлю — підказка", async () => {
 			const { send, sessions, replies } = await withSession();
 			await send(msg({ text: "/model opus", reply_to_message: botPost() }, 8));

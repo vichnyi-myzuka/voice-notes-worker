@@ -3,7 +3,7 @@
 
 // name: коротка назва за змістом задачі (kebab-case); з неї складаються тека й гілка сесії, без неї — технічний id
 // model: модель сесії — «opus» (провайдер Claude Agent) або «провайдер/модель»; без неї — модель за замовчуванням воркера
-export type StartInput = { prompt: string; repo?: string; name?: string; model?: string };
+export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; sure?: boolean };
 
 // working — агент виконує задачу; idle — завершив або чекає на відповідь; stopped — контейнер не працює (заснув або зупинений).
 export type AgentStatus = "working" | "idle" | "stopped";

@@ -1,3 +1,4 @@
+import type { Env } from "../../env";
 import agents from "../../../payload/AGENTS.md";
 import prePush from "../../../payload/pre-push.sh";
 import publish from "../../../payload/publish.sh";
@@ -26,3 +27,17 @@ export const PAYLOAD_HASH = (() => {
 
 // Скрипт для `node -e` у контейнері: пише файли з PAYLOAD (JSON у змінній середовища) і ставить права. Node є в образі.
 export const WRITER = `const fs=require("fs"),path=require("path");for(const f of JSON.parse(process.env.PAYLOAD)){fs.mkdirSync(path.dirname(f.path),{recursive:true});fs.writeFileSync(f.path,f.content);fs.chmodSync(f.path,parseInt(f.mode,8))}`;
+
+// Конфіг OpenCode з MCP-сервером Sure (фінансовий застосунок власника) для теки однієї сесії: лише для сесій, яким власник його
+// вказав (див. prepare у computer.ts), і лише якщо задано адресу й токен. Секрети не потрапляють у файл: там посилання `{env:…}`,
+// самі змінні передає containerEnv. Заголовки Cloudflare Access (Service Token) потрібні, коли сервер за тунелем з Access.
+export function sureMcpConfig(env: Env, dir: string): PayloadFile | undefined {
+	if (!env.SURE_MCP_URL || !env.SURE_MCP_TOKEN) return undefined;
+	const headers: Record<string, string> = { Authorization: "Bearer {env:SURE_MCP_TOKEN}" };
+	if (env.SURE_ACCESS_CLIENT_ID && env.SURE_ACCESS_CLIENT_SECRET) {
+		headers["CF-Access-Client-Id"] = "{env:SURE_ACCESS_CLIENT_ID}";
+		headers["CF-Access-Client-Secret"] = "{env:SURE_ACCESS_CLIENT_SECRET}";
+	}
+	const config = { $schema: "https://opencode.ai/config.json", mcp: { servers: { sure: { type: "remote", url: env.SURE_MCP_URL, oauth: false, headers } } } };
+	return { path: `${dir}/.opencode/opencode.json`, mode: "644", content: JSON.stringify(config, null, 2) };
+}

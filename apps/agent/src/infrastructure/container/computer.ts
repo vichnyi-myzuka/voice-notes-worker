@@ -3,7 +3,7 @@ import type { Env } from "../../env";
 import { parseConnections } from "./connections";
 import { READY_ATTEMPTS, containerEnv, inactivityMs, snapshotIntervalMs } from "./config";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "./opencode";
-import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
+import { PAYLOAD, PAYLOAD_HASH, WRITER, sureMcpConfig } from "./payload";
 import { sessionDir, type SavedSnapshot } from "./state";
 
 // Спільний комп'ютер агента: єдиний контейнер з OpenCode. Тут його життєвий цикл (старт зі знімка чи образу, очікування
@@ -192,14 +192,27 @@ export class Computer {
 
 	// Готує теку сесії в контейнері (клон + worktree або порожня тека) і повертає її шлях. exec не успадковує env контейнера,
 	// тому токен передаємо явно. Викликається лише всередині serial().
-	async prepare(folder: string, repo: string | undefined): Promise<string> {
+	async prepare(folder: string, repo: string | undefined, sure = false): Promise<string> {
 		const proc = await this.ctx.container!.exec(["session-prep", folder, ...(repo ? [repo] : [])], {
 			cwd: "/workspace",
 			env: { HOME: "/root", ...(this.env.GITHUB_TOKEN && { GITHUB_TOKEN: this.env.GITHUB_TOKEN }) },
 		});
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`session-prep failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
-		return new TextDecoder().decode(out.stdout).trim() || sessionDir(folder);
+		const dir = new TextDecoder().decode(out.stdout).trim() || sessionDir(folder);
+		if (sure) await this.enableSure(dir);
+		return dir;
+	}
+
+	// MCP Sure лише для цієї сесії: .opencode/opencode.json у її теці (OpenCode підхоплює його сам), а з git він виключений,
+	// щоб не потрапив у коміт. Власний .opencode/opencode.json репозиторію не перезаписуємо. Без налаштованого Sure нічого не робить.
+	private async enableSure(dir: string): Promise<void> {
+		const file = sureMcpConfig(this.env, dir);
+		if (!file) return;
+		const script = `[ -e "${file.path}" ] && exit 0; node -e '${WRITER}' && { x=$(git -C "${dir}" rev-parse --git-path info/exclude 2>/dev/null) && echo '/.opencode/' >> "$(cd "${dir}" && realpath "$x")"; true; }`;
+		const proc = await this.ctx.container!.exec(["sh", "-c", script], { cwd: "/", env: { HOME: "/root", PAYLOAD: JSON.stringify([file]) } });
+		const out = await proc.output();
+		if (out.exitCode !== 0) throw new Error(`sure mcp setup failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
 	}
 
 	// Виконує у теці /workspace команду з env для публікації сайтів (exec не успадковує env контейнера). Повертає код і stderr.

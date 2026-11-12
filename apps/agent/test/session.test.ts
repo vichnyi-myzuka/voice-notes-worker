@@ -460,6 +460,33 @@ describe("AgentSession", () => {
 		expect(Object.keys(env).sort()).toEqual(["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "OPENCODE_PASSWORD", "PUBLIC_R2_ACCESS_KEY_ID", "PUBLIC_R2_SECRET_ACCESS_KEY", "PUBLIC_SITES_BASE_URL", "R2_ACCESS_KEY_ID", "R2_ENDPOINT", "R2_SECRET_ACCESS_KEY", "SITES_BASE_URL"]);
 	});
 
+	it("MCP Sure: .opencode/opencode.json у теці лише для сесії зі sure і лише з налаштованим Sure; секрети в env, не у файлі", async () => {
+		const base = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "w", TG_OWNER_ID: "1", CHAT_ID: "-100", ACCESS_AUD: "aud", ACCESS_TEAM_DOMAIN: "t" };
+		const sureEnv = { ...base, SURE_MCP_URL: "https://sure.example/mcp", SURE_MCP_TOKEN: "tok", SURE_ACCESS_CLIENT_ID: "id.access", SURE_ACCESS_CLIENT_SECRET: "sec" };
+		const shellWrites = (o: ReturnType<typeof setup>["opencode"]) => o.execs.filter((e) => e.cmd[0] === "sh");
+
+		const plain = setup(sureEnv);
+		await plain.session.start(ID, { prompt: "Задача" });
+		expect(shellWrites(plain.opencode)).toEqual([]);
+
+		const unset = setup(base);
+		await unset.session.start(ID, { prompt: "Задача", sure: true });
+		expect(shellWrites(unset.opencode)).toEqual([]);
+
+		const { session, container, opencode } = setup(sureEnv);
+		await session.start(ID, { prompt: "Задача", sure: true });
+		const [exec] = shellWrites(opencode);
+		const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; content: string }[];
+		expect(file.path).toBe(`/workspace/sessions/${ID}/.opencode/opencode.json`);
+		const server = JSON.parse(file.content).mcp.servers.sure;
+		expect(server).toMatchObject({ type: "remote", url: "https://sure.example/mcp", oauth: false });
+		expect(server.headers).toEqual({ Authorization: "Bearer {env:SURE_MCP_TOKEN}", "CF-Access-Client-Id": "{env:SURE_ACCESS_CLIENT_ID}", "CF-Access-Client-Secret": "{env:SURE_ACCESS_CLIENT_SECRET}" });
+		expect(file.content).not.toMatch(/tok"|sec"|id\.access/);
+		const env = container.starts[0].env as Record<string, string>;
+		expect(env).toMatchObject({ SURE_MCP_TOKEN: "tok", SURE_ACCESS_CLIENT_ID: "id.access", SURE_ACCESS_CLIENT_SECRET: "sec" });
+		expect(env.SURE_MCP_URL).toBeUndefined();
+	});
+
 	describe("відстеження сесій: підсумок у чаті й ліміти", () => {
 		const TARGET = { chatId: 5, url: "https://agent.example/s/session-0001" };
 		const sent: { chat_id: number; text: string }[] = [];

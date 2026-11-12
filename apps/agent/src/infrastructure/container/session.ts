@@ -203,9 +203,9 @@ export class AgentSession extends DurableObject<Env> {
 			const again = await this.ctx.storage.get<Tracked>(sessionKey(id));
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
-			const directory = await this.computer.prepare(folder, input.repo);
+			const directory = await this.computer.prepare(folder, input.repo, input.sure);
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }) } satisfies Tracked);
+			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }) } satisfies Tracked);
 			await prompt(this.opencode(), ocId, input.prompt);
 			await this.computer.markActive();
 			return { sessionId: ocId };
@@ -220,7 +220,7 @@ export class AgentSession extends DurableObject<Env> {
 		let ocId = tracked.ocId;
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo);
+				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, tracked.sure);
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
