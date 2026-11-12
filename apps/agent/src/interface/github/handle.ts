@@ -1,5 +1,5 @@
 import { safeEqual, tg, type BotEnv } from "@voice-notes/core";
-import type { Agent } from "../../domain/agent";
+import type { Deploys, Sessions } from "../../domain/agent";
 import type { Env } from "../../env";
 import { commitPulls, deleteBranch } from "../../infrastructure/github";
 import { removeMessage, removeOriginal } from "../telegram/handle";
@@ -7,7 +7,7 @@ import { reviewButtons } from "./review";
 
 export const GITHUB_PATH = "/github";
 
-export type GithubDeps = { agent: Agent; defer: (work: Promise<unknown>) => void };
+export type GithubDeps = { agent: Sessions & Deploys; defer: (work: Promise<unknown>) => void };
 
 type Payload = {
 	action?: string;
@@ -81,7 +81,7 @@ async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, re
 }
 
 // Прибирає сесію гілки (як /delete) і віддалену гілку; пост у чаті видаляє, лише якщо він не показує результату (keepPost). true, якщо сесію знайдено.
-async function cleanup(bot: BotEnv, env: Env, agent: Agent, repo: string, branch: string, keepPost: boolean): Promise<boolean> {
+async function cleanup(bot: BotEnv, env: Env, agent: Sessions & Deploys, repo: string, branch: string, keepPost: boolean): Promise<boolean> {
 	const removed = await agent.removeByBranch(repo, branch.slice("agent/".length));
 	if (env.GITHUB_TOKEN) await deleteBranch(env.GITHUB_TOKEN, repo, branch).catch((err) => console.error("delete remote branch failed:", err));
 	if (!removed) return false;

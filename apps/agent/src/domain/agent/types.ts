@@ -51,13 +51,8 @@ export type PostRef = { chatId: number | string; messageId: number; text: string
 // Деплой PR сесії для її поста: text — рядки під станом сесії; repo+runId — чекає схвалення (кнопки); done — деплой завершено, сесію прибрано.
 export type DeployInfo = { text: string; repo?: string; runId?: number; done?: boolean };
 
-export type Agent = {
-	// Показує деплой у пості сесії гілки agent/<folder>; false — сесії з постом немає. setDeployByPost: те саме за постом, лише якщо він уже показує деплой.
-	setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean>;
-	setDeployByPost(postId: number, deploy: DeployInfo, force?: boolean): Promise<boolean>;
-	// Запам'ятовує пост за ключем і віддає його один раз (take забирає): так результат деплою редагує пост зі схваленням.
-	saveRef(key: string, ref: PostRef): Promise<void>;
-	takeRef(key: string): Promise<PostRef | undefined>;
+// Сесії агента: поставити задачу, дописати уточнення, спитати стан, зупинити, видалити.
+export type Sessions = {
 	// Адреса сесії в веб-інтерфейсі (від id, без звернення до контейнера): потрібна для посилання в пості до старту.
 	url(id: string): string;
 	// Приймає завдання й одразу повертається: холодний старт контейнера й клонування займають хвилини, а відповідь вебхуку
@@ -85,10 +80,14 @@ export type Agent = {
 	removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined>;
 	// Репозиторій і гілка сесії (agent/<тека>), щоб знайти її PR; undefined, якщо сесія без репозиторію чи невідома.
 	pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined>;
-	// Веб-інтерфейс: проксі запиту в спільний контейнер (усі сесії в одному інтерфейсі).
-	serve(req: Request): Promise<Response>;
 	// Id сесії в OpenCode для прямого посилання на сесію; undefined, якщо такої сесії немає.
 	link(id: string): Promise<string | undefined>;
+};
+
+// Спільний комп'ютер агента: веб-інтерфейс, діагностика, знімки диска й скидання контейнера.
+export type Computer = {
+	// Веб-інтерфейс: проксі запиту в спільний контейнер (усі сесії в одному інтерфейсі).
+	serve(req: Request): Promise<Response>;
 	// Внутрішній стан контейнера для діагностики (наприклад, чому він не засинає).
 	info(): Promise<ComputerInfo>;
 	// Чи працює контейнер; з detail ще й скільки SSH-з'єднань (і з'єднань воркера з OpenCode) відкрито. Контейнер не будить, але
@@ -100,3 +99,16 @@ export type Agent = {
 	// unlessBusy: не чіпати, поки хтось працює. Повертає true, якщо скинуто
 	resetComputer(unlessBusy?: boolean): Promise<boolean>;
 };
+
+// Деплой PR сесії в її пості та пости, які пізніше оновлює вебхук GitHub.
+export type Deploys = {
+	// Показує деплой у пості сесії гілки agent/<folder>; false — сесії з постом немає. setDeployByPost: те саме за постом, лише якщо він уже показує деплой.
+	setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean>;
+	setDeployByPost(postId: number, deploy: DeployInfo, force?: boolean): Promise<boolean>;
+	// Запам'ятовує пост за ключем і віддає його один раз (take забирає): так результат деплою редагує пост зі схваленням.
+	saveRef(key: string, ref: PostRef): Promise<void>;
+	takeRef(key: string): Promise<PostRef | undefined>;
+};
+
+// Усе разом: те, що реалізує адаптер (infrastructure/container). Обробники беруть лише потрібну частину.
+export type Agent = Sessions & Computer & Deploys;
