@@ -188,8 +188,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		if (!followUp) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 		await agent.resume(id, followUp, { chatId: chat, url, ...(threadId && { threadId }) }, images);
 		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), стан видно в пості сесії (він оновлюється на місці) і за 👨‍💻.
-		// Фото лишається в чаті: це єдине місце, де його видно.
-		if (!image) await removeMessage(env, chat, msg.message_id);
+		await removeMessage(env, chat, msg.message_id);
 		return;
 	}
 

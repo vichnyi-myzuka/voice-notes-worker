@@ -599,5 +599,6 @@ describe("зображення від власника", () => {
 		const s = t.sessions.get(id)!;
 		expect(s.messages.at(-1)).toBe("Ось макет");
 		expect(s.images).toEqual([{ fileId: "p", mime: "image/jpeg" }]);
+		expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 41)).toBe(true); // як і інші уточнення
 	});
 });
