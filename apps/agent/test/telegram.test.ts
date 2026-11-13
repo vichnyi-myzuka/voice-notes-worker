@@ -372,6 +372,7 @@ describe("вебхук Telegram", () => {
 				expect(parseRepos("not json")).toEqual([]);
 				expect(parseRepos('{"repo":"a/b"}')).toEqual([]);
 				expect(parseRepos('[{"repo":"a/b","about":"x"},{"repo":"bad","about":"x"},{"repo":"c/d"},null]')).toEqual([{ repo: "a/b", about: "x" }]);
+				expect(parseRepos('[{"repo":"a/b","about":"x","site":"my-game"},{"repo":"c/d","about":"y","site":"Bad Name"}]')).toEqual([{ repo: "a/b", about: "x", site: "my-game" }, { repo: "c/d", about: "y" }]);
 			});
 		});
 

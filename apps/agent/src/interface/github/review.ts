@@ -12,9 +12,13 @@ export const reviewButtons = (repo: string, runId: number) => ({
 	]],
 });
 
+// Завдання сесії після мержу PR у репозиторії-сайті (англійською: це промпт агенту).
+export const publishPrompt = (site: string, branch: string, number: number) =>
+	`The owner merged pull request #${number} (branch ${branch}). Update the public main site now, as the owner has asked you to: run \`git fetch origin main\`, export the merged main (for example \`git worktree add /tmp/${site}-main origin/main --detach\`, or \`git archive origin/main | tar -x -C <empty dir>\`), and publish it with \`publish --public <dir> ${site}\` (use the directory that contains index.html). Then delete the private preview of this session with \`publish --delete <preview name>\` (see \`publish --list\`) and remove the temporary export. Reply with the public URL and say that it is public. If the merged main has no index.html or publishing fails, say so instead of guessing.`;
+
 // «🔀 Змерджити» під постом сесії (власник уже перевірений): знаходить відкритий PR гілки сесії й мерджить його. Підсумок — спливаюча
 // підказка; після успіху кнопка зникає з поста (лишається «Видалити»), сесію прибере вебхук після успішного деплою.
-export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env: Env, agent: Sessions & Deploys, id: string): Promise<void> {
+export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env: Env, agent: Sessions & Deploys, id: string, sites: (repo: string) => string | undefined = () => undefined): Promise<void> {
 	const answer = (text: string) => tg(bot, "answerCallbackQuery", { callback_query_id: query.id, text: text.slice(0, 200) }).catch((err) => console.error("answer failed:", err));
 	const token = env.GITHUB_TOKEN;
 	const target = await agent.pullTarget(id);
@@ -28,6 +32,9 @@ export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env
 		const shown = await agent.setDeployByPost(message.message_id, { text: `🔀 PR #${number} змерджено, чекаємо на деплой` }, true).catch(() => false);
 		if (!shown) await tg(bot, "editMessageReplyMarkup", { chat_id: message.chat.id, message_id: message.message_id, reply_markup: { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: callback.del(id) }]] } }).catch((err) => console.error("edit failed:", err));
 		await answer(`🔀 PR #${number} змерджено`);
+		// Репозиторій-сайт: агент сам оновлює публічний сайт з main і прибирає прев'ю (збій тут не скасовує мерж)
+		const site = sites(target.repo);
+		if (site) await agent.resume(id, publishPrompt(site, target.branch, number), { chatId: message.chat.id, url: agent.url(id) }).catch((err) => console.error("publish resume failed:", err));
 	} catch (err) {
 		console.error("merge failed:", err);
 		await answer(`Не вдалося змерджити: ${err instanceof Error ? err.message : err}`);
