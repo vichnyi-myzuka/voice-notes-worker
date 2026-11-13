@@ -13,7 +13,27 @@ import { SILPO_MCP_URL } from "./silpo";
 // та історія сесій. Нові сесії одразу працюють з актуальними версіями; старі сесії зберігають своє.
 export type PayloadFile = { path: string; mode: string; content: string };
 
+// Ліміт контексту сесії: модель бачить вікно в 272k токенів, тож автостиснення (AutoCompact) спрацьовує, коли розмова
+// впирається в нього, а не у велике рідне вікно моделі. Для всіх моделей провайдера Claude Agent (CLAUDE_MODEL і /model).
+export const CONTEXT_LIMIT = 272_000;
+const CLAUDE_MODELS = ["opus", "sonnet", "haiku", "fable"];
+export const GLOBAL_CONFIG = JSON.stringify(
+	{
+		$schema: "https://opencode.ai/config.json",
+		compaction: { auto: true },
+		providers: {
+			"claude-agent": {
+				models: Object.fromEntries(CLAUDE_MODELS.map((id) => [id, { limit: { context: CONTEXT_LIMIT, output: 32_000 } }])),
+			},
+		},
+	},
+	null,
+	2,
+);
+
 export const PAYLOAD: PayloadFile[] = [
+	// Глобальний конфіг OpenCode (ліміт контексту й автостиснення для всіх сесій); конфіг теки сесії (MCP) накладається зверху.
+	{ path: "/root/.config/opencode/opencode.json", mode: "644", content: GLOBAL_CONFIG },
 	// Глобальні інструкції: OpenCode читає ~/.config/opencode/AGENTS.md, claude (провайдер Claude Agent) — ~/.claude/CLAUDE.md.
 	{ path: "/root/.config/opencode/AGENTS.md", mode: "644", content: agents },
 	{ path: "/root/.claude/CLAUDE.md", mode: "644", content: agents },
