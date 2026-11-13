@@ -24,7 +24,7 @@ export type SessionReport = {
 // header: текст пост-шапки (завдання, репозиторій): агент оновлює пост на місці (шапка + стан/підсумок), тому потрібен його вміст;
 // postId разом із header задається при першому спостереженні, далі пост сесії береться зі сховища
 // threadId: тема приватного чату, створена під сесію (усі пости сесії йдуть у неї; тема видаляється разом із сесією)
-export type WatchTarget = { chatId: number; url: string; postId?: number; header?: string; threadId?: number };
+export type WatchTarget = { chatId: number; url: string; postId?: number; header?: string; threadId?: number; title?: string };
 
 // Стан спільного контейнера для діагностики: що тримає його живим і коли був останній знімок.
 export type ComputerInfo = {

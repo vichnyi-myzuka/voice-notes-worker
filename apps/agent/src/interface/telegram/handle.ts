@@ -212,7 +212,9 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const url = agent.url(id);
 	// Приватний чат: кожна нова сесія отримує свою тему, і далі розмова йде в ній. Теми не ввімкнено (чи збій) — усе в самому чаті.
 	// Повідомлення з уже наявної, не прив'язаної до сесії теми лишається в ній.
-	const created = !inChannel && !threadId ? await createTopic(env, chat, route.name ?? prompt.replace(/\s+/g, " ").slice(0, 60)) : undefined;
+	// Назва теми — семантична (від моделі), далі її оновлює агент, коли напрям розмови змінюється.
+	const title = route.title ?? route.name ?? prompt.replace(/\s+/g, " ").slice(0, 60);
+	const created = !inChannel && !threadId ? await createTopic(env, chat, title) : undefined;
 	const thread = created ?? threadId;
 	// У каналі й у новій темі оригінал замінюється постом із задачею (як у нотатках), у приваті без теми оригінал лишається, тож задачу не дублюємо.
 	const moved = inChannel || !!created;
@@ -228,7 +230,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }) });
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
 	if (moved || file) await removeMessage(env, chat, msg.message_id);
 	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
