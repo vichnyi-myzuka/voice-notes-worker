@@ -110,7 +110,12 @@ export class AgentSession extends DurableObject<Env> {
 	private async summary(oc: Opencode, w: Watch): Promise<string> {
 		const [info, last] = await Promise.all([getSession(oc, w.ocId), lastAssistant(oc, w.ocId)]);
 		if (info.outcome === "interrupted") return "⏹ Зупинено. Відповідь на цей пост продовжить роботу.";
-		if (info.outcome === "failed") return `❌ Помилка: ${last.error ?? (last.text || "невідома")}`.slice(0, SUMMARY_MAX);
+		if (info.outcome === "failed") {
+			const error = last.error ?? (last.text || "невідома");
+			// Cloudflare перед API моделі інколи блокує IP контейнера (сторінка-челендж 403): це тимчасово, достатньо повторити.
+			if (/403/.test(error) && /Cloudflare/i.test(error)) return "❌ Cloudflare тимчасово заблокував запит до API моделі (403 Attention Required). Це не помилка завдання: відповідь на цей пост повторить роботу за кілька хвилин.";
+			return `❌ Помилка: ${error}`.slice(0, SUMMARY_MAX);
+		}
 		const text = last.text.length > SUMMARY_MAX ? `${last.text.slice(0, SUMMARY_MAX)}…` : last.text;
 		return `✅ Готово${text ? `\n\n${text}` : ""}`;
 	}

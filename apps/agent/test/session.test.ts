@@ -677,6 +677,16 @@ describe("AgentSession", () => {
 			expect(sent[0].text).toBe(`❌ Помилка: Model unavailable\n\n🔗 <a href="${TARGET.url}">Відкрити сесію</a>`);
 		});
 
+		it("403 від Cloudflare: зрозуміле повідомлення замість сирої помилки", async () => {
+			const { session, opencode } = await watched();
+			await session.alarm();
+			opencode.busy.clear();
+			opencode.info[ocId] = { outcome: "failed" };
+			opencode.lastError = "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare";
+			await session.alarm();
+			expect(sent[0].text).toContain("Cloudflare тимчасово заблокував");
+		});
+
 		it("сесія, яку зупинили вручну, показує «Зупинено»", async () => {
 			const { session, opencode } = await watched();
 			await session.alarm();
