@@ -1,12 +1,12 @@
-import type { Agent, DeployInfo, PostRef, AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import type { Agent, DeployInfo, ImageRef, PostRef, AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 
 // Що має вміти Durable Object, щоб за ним працював порт Agent: він володіє єдиним контейнером і всіма сесіями в ньому.
 export type SessionObject = {
 	start(id: string, input: StartInput): Promise<unknown>;
 	begin(id: string, input: StartInput, target: WatchTarget): Promise<void>;
-	resume(id: string, text: string, target: WatchTarget): Promise<void>;
+	resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void>;
 	answer(id: string, choice: number | "ok"): Promise<string | undefined>;
-	followUp(id: string, text: string): Promise<void>;
+	followUp(id: string, text: string, images?: ImageRef[]): Promise<void>;
 	setModel(id: string, model: string): Promise<boolean>;
 	status(id: string): Promise<AgentStatus>;
 	report(id: string): Promise<SessionReport>;
@@ -40,13 +40,13 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 	return {
 		url: (id) => `${origin}/s/${id}`,
 		begin: (id, input, target) => computer().begin(id, input, target),
-		resume: (id, text, target) => computer().resume(id, text, target),
+		resume: (id, text, target, images) => images ? computer().resume(id, text, target, images) : computer().resume(id, text, target),
 		answer: (id, choice) => computer().answer(id, choice),
 		async start(id, input) {
 			await computer().start(id, input);
 			return { id, url: `${origin}/s/${id}` };
 		},
-		followUp: (id, text) => computer().followUp(id, text),
+		followUp: (id, text, images) => images ? computer().followUp(id, text, images) : computer().followUp(id, text),
 		setModel: (id, model) => computer().setModel(id, model),
 		status: (id) => computer().status(id),
 		report: (id) => computer().report(id),

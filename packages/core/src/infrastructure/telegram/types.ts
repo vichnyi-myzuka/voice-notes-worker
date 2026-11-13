@@ -12,6 +12,7 @@ export type TgMessage = {
 	voice?: TgFile;
 	audio?: TgFile;
 	photo?: TgFile[]; // розміри від меншого до більшого
+	document?: TgFile; // файл без стиснення (зображення, надіслане «як файл», має mime_type image/*)
 	// Telegram віддає повідомлення, на яке відповіли, разом із текстом: так бот агента знаходить сесію за посиланням у пості.
 	// entities: у клікабельного слова адреса лежить у text_link.url, а не в тексті
 	reply_to_message?: { message_id: number; text?: string; caption?: string; entities?: { type: string; url?: string }[]; caption_entities?: { type: string; url?: string }[] };
@@ -52,7 +53,8 @@ export type TgMethods = {
 	deleteForumTopic: { params: { chat_id: ChatId; message_thread_id: number }; result: boolean };
 	sendAudio: { params: { chat_id: ChatId; audio: string; title: string; caption: string }; result: MessageRef };
 	sendVoice: { params: { chat_id: ChatId; voice: string; caption: string }; result: MessageRef };
-	sendPhoto: { params: { chat_id: ChatId; photo: string; caption: string }; result: MessageRef };
+	// photo — id файлу чи https-адреса (для завантаження файлу body — FormData)
+	sendPhoto: { params: { chat_id: ChatId; photo: string; caption: string; message_thread_id?: number }; result: MessageRef };
 	editMessageText: {
 		params: { chat_id: ChatId; message_id: number; text: string; parse_mode?: "HTML"; entities?: TgEntity[]; link_preview_options?: { is_disabled: boolean }; reply_markup?: TgInlineKeyboard };
 		result: MessageRef;

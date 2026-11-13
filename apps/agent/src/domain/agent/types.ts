@@ -3,7 +3,11 @@
 
 // name: коротка назва за змістом задачі (kebab-case); з неї складаються тека й гілка сесії, без неї — технічний id
 // model: модель сесії — «opus» (провайдер Claude Agent) або «провайдер/модель»; без неї — модель за замовчуванням воркера
-export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; sure?: boolean; silpo?: boolean };
+// images: фото від користувача (id файлів Telegram): агент отримує їх як зображення, а не як опис
+export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; sure?: boolean; silpo?: boolean; images?: ImageRef[] };
+
+// Зображення в Telegram: id файлу й тип (завантажує його Durable Object, у завданні лише посилання: сховище не тримає великих значень).
+export type ImageRef = { fileId: string; mime: string };
 
 // working — агент виконує задачу; idle — завершив або чекає на відповідь; stopped — контейнер не працює (заснув або зупинений).
 export type AgentStatus = "working" | "idle" | "stopped";
@@ -71,14 +75,14 @@ export type Sessions = {
 	// й waitUntil так довго не живуть. Запуск, стеження (target) і повтори ведe сам агент; збій він показує в пості (target.postId).
 	begin(id: string, input: StartInput, target: WatchTarget): Promise<void>;
 	// Те саме для уточнення в наявну сесію.
-	resume(id: string, text: string, target: WatchTarget): Promise<void>;
+	resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void>;
 	// Ідемпотентно за ключем: повторний виклик з тим самим id не створює другу сесію.
 	start(id: string, input: StartInput): Promise<SessionRef>;
 	// Кнопка під питанням агента: номер варіанта (одиночний вибір — це відповідь, множинний — перемикає варіант) чи "ok" (підтвердити
 	// множинний вибір). Повертає текст підказки для користувача; undefined, якщо питання вже неактуальне.
 	answer(id: string, choice: number | "ok"): Promise<string | undefined>;
 	// Уточнення в ту саму сесію (голос чи текст після транскрипції).
-	followUp(id: string, text: string): Promise<void>;
+	followUp(id: string, text: string, images?: ImageRef[]): Promise<void>;
 	// Змінює модель наявної сесії (діє з наступного ходу, поточний не переривається). false — такої моделі немає.
 	setModel(id: string, model: string): Promise<boolean>;
 	status(id: string): Promise<AgentStatus>;

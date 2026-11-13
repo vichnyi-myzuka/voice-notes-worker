@@ -49,8 +49,10 @@ export async function connectClaudeAgent(oc: Opencode): Promise<void> {
 }
 
 // Повертається, щойно запит прийнято в чергу сесії; агент працює у фоні.
-export async function prompt(oc: Opencode, sessionId: string, text: string): Promise<void> {
-	await data(await oc.fetch(`/api/session/${sessionId}/prompt`, post({ text })));
+// files: зображення від користувача як вкладення (uri — data:-посилання), модель бачить їх як фото.
+export type PromptFile = { uri: string; name: string };
+export async function prompt(oc: Opencode, sessionId: string, text: string, files: PromptFile[] = []): Promise<void> {
+	await data(await oc.fetch(`/api/session/${sessionId}/prompt`, post({ text, ...(files.length > 0 && { files }) })));
 }
 
 // Відповідь на форму (питання агента): ключ поля → значення.

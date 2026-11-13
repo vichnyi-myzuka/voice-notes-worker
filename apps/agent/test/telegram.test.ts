@@ -572,3 +572,32 @@ describe("вебхук Telegram", () => {
 		expect(replies().at(-1)).toContain("Не вдалося створити сесію");
 	});
 });
+
+describe("зображення від власника", () => {
+	it("фото з підписом стає сесією з вкладенням; Whisper не викликається, фото лишається в чаті", async () => {
+		const t = setup();
+		await t.send(msg({ photo: [{ file_id: "small", file_size: 10 }, { file_id: "big", file_size: 99 }], caption: "Що тут не так?" }, 31));
+		const s = t.sessions.get("tg-42-31")!;
+		expect(s.input).toMatchObject({ prompt: "Що тут не так?", images: [{ fileId: "big", mime: "image/jpeg" }] });
+		expect(t.llm.transcribe).not.toHaveBeenCalled();
+		expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 31)).toBe(false);
+	});
+
+	it("фото без підпису: задача за замовчуванням; зображення-документ приймається, інший документ — ні", async () => {
+		const t = setup();
+		await t.send(msg({ document: { file_id: "d1", mime_type: "image/png", file_size: 5 } }, 32));
+		expect(t.sessions.get("tg-42-32")!.input).toMatchObject({ prompt: expect.stringContaining("зображення"), images: [{ fileId: "d1", mime: "image/png" }] });
+		await t.send(msg({ document: { file_id: "d2", mime_type: "application/pdf" } }, 33));
+		expect(t.sessions.has("tg-42-33")).toBe(false);
+	});
+
+	it("відповідь фото на пост сесії — уточнення з вкладенням", async () => {
+		const t = setup();
+		await t.send(msg({ text: "Зроби" }, 40));
+		const id = "tg-42-40";
+		await t.send(msg({ photo: [{ file_id: "p", file_size: 1 }], caption: "Ось макет", reply_to_message: { message_id: 1, text: `x https://agent.example/s/${id}` } }, 41));
+		const s = t.sessions.get(id)!;
+		expect(s.messages.at(-1)).toBe("Ось макет");
+		expect(s.images).toEqual([{ fileId: "p", mime: "image/jpeg" }]);
+	});
+});

@@ -1,5 +1,5 @@
 import { DOWNLOAD_MAX_BYTES, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
-import { folderFor, type Agent } from "../../domain/agent";
+import { folderFor, type Agent, type ImageRef } from "../../domain/agent";
 import type { Env } from "../../env";
 import { QUOTE_CLOSE, QUOTE_OPEN, createTopic, removeMessage, sayTemporarily, sendChat } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
@@ -36,6 +36,8 @@ export async function syncCommands(bot: BotEnv): Promise<void> {
 	});
 }
 
+// Задача для фото без підпису.
+const IMAGE_ONLY = "Користувач надіслав зображення (див. вкладення).";
 const POST_MAX = 3500; // запас до ліміту повідомлення Telegram (4096): решта — посилання
 
 // Вебхук чату з агентом: канал CHAT_ID (бот адмін) і особистий чат власника, як у боті нотаток. Це єдиний шлях повз
@@ -65,7 +67,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	const inPrivate = msg.chat.type === "private" && !!env.TG_OWNER_ID && String(msg.from?.id) === env.TG_OWNER_ID;
 	// Без тексту повідомлення: лише те, що потрібно, щоб зрозуміти, куди воно пішло.
 	console.log(
-		`telegram message ${msg.chat.id}/${msg.message_id}: chat=${msg.chat.type} from=${msg.from?.id ?? "-"} kind=${msg.voice ? "voice" : msg.audio ? "audio" : msg.text ? "text" : "other"} reply=${msg.reply_to_message?.message_id ?? "-"} route=${inChannel ? "channel" : inPrivate ? "private" : "DROPPED"}${!inChannel && !inPrivate ? ` (CHAT_ID set: ${!!env.CHAT_ID}, TG_OWNER_ID set: ${!!env.TG_OWNER_ID})` : ""}`,
+		`telegram message ${msg.chat.id}/${msg.message_id}: chat=${msg.chat.type} from=${msg.from?.id ?? "-"} kind=${msg.voice ? "voice" : msg.audio ? "audio" : msg.photo ? "photo" : msg.document ? "document" : msg.text ? "text" : "other"} reply=${msg.reply_to_message?.message_id ?? "-"} route=${inChannel ? "channel" : inPrivate ? "private" : "DROPPED"}${!inChannel && !inPrivate ? ` (CHAT_ID set: ${!!env.CHAT_ID}, TG_OWNER_ID set: ${!!env.TG_OWNER_ID})` : ""}`,
 	);
 	if (inChannel || inPrivate) {
 		deps.defer(
@@ -136,7 +138,11 @@ function parsePrefixes(transcript: string): { task: string; model?: string; sure
 async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
-	const text = msg.text?.trim();
+	// Фото (стиснене чи надіслане файлом) іде агентові як зображення; підпис до нього — текст задачі.
+	const photo = msg.photo?.at(-1);
+	const image: (ImageRef & { size?: number }) | undefined = photo ? { fileId: photo.file_id, mime: "image/jpeg", size: photo.file_size } : msg.document?.mime_type?.startsWith("image/") ? { fileId: msg.document.file_id, mime: msg.document.mime_type, size: msg.document.file_size } : undefined;
+	const images = image ? [{ fileId: image.fileId, mime: image.mime }] : undefined;
+	const text = (msg.text ?? (image ? msg.caption : undefined))?.trim();
 	// Тема приватного чату: повідомлення в ній без reply теж належить сесії цієї теми (тема створюється під кожну нову сесію).
 	const threadId = inChannel ? undefined : msg.message_thread_id;
 	const viaReply = SESSION_URL.exec(textWithLinks(msg.reply_to_message));
@@ -146,7 +152,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const cleanups: Promise<unknown>[] = [];
 	const sayTemp: Say = (t) => sayTemporarily(env, chat, t, sleep, cleanups, threadId);
 
-	if (!file && (!text || text.startsWith("/"))) {
+	if (!file && !image && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
 		console.log(`telegram ${chat}/${msg.message_id}: command=${command ?? "(empty)"} reply-to-session=${replied?.[1] ?? "-"}`);
 		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /model opus змінює модель сесії (початок тексту «@opus задача» задає модель одразу), /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер з поточного образу.");
@@ -167,7 +173,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		await Promise.all(cleanups); // відповідь зникне через EPHEMERAL_MS
 		return;
 	}
-	if (file && (file.file_size ?? 0) > DOWNLOAD_MAX_BYTES) {
+	if (((file?.file_size ?? image?.size) ?? 0) > DOWNLOAD_MAX_BYTES) {
 		await say("⚠️ Файл більший за 20 МБ: бот не може його завантажити.");
 		return;
 	}
@@ -178,11 +184,12 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		const [url, id] = replied;
 		console.log(`telegram ${chat}/${msg.message_id}: follow-up to session ${id}`);
 		if (!(await agent.link(id))) return void (await say("⚠️ Сесію не знайдено (можливо, вона з іншого агента)."));
-		const followUp = await transcribe(env, llm, file, text);
+		const followUp = (await transcribe(env, llm, file, text)) || (image ? IMAGE_ONLY : "");
 		if (!followUp) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
-		await agent.resume(id, followUp, { chatId: chat, url, ...(threadId && { threadId }) });
+		await agent.resume(id, followUp, { chatId: chat, url, ...(threadId && { threadId }) }, images);
 		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), стан видно в пості сесії (він оновлюється на місці) і за 👨‍💻.
-		await removeMessage(env, chat, msg.message_id);
+		// Фото лишається в чаті: це єдине місце, де його видно.
+		if (!image) await removeMessage(env, chat, msg.message_id);
 		return;
 	}
 
@@ -193,7 +200,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		return;
 	}
 
-	const transcript = await transcribe(env, llm, file, text);
+	const transcript = (await transcribe(env, llm, file, text)) || (image ? IMAGE_ONLY : "");
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
 	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo } = parsePrefixes(transcript);
@@ -228,9 +235,9 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }) });
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }) });
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
-	if (moved || file) await removeMessage(env, chat, msg.message_id);
+	if ((moved && !image) || file) await removeMessage(env, chat, msg.message_id);
 	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
 	if (silpo && !(await agent.silpoConnected().catch(() => true))) await tgSendMessage(env, chat, `🛒 Сільпо ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/silpo/login`, thread);
 }
