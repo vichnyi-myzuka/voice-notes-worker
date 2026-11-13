@@ -557,6 +557,37 @@ describe("AgentSession", () => {
 		expect(JSON.stringify(out.opencode.prompts ?? out.opencode)).toContain("/silpo/login");
 	});
 
+	it("MCP Google Calendar: токен у конфігу теки (права 600), окремий агент `calendar`; разом зі Sure — `assistant`; без входу — примітка в завданні", async () => {
+		const base = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "w", TG_OWNER_ID: "1", CHAT_ID: "-100", ACCESS_AUD: "aud", ACCESS_TEAM_DOMAIN: "t" };
+		const login = { tokens: { access: "cal-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };
+		const written = (o: ReturnType<typeof setup>["opencode"]) => {
+			const [exec] = o.execs.filter((e) => e.cmd[0] === "sh");
+			const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
+			return { file, config: JSON.parse(file.content) };
+		};
+
+		const only = setup(base);
+		only.store.set("calendar", login);
+		await only.session.start(ID, { prompt: "Що в мене сьогодні", calendar: true });
+		const { file, config } = written(only.opencode);
+		expect(file.mode).toBe("600");
+		expect(config.default_agent).toBe("calendar");
+		expect(config.mcp.servers).toEqual({ calendar: { type: "remote", url: "https://calendarmcp.googleapis.com/mcp/v1", oauth: false, headers: { Authorization: "Bearer cal-acc" } } });
+		expect(only.store.get(`session:${ID}`)).toMatchObject({ calendar: true });
+
+		const both = setup({ ...base, SURE_MCP_URL: "https://sure.example/mcp", SURE_MCP_TOKEN: "tok" });
+		both.store.set("calendar", login);
+		await both.session.start(ID, { prompt: "Зістав", calendar: true, sure: true });
+		const b = written(both.opencode).config;
+		expect(b.default_agent).toBe("assistant");
+		expect(Object.keys(b.mcp.servers).sort()).toEqual(["calendar", "sure"]);
+
+		const out = setup(base);
+		await out.session.start(ID, { prompt: "Що в мене сьогодні", calendar: true });
+		expect(out.opencode.execs.filter((e) => e.cmd[0] === "sh")).toEqual([]);
+		expect(JSON.stringify(out.opencode.prompts ?? out.opencode)).toContain("/calendar/login");
+	});
+
 	describe("відстеження сесій: підсумок у чаті й ліміти", () => {
 		const TARGET = { chatId: 5, url: "https://agent.example/s/session-0001" };
 		const sent: { chat_id: number; text: string }[] = [];

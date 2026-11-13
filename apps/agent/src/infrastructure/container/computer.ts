@@ -201,7 +201,7 @@ export class Computer {
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`session-prep failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
 		const dir = new TextDecoder().decode(out.stdout).trim() || sessionDir(folder);
-		if (mcp.sure || mcp.silpo) await this.enableMcp(dir, mcp);
+		if (mcp.sure || mcp.silpo || mcp.calendar) await this.enableMcp(dir, mcp);
 		return dir;
 	}
 

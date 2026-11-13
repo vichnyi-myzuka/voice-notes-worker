@@ -31,6 +31,7 @@ describe("describeActivity", () => {
 		expect(describeActivity("custom", undefined)).toBe("інструмент custom");
 		expect(describeActivity("sure_get_transactions", { start_date: "2025-10-01", category: "Їжа", page: 2, account_id: "a1" })).toBe("дивиться транзакції (start date 2025-10-01, category Їжа)");
 		expect(describeActivity("sure_get_accounts", {})).toBe("дивиться рахунки");
+		expect(describeActivity("calendar_list_events", { timeMin: "2026-11-13" })).toBe("викликає Календар: list events (timeMin 2026-11-13)");
 		expect(describeActivity("silpo_get_orders", { from: "2026-10-01" })).toBe("викликає Сільпо: get orders (from 2026-10-01)");
 		expect(describeActivity("sure_do_magic", { category: "Їжа" })).toBe("викликає Sure: do magic (category Їжа)");
 		expect(describeActivity("read", { filePath: `a/${"x".repeat(100)}` })).toHaveLength("читає ".length + 60);

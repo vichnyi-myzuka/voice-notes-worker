@@ -461,6 +461,22 @@ GET  /s/<id>                                           → редірект на
 
 Сільпо логіниться через OAuth 2.1 (PKCE, динамічна реєстрація клієнта), тож секретів у wrangler немає. Один раз відкрий у браузері `https://<агент>/silpo/login` (за Access), увійди в Сільпо; воркер (`infrastructure/container/silpo.ts`) зберігає refresh-токен у сховищі Durable Object і сам оновлює access-токен. У контейнер іде лише короткий access-токен: він пишеться в `.opencode/opencode.json` сесії (права 600, з git виключений) при створенні теки сесії та при її відновленні після сну. Якщо Сільпо просили, а входу немає, бот одразу надсилає в чат посилання на `/silpo/login`; якщо refresh не вдався, агент у відповіді просить відкрити `/silpo/login` і не вигадує даних. Обмеження: токен у вже запущеній сесії не оновлюється, тож для дуже довгої сесії після спливання access-токена напиши уточнення (сесія відновить конфіг лише після сну контейнера). Назви інструментів Сільпо заздалегідь не відомі, підпис у пості для них загальний («викликає Сільпо: …»).
 
+### MCP Google Calendar (розклад і події)
+
+Агент бачить і міняє події в Google Calendar власника через офіційний віддалений MCP Google Workspace (`https://calendarmcp.googleapis.com/mcp/v1`, Developer Preview): «що в мене сьогодні», «додай зустріч з Олею завтра о 15:00», «перенеси стендап на пів години». Вмикається так само, як Сільпо, незалежно від Sure й Сільпо:
+- префікс `@calendar …` чи голосом «календар, …», у будь-якому порядку з моделлю, Sure і Сільпо;
+- або модель-роутер (`calendar`) вирішила, що задачі потрібні події власника. У пості з'являється «📅 Календар», модель за замовчуванням haiku.
+
+Агент сесії — `calendar` (`payload/calendar-agent.md`: часовий пояс Europe/Kyiv, спершу знайти подію, потім міняти, питати за неоднозначності, видаляти лише явно прохане), а разом із Sure чи Сільпо — `assistant` з усіма інструкціями. Дані календаря приватні так само, як фінансові: лише приватні сайти.
+
+На відміну від Сільпо, Google не дає динамічної реєстрації клієнта, тож потрібні секрети воркера й одноразове налаштування в Google Cloud:
+1. У проєкті Google Cloud (з участю в [Google Workspace Developer Preview](https://developers.google.com/workspace/preview)) увімкни Google Calendar API і Google Calendar MCP API (`calendarmcp.googleapis.com`); на екрані згоди (Google Auth Platform → Data Access) додай права `calendar.calendarlist.readonly` і `calendar.events`.
+2. Google Auth Platform → Clients → Create client → «Web application», redirect URI `https://<агент>/calendar/callback`, постав позначку «Use this client for an AI-powered agent».
+3. Секрети (`cd apps/agent`): `npx wrangler secret put GOOGLE_CLIENT_ID` і `GOOGLE_CLIENT_SECRET`.
+4. Один раз відкрий `https://<агент>/calendar/login` (за Access) і увійди в Google. Воркер (`infrastructure/container/calendar.ts`) зберігає refresh-токен у сховищі Durable Object і сам оновлює access-токен; у контейнер іде лише він (пишеться в `.opencode/opencode.json` сесії, права 600, з git виключений). Якщо Календар просили, а входу немає, бот одразу надсилає посилання на `/calendar/login`.
+
+Обмеження: токен у вже запущеній сесії не оновлюється (див. Сільпо); якщо екран згоди в режимі «Testing», Google скидає refresh-токен за 7 днів, тож переведи застосунок у «In production» (для особистого використання перевірка не потрібна, лише попередження «unverified app»). Інструменти MCP (`calendar_list_events`, `calendar_create_event`…) у пості підписуються як «викликає Календар: …».
+
 ### Запобіжники агента
 
 - **Секрети.** У контейнер передається лише `OPENCODE_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` змінні публікації сайтів (`R2_*`, `SITES_BASE_URL`, `PUBLIC_*`) і доступ до Sure (`SURE_MCP_TOKEN`, `SURE_ACCESS_CLIENT_*`; білий список `containerEnv`, є тест). Токени Todoist і бота нотаток живуть в іншому воркері й у воркері агента їх немає; секрети чату (`BOT_TOKEN`, `TG_WEBHOOK_SECRET`, `CHAT_ID`) і Access до контейнера не потрапляють.

@@ -26,6 +26,9 @@ export type SessionObject = {
 	silpoLoginUrl(origin: string): Promise<string>;
 	silpoCallback(code: string, state: string): Promise<boolean>;
 	silpoConnected(): Promise<boolean>;
+	calendarLoginUrl(origin: string): Promise<string>;
+	calendarCallback(code: string, state: string): Promise<boolean>;
+	calendarConnected(): Promise<boolean>;
 	info(): Promise<ComputerInfo>;
 	connections(detail: boolean): Promise<ConnectionsInfo>;
 	fetch(req: Request): Promise<Response>;
@@ -67,6 +70,9 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		silpoLoginUrl: (origin) => computer().silpoLoginUrl(origin),
 		silpoCallback: (code, state) => computer().silpoCallback(code, state),
 		silpoConnected: () => computer().silpoConnected(),
+		calendarLoginUrl: (origin) => computer().calendarLoginUrl(origin),
+		calendarCallback: (code, state) => computer().calendarCallback(code, state),
+		calendarConnected: () => computer().calendarConnected(),
 		info: () => computer().info(),
 		connections: (detail) => computer().connections(detail),
 	};

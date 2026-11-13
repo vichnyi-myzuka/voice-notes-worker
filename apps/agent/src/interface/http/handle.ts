@@ -1,4 +1,4 @@
-import type { Computer, Sessions, SilpoLogin } from "../../domain/agent";
+import type { CalendarLogin, Computer, Sessions, SilpoLogin } from "../../domain/agent";
 import type { Env } from "../../env";
 import { verifyAccess } from "@voice-notes/core";
 
@@ -18,13 +18,14 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   DELETE /api/sessions/<id>                 → видаляє сесію: історію й теку (гілка agent/<id> лишається)
 //   POST /api/sessions/<id>/abort             → зупиняє поточну роботу агента
 //   GET  /silpo/login, /silpo/callback        → вхід у Сільпо (OAuth для MCP): редірект на Сільпо і завершення входу
+//   GET  /calendar/login, /calendar/callback  → вхід у Google Calendar (OAuth для MCP Google Workspace): те саме
 //   GET  /api/computer                        → стан контейнера для діагностики (чому не засинає, відкриті SSE-потоки)
 //   GET  /api/computer/connections            → running; з ?detail=1 ще й SSH-з'єднання (exec продовжує життя контейнера)
 //   POST /api/computer/snapshot                      → примусово зберігає диск контейнера (після змін поза сесіями, наприклад через SSH)
 //   DELETE /api/computer/snapshot             → видаляє знімок і зупиняє контейнер: наступний старт з чистого образу (сесії зникають)
 //   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
 //   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)
-export async function handleFetch(req: Request, env: Env, agent: Sessions & Computer & SilpoLogin): Promise<Response> {
+export async function handleFetch(req: Request, env: Env, agent: Sessions & Computer & SilpoLogin & CalendarLogin): Promise<Response> {
 	if (!env.LOCAL_DEV) {
 		if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return new Response("Access is not configured", { status: 503 });
 		if (!(await verifyAccess(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD }))) return new Response("Forbidden", { status: 403 });
@@ -63,6 +64,20 @@ export async function handleFetch(req: Request, env: Env, agent: Sessions & Comp
 		const ok = code && state ? await agent.silpoCallback(code, state).catch(() => false) : false;
 		const page = (text: string, status: number) => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Сільпо</title><p style="font:18px system-ui;margin:2em">${text}</p>`, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 		return ok ? page("✅ Сільпо підключено. Можна повертатись у чат.", 200) : page("⚠️ Не вдалося підключити Сільпо. Відкрий /silpo/login ще раз.", 400);
+	}
+
+	// Вхід у Google Calendar: так само; без GOOGLE_CLIENT_ID/SECRET вхід неможливий (503).
+	if (req.method === "GET" && url.pathname === "/calendar/login") {
+		const to = await agent.calendarLoginUrl(url.origin).catch(() => undefined);
+		if (!to) return new Response("Google Calendar не налаштовано (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)", { status: 503 });
+		return new Response(null, { status: 302, headers: { location: to, "cache-control": "no-store" } });
+	}
+	if (req.method === "GET" && url.pathname === "/calendar/callback") {
+		const code = url.searchParams.get("code");
+		const state = url.searchParams.get("state");
+		const ok = code && state ? await agent.calendarCallback(code, state).catch(() => false) : false;
+		const page = (text: string, status: number) => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Календар</title><p style="font:18px system-ui;margin:2em">${text}</p>`, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+		return ok ? page("✅ Календар підключено. Можна повертатись у чат.", 200) : page("⚠️ Не вдалося підключити Календар. Відкрий /calendar/login ще раз.", 400);
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/computer/connections") return json(await agent.connections(url.searchParams.get("detail") === "1"));

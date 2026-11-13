@@ -112,13 +112,17 @@ const SURE_PREFIX = /^(?:@sure|shure|шур|шюр|шуре)[\s,.:;!—–-]+([\
 // Те саме для MCP Сільпо (покупки в магазині): «@silpo задача» чи голосом «сільпо, задача».
 const SILPO_PREFIX = /^(?:@silpo|silpo|сільпо|сильпо|сілпо)[\s,.:;!—–-]+([\s\S]+)$/iu;
 
-// Шукає префікси моделі, Sure і Сільпо в будь-якому порядку; повертає задачу без них.
-function parsePrefixes(transcript: string): { task: string; model?: string; sure: boolean; silpo: boolean } {
+// Те саме для MCP Google Calendar: «@calendar задача» чи голосом «календар, задача».
+const CALENDAR_PREFIX = /^(?:@calendar|calendar|календар|календарю|календаря)[\s,.:;!—–-]+([\s\S]+)$/iu;
+
+// Шукає префікси моделі, Sure, Сільпо і Календаря в будь-якому порядку; повертає задачу без них.
+function parsePrefixes(transcript: string): { task: string; model?: string; sure: boolean; silpo: boolean; calendar: boolean } {
 	let task = transcript;
 	let model: string | undefined;
 	let sure = false;
 	let silpo = false;
-	for (let i = 0; i < 3; i++) {
+	let calendar = false;
+	for (let i = 0; i < 4; i++) {
 		const m = !model && modelPrefix(task);
 		if (m) ({ model, task } = m);
 		const sm = !sure && SURE_PREFIX.exec(task);
@@ -131,8 +135,13 @@ function parsePrefixes(transcript: string): { task: string; model?: string; sure
 			task = lm[1];
 			silpo = true;
 		}
+		const cm = !calendar && CALENDAR_PREFIX.exec(task);
+		if (cm) {
+			task = cm[1];
+			calendar = true;
+		}
 	}
-	return { task: task.trim(), model, sure, silpo };
+	return { task: task.trim(), model, sure, silpo, calendar };
 }
 
 async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
@@ -202,7 +211,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const transcript = (await transcribe(env, llm, file, text)) || (image ? IMAGE_ONLY : "");
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
-	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo } = parsePrefixes(transcript);
+	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo, calendar: forcedCalendar } = parsePrefixes(transcript);
 	const withRepo = REPO_PREFIX.exec(task);
 	const prompt = withRepo ? withRepo[2].trim() : task;
 	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
@@ -211,10 +220,12 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const sure = forcedSure || route.sure === true;
 	// Сільпо так само: явно («сільпо, …», «@silpo») або модель побачила, що треба дивитись, що власник купував у магазині.
 	const silpo = forcedSilpo || route.silpo === true;
-	// Задачі з даними Sure чи Сільпо прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
-	const model = requestedModel ?? (sure || silpo ? "haiku" : undefined);
+	// Календар так само: явно («календар, …», «@calendar») або модель побачила, що треба дивитись чи міняти події власника.
+	const calendar = forcedCalendar || route.calendar === true;
+	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
+	const model = requestedModel ?? (sure || silpo || calendar ? "haiku" : undefined);
 
-	console.log(`telegram ${chat}/${msg.message_id}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo}`);
+	console.log(`telegram ${chat}/${msg.message_id}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo} calendar=${calendar}`);
 	const url = agent.url(id);
 	// Приватний чат: кожна нова сесія отримує свою тему, і далі розмова йде в ній. Теми не ввімкнено (чи збій) — усе в самому чаті.
 	// Повідомлення з уже наявної, не прив'язаної до сесії теми лишається в ній.
@@ -230,18 +241,19 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
-	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : ""].filter(Boolean).join("\n");
+	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : "", calendar ? "📅 Календар" : ""].filter(Boolean).join("\n");
 	const header = (
 		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
 		: `${moved ? `${clipped}\n\n` : ""}${where}`
 	).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
 	if (moved || file) await removeMessage(env, chat, msg.message_id);
 	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
 	if (silpo && !(await agent.silpoConnected().catch(() => true))) await tgSendMessage(env, chat, `🛒 Сільпо ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/silpo/login`, thread);
+	if (calendar && !(await agent.calendarConnected().catch(() => true))) await tgSendMessage(env, chat, `📅 Календар ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/calendar/login`, thread);
 }
 
 // Голосове → текст через Whisper; текст як є. Порожній рядок — не розібрали.
