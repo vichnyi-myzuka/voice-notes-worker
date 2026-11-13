@@ -2,7 +2,7 @@ import { workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import { folderFor, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { removeTopic, renameTopic, sendChat, type Answers } from "../chat";
+import { removeTopic, renameTopic, sendChat, setTopicIcon, type Answers, type TopicState } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
@@ -213,6 +213,7 @@ export class AgentSession extends DurableObject<Env> {
 		await this.posts.settled(); // проміжна правка вже в дорозі: підсумок іде після неї
 		await this.posts.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
+		await this.icon(w, /^[❌⛔⚠]/u.test(text) ? "failed" : "done");
 		// Підсумок успішної роботи: якщо агент відкрив PR, додаємо «Змерджити» (зупинену чи невдалу сесію не мерджимо з чату)
 		const check = text.startsWith("✅") ? await this.pullCheck(watchId(key)) : { ok: false };
 		const mergeable = check.ok;
@@ -221,6 +222,11 @@ export class AgentSession extends DurableObject<Env> {
 		await this.retitle(watchId(key), w, text);
 		if (!shown) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
+	}
+
+	// Іконка теми показує стан сесії (працює, питання, готово, збій); поза темою нічого не робить.
+	private async icon(w: Watch | WatchTarget, state: TopicState): Promise<void> {
+		if (w.threadId && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, state);
 	}
 
 	// Після ходу агента назва теми або лишається, або оновлюється, якщо напрям розмови змінився (лише для тем, створених ботом).
@@ -380,6 +386,7 @@ export class AgentSession extends DurableObject<Env> {
 		if (previous?.postId && previous.postId !== full.postId) await this.posts.mark(previous, false); // реакція не лишається на старому пості
 		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);
 		await this.posts.mark(full, true);
+		await this.icon(full, "working");
 		if (!target.postId && post) await this.posts.show(full, WORKING); // уточнення: пост знову показує «Працює»
 		this.listen();
 		await this.scheduleSoon();
@@ -444,6 +451,7 @@ export class AgentSession extends DurableObject<Env> {
 		// Форму без кнопок (довільний текст) теж зберігаємо: відповідь текстом її скасує (див. followUp)
 		if (form.id) await this.forms.save(id, { formId: form.id, ocId: entry[1].ocId, key: found?.key ?? "", choices: found?.choices ?? [], multiple: found?.multiple, selected: [], text, next, answers: {} } satisfies PendingForm);
 		await this.progress(entry[1].ocId, "", undefined, text, found && { labels: found.choices.map((c) => c.label), multiple: found.multiple });
+		await this.icon(entry[1], "question");
 	}
 
 	// «⏳ Працює · редагує README.md»: пост оновлюється на місці, не частіше за PROGRESS_INTERVAL_MS (проміжні дії між оновленнями пропускаються).

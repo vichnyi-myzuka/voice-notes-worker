@@ -383,6 +383,21 @@ describe("AgentSession", () => {
 		vi.unstubAllGlobals();
 	});
 
+	it("іконка теми: ⚡ при роботі; без потрібного емодзі в наборі чи при збої Telegram нічого не ламається", async () => {
+		const { session } = setup({ BOT_TOKEN: "bot" });
+		const edits: unknown[] = [];
+		vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+			const method = String(url).split("/").pop()!;
+			if (method === "getForumTopicIconStickers") return Response.json({ ok: true, result: [{ emoji: "⚡️", custom_emoji_id: "bolt" }, { emoji: "✅", custom_emoji_id: "check" }] });
+			if (method === "editForumTopic") edits.push(JSON.parse(init.body as string));
+			return Response.json({ ok: true, result: true });
+		});
+		await session.start(ID, { prompt: "Задача" });
+		await session.watch(ID, { chatId: 901, url: "u", postId: 7, header: "h", threadId: 902 });
+		expect(edits).toEqual([{ chat_id: 901, message_thread_id: 902, icon_custom_emoji_id: "bolt" }]);
+		vi.unstubAllGlobals();
+	});
+
 	it("resetComputer: знімок викидається, контейнер зупиняється; з unlessBusy зайнятого не чіпає", async () => {
 		const { session, container, opencode, store } = setup();
 		await session.start(ID, { prompt: "Задача" }); // агент зайнятий

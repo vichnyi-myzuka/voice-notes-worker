@@ -2,7 +2,7 @@ import { tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes/core";
 import { callback } from "./callback";
 
 export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
-export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily } from "./messages";
+export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
 
 const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 

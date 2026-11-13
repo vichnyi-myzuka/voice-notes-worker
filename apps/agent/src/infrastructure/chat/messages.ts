@@ -29,6 +29,35 @@ export const renameTopic = (env: BotEnv, chat: number, threadId: number, name: s
 		(err) => (console.error("rename topic failed:", err), false),
 	);
 
+// Емодзі теми за станом сесії. Telegram дозволяє лише іконки зі свого набору (getForumTopicIconStickers), тому для кожного
+// стану є запасні варіанти: береться перший, що є в наборі.
+export type TopicState = "working" | "question" | "done" | "failed";
+const TOPIC_EMOJI: Record<TopicState, string[]> = {
+	working: ["⚡", "🔥"],
+	question: ["❓", "❗"],
+	done: ["✅", "👍"],
+	failed: ["❗", "❌"],
+};
+let iconIds: Promise<Map<string, string>> | undefined;
+const lastIcon = new Map<string, TopicState>(); // щоб не слати однаковий стан двічі
+
+// Ставить темі іконку стану; збій (немає прав, чат без тем, емодзі немає в наборі) не критичний.
+export async function setTopicIcon(env: BotEnv, chat: number, threadId: number, state: TopicState): Promise<void> {
+	const key = `${chat}:${threadId}`;
+	if (lastIcon.get(key) === state) return;
+	try {
+		iconIds ??= tg(env, "getForumTopicIconStickers", {}).then((list) => new Map(list.flatMap((s) => (s.emoji && s.custom_emoji_id ? [[s.emoji.replace(/️/g, ""), s.custom_emoji_id] as const] : []))));
+		const ids = await iconIds.catch((err) => ((iconIds = undefined), Promise.reject(err)));
+		const id = TOPIC_EMOJI[state].map((e) => ids.get(e)).find(Boolean);
+		if (!id) return;
+		await tg(env, "editForumTopic", { chat_id: chat, message_thread_id: threadId, icon_custom_emoji_id: id });
+		if (lastIcon.size > 500) lastIcon.clear();
+		lastIcon.set(key, state);
+	} catch (err) {
+		console.error("topic icon failed:", err);
+	}
+}
+
 // Видаляє тему разом з усіма повідомленнями в ній.
 export const removeTopic = (env: BotEnv, chat: number, threadId: number) =>
 	tg(env, "deleteForumTopic", { chat_id: chat, message_thread_id: threadId }).catch((err) => console.error("delete topic failed:", err));
