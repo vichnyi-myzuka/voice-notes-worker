@@ -7,7 +7,7 @@ import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
 import { JOB_ATTEMPTS, JOB_RETRY_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
-import { describeActivity, describeForm, formChoices } from "./activity";
+import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { Forms } from "./forms";
 import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
@@ -401,10 +401,11 @@ export class AgentSession extends DurableObject<Env> {
 		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: WATCH_PREFIX }))].find(([, w]) => w.ocId === form.sessionID);
 		if (!entry) return;
 		const id = watchId(entry[0]);
-		const found = form.id ? formChoices(form) : undefined;
-		const text = describeForm(form);
-		// Форму без кнопок (кілька питань, довільний текст) теж зберігаємо: відповідь текстом її скасує (див. followUp)
-		if (form.id) await this.forms.save(id, { formId: form.id, ocId: entry[1].ocId, key: found?.key ?? "", choices: found?.choices ?? [], multiple: found?.multiple, selected: [], text } satisfies PendingForm);
+		const [first, ...next] = (form.id && formSteps(form)) || [];
+		const found = first ?? (form.id ? formChoices(form) : undefined);
+		const text = first?.text ?? describeForm(form);
+		// Форму без кнопок (довільний текст) теж зберігаємо: відповідь текстом її скасує (див. followUp)
+		if (form.id) await this.forms.save(id, { formId: form.id, ocId: entry[1].ocId, key: found?.key ?? "", choices: found?.choices ?? [], multiple: found?.multiple, selected: [], text, next, answers: {} } satisfies PendingForm);
 		await this.progress(entry[1].ocId, "", undefined, text, found && { labels: found.choices.map((c) => c.label), multiple: found.multiple });
 	}
 

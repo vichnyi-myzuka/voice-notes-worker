@@ -16,9 +16,29 @@ export type ActivityForm = { title?: string; fields?: { key?: string; type?: str
 // Кнопки-відповіді: лише для питань з одним видимим полем (варіанти, так/ні або множинний вибір); складні форми відповідаються текстом.
 export type Choice = { label: string; value: string | boolean | string[] };
 const MAX_CHOICES = 8;
+export type FormStep = { key: string; choices: Choice[]; multiple?: boolean; text: string };
+type FormField = NonNullable<ActivityForm["fields"]>[number];
+
 export function formChoices(form: ActivityForm): { key: string; choices: Choice[]; multiple?: boolean } | undefined {
 	const fields = (form.fields ?? []).filter((f) => !f.hidden);
-	const field = fields.length === 1 ? fields[0] : undefined;
+	return fields.length === 1 ? fieldChoices(fields[0]) : undefined;
+}
+
+// Кілька питань: кожне поле — окремий крок з власними кнопками; якщо хоч одне поле без кнопок (довільний текст), кроків немає.
+export function formSteps(form: ActivityForm): FormStep[] | undefined {
+	const fields = (form.fields ?? []).filter((f) => !f.hidden);
+	if (fields.length < 2) return undefined;
+	const steps: FormStep[] = [];
+	for (const [i, f] of fields.entries()) {
+		const found = fieldChoices(f);
+		if (!found) return undefined;
+		const title = form.title?.trim();
+		steps.push({ ...found, text: describeForm({ title: title ? `${title} (${i + 1}/${fields.length})` : `Питання ${i + 1}/${fields.length}`, fields: [f] }) });
+	}
+	return steps;
+}
+
+function fieldChoices(field: FormField): { key: string; choices: Choice[]; multiple?: boolean } | undefined {
 	if (!field?.key) return undefined;
 	const options = (field.options ?? []).filter((o) => o.label && o.value !== undefined).slice(0, MAX_CHOICES);
 	if (field.type === "boolean") return { key: field.key, choices: [{ label: "Так", value: true }, { label: "Ні", value: false }] };
