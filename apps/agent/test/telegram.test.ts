@@ -574,13 +574,14 @@ describe("вебхук Telegram", () => {
 });
 
 describe("зображення від власника", () => {
-	it("фото з підписом стає сесією з вкладенням; Whisper не викликається, фото лишається в чаті", async () => {
+	it("фото з підписом стає сесією з вкладенням; Whisper не викликається, оригінал замінюється постом із підписом", async () => {
 		const t = setup();
 		await t.send(msg({ photo: [{ file_id: "small", file_size: 10 }, { file_id: "big", file_size: 99 }], caption: "Що тут не так?" }, 31));
 		const s = t.sessions.get("tg-42-31")!;
 		expect(s.input).toMatchObject({ prompt: "Що тут не так?", images: [{ fileId: "big", mime: "image/jpeg" }] });
 		expect(t.llm.transcribe).not.toHaveBeenCalled();
-		expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 31)).toBe(false);
+		expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 31)).toBe(true);
+		expect(t.calls.find((c) => c.method === "sendMessage" && String(c.body.text).includes("Що тут не так?"))).toBeTruthy();
 	});
 
 	it("фото без підпису: задача за замовчуванням; зображення-документ приймається, інший документ — ні", async () => {

@@ -221,7 +221,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const created = !inChannel && !threadId ? await createTopic(env, chat, route.name ?? prompt.replace(/\s+/g, " ").slice(0, 60)) : undefined;
 	const thread = created ?? threadId;
 	// У каналі й у новій темі оригінал замінюється постом із задачею (як у нотатках), у приваті без теми оригінал лишається, тож задачу не дублюємо.
-	const moved = inChannel || !!created;
+	// Фото теж замінюється постом (підпис до нього — текст задачі в пості), тому вважається «перенесеним».
+	const moved = inChannel || !!created || !!image;
 	const clipped = prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt;
 	// Без прев'ю: інакше Telegram показує картку сторінки за Access.
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
@@ -236,7 +237,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
 	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }) });
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
-	if ((moved && !image) || file) await removeMessage(env, chat, msg.message_id);
+	if (moved || file) await removeMessage(env, chat, msg.message_id);
 	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
 	if (silpo && !(await agent.silpoConnected().catch(() => true))) await tgSendMessage(env, chat, `🛒 Сільпо ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/silpo/login`, thread);
 }
