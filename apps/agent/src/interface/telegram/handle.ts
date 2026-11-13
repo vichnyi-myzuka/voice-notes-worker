@@ -56,10 +56,17 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 		return new Response("ok");
 	}
 	const msg = update?.message ?? update?.channel_post;
-	if (!msg) return new Response("ok");
+	if (!msg) {
+		console.log(`telegram update ignored: no message (keys: ${Object.keys(update ?? {}).join(",") || "unparsed"})`);
+		return new Response("ok");
+	}
 
 	const inChannel = msg.chat.type === "channel" && !!env.CHAT_ID && String(msg.chat.id) === env.CHAT_ID;
 	const inPrivate = msg.chat.type === "private" && !!env.TG_OWNER_ID && String(msg.from?.id) === env.TG_OWNER_ID;
+	// Без тексту повідомлення: лише те, що потрібно, щоб зрозуміти, куди воно пішло.
+	console.log(
+		`telegram message ${msg.chat.id}/${msg.message_id}: chat=${msg.chat.type} from=${msg.from?.id ?? "-"} kind=${msg.voice ? "voice" : msg.audio ? "audio" : msg.text ? "text" : "other"} reply=${msg.reply_to_message?.message_id ?? "-"} route=${inChannel ? "channel" : inPrivate ? "private" : "DROPPED"}${!inChannel && !inPrivate ? ` (CHAT_ID set: ${!!env.CHAT_ID}, TG_OWNER_ID set: ${!!env.TG_OWNER_ID})` : ""}`,
+	);
 	if (inChannel || inPrivate) {
 		deps.defer(
 			handleMessage(bot, msg, inChannel, deps, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
@@ -137,6 +144,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 
 	if (!file && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
+		console.log(`telegram ${chat}/${msg.message_id}: command=${command ?? "(empty)"} reply-to-session=${replied?.[1] ?? "-"}`);
 		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /model opus змінює модель сесії (початок тексту «@opus задача» задає модель одразу), /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер з поточного образу.");
 		else if (command === "/update") await updateContainer(sayTemp, agent, /\bforce\b/i.test(text ?? ""));
 		else if (command === "/quota") await sayTemp(await quotaText(claudeToken));
@@ -164,6 +172,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Відповідь на пост із сесією — уточнення в ту саму сесію.
 	if (replied) {
 		const [url, id] = replied;
+		console.log(`telegram ${chat}/${msg.message_id}: follow-up to session ${id}`);
 		if (!(await agent.link(id))) return void (await say("⚠️ Сесію не знайдено (можливо, вона з іншого агента)."));
 		const followUp = await transcribe(env, llm, file, text);
 		if (!followUp) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
@@ -175,7 +184,10 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 
 	// Стабільний id: повторна доставка того самого повідомлення не створює другу сесію й другу відповідь.
 	const id = `tg-${chat}-${msg.message_id}`;
-	if (await agent.link(id)) return;
+	if (await agent.link(id)) {
+		console.log(`telegram ${chat}/${msg.message_id}: duplicate delivery, session ${id} already exists`);
+		return;
+	}
 
 	const transcript = await transcribe(env, llm, file, text);
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
@@ -192,6 +204,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Задачі з даними Sure чи Сільпо прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
 	const model = requestedModel ?? (sure || silpo ? "haiku" : undefined);
 
+	console.log(`telegram ${chat}/${msg.message_id}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo}`);
 	const url = agent.url(id);
 	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
 	const clipped = prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt;

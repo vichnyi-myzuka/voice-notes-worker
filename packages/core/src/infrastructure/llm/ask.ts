@@ -36,10 +36,10 @@ export const dataUrl = (image: NonNullable<JsonRequest["image"]>) => `data:${ima
 
 // Витягує перший JSON-об'єкт з відповіді моделі.
 export async function askLuna(env: LlmEnv, req: JsonRequest): Promise<string> {
-	if (!env.OPENAI_KEY) throw new Error("OPENAI_KEY is not set");
+	if (!env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
 	const res = await fetch("https://api.openai.com/v1/responses", {
 		method: "POST",
-		headers: { Authorization: `Bearer ${env.OPENAI_KEY}`, "content-type": "application/json" },
+		headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, "content-type": "application/json" },
 		body: JSON.stringify({
 			model: "gpt-6-luna",
 			reasoning: { effort: req.reasoning ?? "none" },

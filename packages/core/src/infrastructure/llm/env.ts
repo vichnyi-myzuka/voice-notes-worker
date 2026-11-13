@@ -1,2 +1,2 @@
 // Що потрібно адаптеру Llm від середовища воркера.
-export type LlmEnv = { AI: Ai; OPENAI_KEY?: string };
+export type LlmEnv = { AI: Ai; OPENAI_API_KEY?: string };
