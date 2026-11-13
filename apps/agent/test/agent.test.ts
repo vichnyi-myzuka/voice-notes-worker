@@ -29,6 +29,9 @@ describe("durableAgent", () => {
 			silpoLoginUrl: vi.fn(async () => "https://mcp.silpo.ua/authorize"),
 			silpoCallback: vi.fn(async () => true),
 			silpoConnected: vi.fn(async () => true),
+			calendarLoginUrl: vi.fn(async () => "https://accounts.google.com/o/oauth2/v2/auth"),
+			calendarCallback: vi.fn(async () => true),
+			calendarConnected: vi.fn(async () => true),
 			info: vi.fn(async () => ({ running: true, activeAt: null, alarmAt: null, snapshot: null, streams: [] })),
 			fetch: vi.fn(async () => new Response("ui")),
 		};

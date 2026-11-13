@@ -95,6 +95,13 @@ function describeSilpo(name: string, input: Record<string, unknown> | undefined)
 	return cut(args ? `${verb} (${args})` : verb);
 }
 
+// Інструменти MCP Google Calendar (`calendar_…`: list_events, create_event…): без словника, як у Сільпо.
+function describeCalendar(name: string, input: Record<string, unknown> | undefined): string {
+	const args = argSummary(input);
+	const verb = `викликає Календар: ${name.replace(/^calendar_/, "").replace(/_/g, " ")}`;
+	return cut(args ? `${verb} (${args})` : verb);
+}
+
 export function describeActivity(tool: string, input: Record<string, unknown> | undefined): string {
 	const i = input ?? {};
 	const file = str(i.filePath) ?? str(i.path) ?? str(i.file);
@@ -125,6 +132,7 @@ export function describeActivity(tool: string, input: Record<string, unknown> | 
 		case "task":
 			return "делегує підзадачу";
 		default: {
+			if (tool.startsWith("calendar_")) return describeCalendar(tool.slice("calendar_".length), i);
 			if (tool.startsWith("silpo_")) return describeSilpo(tool.slice("silpo_".length), i);
 			if (tool.startsWith("sure_")) return describeSure(tool.slice("sure_".length), i);
 			const args = argSummary(i);

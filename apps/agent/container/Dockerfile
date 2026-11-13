@@ -27,6 +27,12 @@ ARG CLAUDE_CODE_VERSION=2.1.322
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
 	&& npm cache clean --force
 
+# MCP-сервер Google Calendar (https://github.com/nspady/google-calendar-mcp, MIT): сесія запускає його локально (stdio), коли просили Календар.
+# Версія збігається з CALENDAR_MCP_VERSION у src/infrastructure/container/payload.ts (там запасний запуск через npx, якщо образ старий).
+ARG CALENDAR_MCP_VERSION=2.8.1
+RUN npm install -g @cocal/google-calendar-mcp@${CALENDAR_MCP_VERSION} \
+	&& npm cache clean --force
+
 COPY entrypoint.sh /entrypoint.sh
 COPY git-auth.sh /usr/local/lib/git-auth.sh
 # Те, що змінюється часто (AGENTS.md, publish, session-prep, git-хук), в образ не входить: воркер розкладає ці файли сам при

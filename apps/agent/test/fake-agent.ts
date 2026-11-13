@@ -17,6 +17,7 @@ export function fakeAgent(origin = "https://agent.example") {
 	const refs = new Map<string, PostRef>();
 	const deploys: { repo?: string; folder?: string; postId?: number; deploy: DeployInfo }[] = [];
 	const silpoCodes: string[] = [];
+	const calendarCodes: string[] = [];
 	let snapshotError = "";
 	const get = (id: string) => {
 		const s = sessions.get(id);
@@ -134,6 +135,17 @@ export function fakeAgent(origin = "https://agent.example") {
 		},
 		async silpoConnected() {
 			return silpoCodes.length > 0;
+		},
+		async calendarLoginUrl(o) {
+			return `https://accounts.google.example/auth?redirect_uri=${o}/calendar/callback`;
+		},
+		async calendarCallback(code, state) {
+			if (state !== "good") return false;
+			calendarCodes.push(code);
+			return true;
+		},
+		async calendarConnected() {
+			return calendarCodes.length > 0;
 		},
 		async resetComputer(unlessBusy) {
 			if (unlessBusy && [...sessions.values()].some((s) => s.status === "working")) return false;

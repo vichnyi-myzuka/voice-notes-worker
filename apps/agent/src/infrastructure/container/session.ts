@@ -13,6 +13,7 @@ import { extractImages, loadImages, sendImages, type OutImage } from "./images";
 import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./posts";
+import { Calendar } from "./calendar";
 import { Silpo } from "./silpo";
 import { retitle } from "./title";
 import { WebProxy } from "./proxy";
@@ -30,6 +31,7 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly forms: Forms;
 	private readonly proxy: WebProxy;
 	private readonly silpo: Silpo;
+	private readonly calendar: Calendar;
 	// Підписка на події OpenCode, поки за якоюсь сесією стежать (див. listen).
 	private events: AbortController | undefined;
 	// Назви інструментів за id виклику й час останнього оновлення поста сесії.
@@ -48,6 +50,7 @@ export class AgentSession extends DurableObject<Env> {
 		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.silpo = new Silpo(ctx.storage);
+		this.calendar = new Calendar(ctx.storage, { id: env.GOOGLE_CLIENT_ID, secret: env.GOOGLE_CLIENT_SECRET });
 		this.computer.applyInactivityTimeout();
 	}
 
@@ -157,6 +160,18 @@ export class AgentSession extends DurableObject<Env> {
 		return this.silpo.connected();
 	}
 
+	calendarLoginUrl(origin: string): Promise<string> {
+		return this.calendar.loginUrl(origin);
+	}
+
+	calendarCallback(code: string, state: string): Promise<boolean> {
+		return this.calendar.callback(code, state);
+	}
+
+	calendarConnected(): Promise<boolean> {
+		return this.calendar.connected();
+	}
+
 	snapshot(): Promise<SnapshotInfo> {
 		return this.computer.snapshot();
 	}
@@ -255,11 +270,16 @@ export class AgentSession extends DurableObject<Env> {
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
 			const silpo = input.silpo ? await this.silpo.accessToken() : undefined;
-			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo });
+			const calendar = input.calendar ? await this.calendar.accessToken() : undefined;
+			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar });
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }) } satisfies Tracked);
+			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }), ...(input.calendar && { calendar: true }) } satisfies Tracked);
 			// Сільпо просили, а входу немає (чи токен не оновився): агент скаже про це власнику замість мовчазної відсутності інструментів.
-			await prompt(this.opencode(), ocId, input.silpo && !silpo ? `${input.prompt}\n\n(Системна примітка: MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.)` : input.prompt, await this.images(input.images));
+			const notes = [
+				input.silpo && !silpo && "MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.",
+				input.calendar && !calendar && "MCP Google Calendar не підключено, бо власник ще не ввійшов у Google. Скажи йому відкрити сторінку /calendar/login на адресі агента (де веб-інтерфейс), увійти й повторити задачу. Не вигадуй подій.",
+			].filter(Boolean);
+			await prompt(this.opencode(), ocId, notes.length ? `${input.prompt}\n\n(Системна примітка: ${notes.join(" ")})` : input.prompt, await this.images(input.images));
 			await this.computer.markActive();
 			return { sessionId: ocId };
 		});
@@ -274,7 +294,8 @@ export class AgentSession extends DurableObject<Env> {
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
 				const silpo = tracked.silpo ? await this.silpo.accessToken() : undefined;
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo });
+				const calendar = tracked.calendar ? await this.calendar.accessToken() : undefined;
+				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo, calendar });
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
