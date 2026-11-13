@@ -562,17 +562,25 @@ describe("AgentSession", () => {
 		const login = { tokens: { access: "cal-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };
 		const written = (o: ReturnType<typeof setup>["opencode"]) => {
 			const [exec] = o.execs.filter((e) => e.cmd[0] === "sh");
-			const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
-			return { file, config: JSON.parse(file.content) };
+			const files = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
+			return { files, config: JSON.parse(files[0].content) };
 		};
 
 		const only = setup(base);
 		only.store.set("calendar", login);
 		await only.session.start(ID, { prompt: "Що в мене сьогодні", calendar: true });
-		const { file, config } = written(only.opencode);
-		expect(file.mode).toBe("600");
+		const { files, config } = written(only.opencode);
 		expect(config.default_agent).toBe("calendar");
-		expect(config.mcp.servers).toEqual({ calendar: { type: "remote", url: "https://calendarmcp.googleapis.com/mcp/v1", oauth: false, headers: { Authorization: "Bearer cal-acc" } } });
+		// Локальний MCP-сервер (nspady/google-calendar-mcp) читає токен із файлів теки сесії; токена в самому конфігу немає.
+		expect(config.mcp.servers.calendar).toMatchObject({ type: "local", environment: { GOOGLE_CALENDAR_MCP_TOKEN_PATH: expect.stringContaining("/.opencode/calendar/tokens.json") } });
+		expect(config.mcp.servers.calendar.environment.ENABLED_TOOLS).not.toContain("manage-accounts");
+		expect(JSON.stringify(config)).not.toContain("cal-acc");
+		const tokens = files.find((f) => f.path.endsWith("/calendar/tokens.json"))!;
+		expect(tokens.mode).toBe("600");
+		expect(JSON.parse(tokens.content)).toEqual({ normal: { access_token: "cal-acc", token_type: "Bearer", scope: "https://www.googleapis.com/auth/calendar", expiry_date: login.tokens.expiresAt } });
+		const keys = files.find((f) => f.path.endsWith("/calendar/gcp-oauth.keys.json"))!;
+		expect(keys.mode).toBe("600");
+		expect(keys.content).not.toContain("refresh"); // справжнього client secret і refresh-токена в контейнері немає
 		expect(only.store.get(`session:${ID}`)).toMatchObject({ calendar: true });
 
 		const both = setup({ ...base, SURE_MCP_URL: "https://sure.example/mcp", SURE_MCP_TOKEN: "tok" });

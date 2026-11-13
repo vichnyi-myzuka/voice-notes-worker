@@ -205,14 +205,14 @@ export class Computer {
 		return dir;
 	}
 
-	// MCP (Sure, Сільпо) лише для цієї сесії: .opencode/opencode.json у її теці (OpenCode підхоплює його сам), а з git він виключений,
+	// MCP (Sure, Сільпо, Календар) лише для цієї сесії: .opencode/opencode.json (і файли токенів Календаря) у її теці (OpenCode підхоплює його сам), а з git він виключений,
 	// щоб не потрапив у коміт. Власний .opencode/opencode.json репозиторію не перезаписуємо. Без налаштованих серверів нічого не робить.
 	private async enableMcp(dir: string, mcp: McpWanted): Promise<void> {
-		const file = mcpConfig(this.env, dir, mcp);
-		if (!file) return;
+		const files = mcpConfig(this.env, dir, mcp);
+		if (!files) return;
 		// Файл репозиторію (під git) не чіпаємо; свій, з попереднього запуску, перезаписуємо: у ньому міг застаріти токен Сільпо.
 		const script = `git -C "${dir}" ls-files --error-unmatch .opencode/opencode.json >/dev/null 2>&1 && exit 0; node -e '${WRITER}' && { x=$(git -C "${dir}" rev-parse --git-path info/exclude 2>/dev/null) && echo '/.opencode/' >> "$(cd "${dir}" && realpath "$x")"; true; }`;
-		const proc = await this.ctx.container!.exec(["sh", "-c", script], { cwd: "/", env: { HOME: "/root", PAYLOAD: JSON.stringify([file]) } });
+		const proc = await this.ctx.container!.exec(["sh", "-c", script], { cwd: "/", env: { HOME: "/root", PAYLOAD: JSON.stringify(files) } });
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`mcp setup failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
 	}

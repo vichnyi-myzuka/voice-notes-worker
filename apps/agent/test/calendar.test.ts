@@ -31,7 +31,7 @@ describe("Calendar (OAuth для MCP Google Calendar)", () => {
 		expect(url.searchParams.get("access_type")).toBe("offline");
 		expect(url.searchParams.get("prompt")).toBe("consent");
 		expect(url.searchParams.get("code_challenge_method")).toBe("S256");
-		expect(url.searchParams.get("scope")).toContain("https://www.googleapis.com/auth/calendar.events");
+		expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/calendar");
 
 		expect(await cal.callback("code", "wrong")).toBe(false);
 		expect(await cal.connected()).toBe(false);
@@ -40,7 +40,7 @@ describe("Calendar (OAuth для MCP Google Calendar)", () => {
 		expect(calls[0].body.get("grant_type")).toBe("authorization_code");
 		expect(calls[0].body.get("client_secret")).toBe("gsecret");
 		expect(calls[0].body.get("code_verifier")).toBeTruthy();
-		expect(await cal.accessToken()).toBe("acc");
+		expect(await cal.accessToken()).toMatchObject({ access: "acc" });
 		expect(await cal.callback("code", url.searchParams.get("state")!)).toBe(false); // state одноразовий
 	});
 
@@ -56,9 +56,9 @@ describe("Calendar (OAuth для MCP Google Calendar)", () => {
 		await cal.callback("c", new URL(await cal.loginUrl("https://agent.example")).searchParams.get("state")!); // expires_in 60 с: уже в межах запасу
 
 		reply = () => Response.json({ access_token: "acc2", expires_in: 3600 });
-		expect(await cal.accessToken()).toBe("acc2");
+		expect(await cal.accessToken()).toMatchObject({ access: "acc2" });
 		expect(calls.at(-1)!.body.get("refresh_token")).toBe("ref1");
-		expect(await cal.accessToken()).toBe("acc2");
+		expect(await cal.accessToken()).toMatchObject({ access: "acc2", expiresAt: expect.any(Number) });
 		expect(calls).toHaveLength(2);
 	});
 

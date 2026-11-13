@@ -1,14 +1,13 @@
-// Вхід у Google Calendar (офіційний віддалений MCP Google Workspace): звичайний OAuth 2.0 для веб-застосунку.
+// Вхід у Google Calendar для MCP-сервера nspady/google-calendar-mcp (запускається в контейнері сесії, див. mcpConfig у payload.ts):
+// звичайний OAuth 2.0 для веб-застосунку.
 // На відміну від Сільпо, Google не дає динамічної реєстрації клієнта: client id і secret беруться з секретів воркера
 // (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET; клієнт у Google Cloud з позначкою «Use this client for an AI-powered agent»).
 // Власник один раз відкриває /calendar/login; далі воркер сам оновлює access-токен через refresh_token.
-// Токени живуть у сховищі Durable Object; у контейнер іде лише короткий access-токен (див. mcpConfig у payload.ts).
-
-export const CALENDAR_MCP_URL = "https://calendarmcp.googleapis.com/mcp/v1";
+// Токени живуть у сховищі Durable Object; у контейнер іде лише короткий access-токен (без refresh-токена й client secret).
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-// Читання календарів і подій + створення, зміна й видалення подій (create_event, update_event, delete_event).
-const SCOPES = ["https://www.googleapis.com/auth/calendar.calendarlist.readonly", "https://www.googleapis.com/auth/calendar.events"];
+// Те саме право, яке просить сам MCP-сервер (його перевірено з усіма інструментами: календарі, події, вільний час, кольори).
+const SCOPES = ["https://www.googleapis.com/auth/calendar"];
 const KEY = "calendar";
 const REFRESH_MARGIN_MS = 5 * 60_000; // оновлюємо токен, якщо він спливає раніше
 const DEFAULT_TTL_S = 3600;
@@ -18,6 +17,7 @@ type State = {
 	pending?: { state: string; verifier: string; redirect: string };
 	tokens?: Tokens;
 };
+export type CalendarToken = { access: string; expiresAt: number };
 export type GoogleClient = { id?: string; secret?: string };
 
 type Storage = Pick<DurableObjectStorage, "get" | "put">;
@@ -70,17 +70,17 @@ export class Calendar {
 		return true;
 	}
 
-	// Дійсний access-токен (за потреби оновлює); undefined, якщо входу не було чи refresh не вдався (тоді потрібен новий вхід).
-	async accessToken(): Promise<string | undefined> {
+	// Дійсний access-токен із часом спливання (за потреби оновлює); undefined, якщо входу не було чи refresh не вдався (тоді потрібен новий вхід).
+	async accessToken(): Promise<CalendarToken | undefined> {
 		const s = await this.load();
 		if (!s.tokens) return undefined;
-		if (s.tokens.expiresAt - Date.now() > REFRESH_MARGIN_MS) return s.tokens.access;
+		if (s.tokens.expiresAt - Date.now() > REFRESH_MARGIN_MS) return { access: s.tokens.access, expiresAt: s.tokens.expiresAt };
 		if (!s.tokens.refresh) return undefined;
 		try {
 			const fresh = await this.token({ grant_type: "refresh_token", refresh_token: s.tokens.refresh });
 			// Google при оновленні не повертає новий refresh_token: лишається старий.
 			await this.save({ ...s, tokens: { ...fresh, refresh: fresh.refresh ?? s.tokens.refresh } });
-			return fresh.access;
+			return { access: fresh.access, expiresAt: fresh.expiresAt };
 		} catch (err) {
 			console.error("calendar refresh failed:", err);
 			return undefined;

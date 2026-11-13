@@ -48,8 +48,8 @@ export interface Env {
 	SURE_MCP_TOKEN?: string;
 	SURE_ACCESS_CLIENT_ID?: string;
 	SURE_ACCESS_CLIENT_SECRET?: string;
-	// Клієнт OAuth у Google Cloud (веб-застосунок, redirect `https://<агент>/calendar/callback`, позначка «Use this client for an AI-powered agent»)
-	// для MCP Google Calendar. Без них Календар не підключається. У контейнер не йдуть: туди потрапляє лише короткий access-токен.
+	// Клієнт OAuth у Google Cloud (веб-застосунок, redirect `https://<агент>/calendar/callback`)
+	// для входу в Google Calendar (/calendar/login). Без них Календар не підключається. У контейнер не йдуть: туди потрапляє лише короткий access-токен.
 	GOOGLE_CLIENT_ID?: string;
 	GOOGLE_CLIENT_SECRET?: string;
 	// JSON-масив [{repo: "owner/name", about: "як власник його називає"}]: з нього бот вибирає репозиторій за вільною фразою (не секрет, див. wrangler.toml)

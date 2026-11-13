@@ -8,7 +8,7 @@ import reportSiteSkill from "../../../payload/report-site-skill.md";
 import sessionPrep from "../../../payload/session-prep.sh";
 import silpoAgent from "../../../payload/silpo-agent.md";
 import sureAgent from "../../../payload/sure-agent.md";
-import { CALENDAR_MCP_URL } from "./calendar";
+import type { CalendarToken } from "./calendar";
 import { SILPO_MCP_URL } from "./silpo";
 
 // Файли, які воркер розкладає в контейнер сам (а не кладе в образ): вони змінюються часто, і від цього не мають скидатися знімки
@@ -61,14 +61,39 @@ export const WRITER = `const fs=require("fs"),path=require("path");for(const f o
 
 // MCP-сервери, які сесії підключає власник (див. prepare у computer.ts): sure — фінанси, silpo — покупки в Сільпо, calendar — Google Calendar.
 // silpo і calendar — короткі access-токени (їх видають Silpo.accessToken і Calendar.accessToken); без токена сервер не підключається.
-export type McpWanted = { sure?: boolean; silpo?: string; calendar?: string };
+export type McpWanted = { sure?: boolean; silpo?: string; calendar?: CalendarToken };
+
+// Google Calendar: готовий відкритий MCP-сервер (nspady/google-calendar-mcp, MIT), який OpenCode запускає в контейнері по stdio.
+// Версія збігається з ARG CALENDAR_MCP_VERSION в container/Dockerfile; у образі пакет уже встановлено, а в старому (знімок до оновлення
+// образу) сервер тягнеться через npx. Вхід у Google робить воркер (calendar.ts): сервер отримує лише access-токен у `tokens.json`
+// і заглушку замість client id/secret (без refresh-токена він сам нічого не оновлює). `manage-accounts` вимкнено: входом керує воркер.
+export const CALENDAR_MCP_VERSION = "2.8.1";
+const CALENDAR_TOOLS = "list-calendars,list-events,search-events,get-event,list-colors,create-event,create-events,update-event,delete-event,get-freebusy,get-current-time,respond-to-event";
+const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
+
+function calendarFiles(dir: string, token: CalendarToken): { server: unknown; files: PayloadFile[] } {
+	const base = `${dir}/.opencode/calendar`;
+	const keys = { installed: { client_id: "managed-by-worker", client_secret: "unused", redirect_uris: ["http://localhost:3000/oauth2callback"] } };
+	const tokens = { normal: { access_token: token.access, token_type: "Bearer", scope: CALENDAR_SCOPE, expiry_date: token.expiresAt } };
+	return {
+		server: {
+			type: "local",
+			command: ["sh", "-c", `command -v google-calendar-mcp >/dev/null && exec google-calendar-mcp || exec npx -y @cocal/google-calendar-mcp@${CALENDAR_MCP_VERSION}`],
+			environment: { GOOGLE_OAUTH_CREDENTIALS: `${base}/gcp-oauth.keys.json`, GOOGLE_CALENDAR_MCP_TOKEN_PATH: `${base}/tokens.json`, ENABLED_TOOLS: CALENDAR_TOOLS },
+		},
+		files: [
+			{ path: `${base}/gcp-oauth.keys.json`, mode: "600", content: JSON.stringify(keys, null, 2) },
+			{ path: `${base}/tokens.json`, mode: "600", content: JSON.stringify(tokens, null, 2) },
+		],
+	};
+}
 
 // Конфіг OpenCode з MCP-серверами для теки однієї сесії: лише для запитаних серверів і лише якщо вони налаштовані (Sure: адреса й токен).
 // Секрети Sure не потрапляють у файл: там посилання `{env:…}`, самі змінні передає containerEnv; заголовки Cloudflare Access (Service Token)
 // потрібні, коли сервер за тунелем з Access. Токен Сільпо короткий і змінюється, тому лежить у файлі (права 600, з git виключений).
 // Основним стає агент під задачу: `sure`, `silpo`, `calendar` або `finance` (Sure і Сільпо разом: зіставляти чеки з платежами);
 // будь-яке інше поєднання (напр. календар разом із Sure) — `assistant` з усіма інструкціями.
-export function mcpConfig(env: Env, dir: string, want: McpWanted): PayloadFile | undefined {
+export function mcpConfig(env: Env, dir: string, want: McpWanted): PayloadFile[] | undefined {
 	const servers: Record<string, unknown> = {};
 	if (want.sure && env.SURE_MCP_URL && env.SURE_MCP_TOKEN) {
 		const headers: Record<string, string> = { Authorization: "Bearer {env:SURE_MCP_TOKEN}" };
@@ -79,7 +104,8 @@ export function mcpConfig(env: Env, dir: string, want: McpWanted): PayloadFile |
 		servers.sure = { type: "remote", url: env.SURE_MCP_URL, oauth: false, headers };
 	}
 	if (want.silpo) servers.silpo = { type: "remote", url: SILPO_MCP_URL, oauth: false, headers: { Authorization: `Bearer ${want.silpo}` } };
-	if (want.calendar) servers.calendar = { type: "remote", url: CALENDAR_MCP_URL, oauth: false, headers: { Authorization: `Bearer ${want.calendar}` } };
+	const cal = want.calendar && calendarFiles(dir, want.calendar);
+	if (cal) servers.calendar = cal.server;
 	const sure = "sure" in servers;
 	const silpo = "silpo" in servers;
 	const calendar = "calendar" in servers;
@@ -96,5 +122,5 @@ export function mcpConfig(env: Env, dir: string, want: McpWanted): PayloadFile |
 		agents: { [agent.name]: { description: agent.description, mode: "primary", system: agent.system } },
 		mcp: { servers },
 	};
-	return { path: `${dir}/.opencode/opencode.json`, mode: silpo || calendar ? "600" : "644", content: JSON.stringify(config, null, 2) };
+	return [{ path: `${dir}/.opencode/opencode.json`, mode: silpo ? "600" : "644", content: JSON.stringify(config, null, 2) }, ...(cal ? cal.files : [])];
 }

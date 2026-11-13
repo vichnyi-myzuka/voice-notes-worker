@@ -463,19 +463,19 @@ GET  /s/<id>                                           → редірект на
 
 ### MCP Google Calendar (розклад і події)
 
-Агент бачить і міняє події в Google Calendar власника через офіційний віддалений MCP Google Workspace (`https://calendarmcp.googleapis.com/mcp/v1`, Developer Preview): «що в мене сьогодні», «додай зустріч з Олею завтра о 15:00», «перенеси стендап на пів години». Вмикається так само, як Сільпо, незалежно від Sure й Сільпо:
+Агент бачить і міняє події в Google Calendar власника: «що в мене сьогодні», «додай зустріч з Олею завтра о 15:00», «перенеси стендап на пів години». Для цього сесія запускає готовий відкритий MCP-сервер [nspady/google-calendar-mcp](https://github.com/nspady/google-calendar-mcp) (MIT) локально, у контейнері (stdio). Офіційний віддалений MCP Google Workspace не використовується: він у закритому Developer Preview і вимагає акаунта Workspace. Працює зі звичайним `@gmail.com`. Календар вмикається так само, як Сільпо, незалежно від Sure й Сільпо:
 - префікс `@calendar …` чи голосом «календар, …», у будь-якому порядку з моделлю, Sure і Сільпо;
 - або модель-роутер (`calendar`) вирішила, що задачі потрібні події власника. У пості з'являється «📅 Календар», модель за замовчуванням haiku.
 
-Агент сесії — `calendar` (`payload/calendar-agent.md`: часовий пояс Europe/Kyiv, спершу знайти подію, потім міняти, питати за неоднозначності, видаляти лише явно прохане), а разом із Sure чи Сільпо — `assistant` з усіма інструкціями. Дані календаря приватні так само, як фінансові: лише приватні сайти.
+Агент сесії — `calendar` (`payload/calendar-agent.md`: часовий пояс Europe/Kyiv, спершу знайти подію, потім міняти, питати за неоднозначності, видаляти лише явно прохане), а разом із Sure чи Сільпо — `assistant` з усіма інструкціями. Інструменти: `calendar_list-events`, `calendar_create-event`, `calendar_update-event`, `calendar_delete-event`, `calendar_get-freebusy` та інші (без `manage-accounts`: входом керує воркер). Дані календаря приватні так само, як фінансові: лише приватні сайти.
 
-На відміну від Сільпо, Google не дає динамічної реєстрації клієнта, тож потрібні секрети воркера й одноразове налаштування в Google Cloud:
-1. У проєкті Google Cloud (з участю в [Google Workspace Developer Preview](https://developers.google.com/workspace/preview)) увімкни Google Calendar API і Google Calendar MCP API (`calendarmcp.googleapis.com`); на екрані згоди (Google Auth Platform → Data Access) додай права `calendar.calendarlist.readonly` і `calendar.events`.
-2. Google Auth Platform → Clients → Create client → «Web application», redirect URI `https://<агент>/calendar/callback`, постав позначку «Use this client for an AI-powered agent».
+Вхід робить воркер (OAuth 2.0 з PKCE), а не сам MCP-сервер, тож секрети лишаються на воркері. Потрібне одноразове налаштування:
+1. У Google Cloud створи проєкт, увімкни Google Calendar API, на екрані згоди (Google Auth Platform) додай право `https://www.googleapis.com/auth/calendar` і себе в тестових користувачах.
+2. Google Auth Platform → Clients → Create client → «Web application», redirect URI `https://<агент>/calendar/callback`.
 3. Секрети (`cd apps/agent`): `npx wrangler secret put GOOGLE_CLIENT_ID` і `GOOGLE_CLIENT_SECRET`.
-4. Один раз відкрий `https://<агент>/calendar/login` (за Access) і увійди в Google. Воркер (`infrastructure/container/calendar.ts`) зберігає refresh-токен у сховищі Durable Object і сам оновлює access-токен; у контейнер іде лише він (пишеться в `.opencode/opencode.json` сесії, права 600, з git виключений). Якщо Календар просили, а входу немає, бот одразу надсилає посилання на `/calendar/login`.
+4. Один раз відкрий `https://<агент>/calendar/login` (за Access) і увійди в Google. Воркер (`infrastructure/container/calendar.ts`) зберігає refresh-токен у сховищі Durable Object і сам оновлює access-токен. У контейнер іде лише короткий access-токен: він пишеться в `.opencode/calendar/tokens.json` теки сесії (права 600, з git виключений) разом із заглушкою замість client id/secret, тож сервер не вміє оновлювати токен сам. Якщо Календар просили, а входу немає, бот одразу надсилає посилання на `/calendar/login`.
 
-Обмеження: токен у вже запущеній сесії не оновлюється (див. Сільпо); якщо екран згоди в режимі «Testing», Google скидає refresh-токен за 7 днів, тож переведи застосунок у «In production» (для особистого використання перевірка не потрібна, лише попередження «unverified app»). Інструменти MCP (`calendar_list_events`, `calendar_create_event`…) у пості підписуються як «викликає Календар: …».
+Образ контейнера встановлює сервер глобально (`CALENDAR_MCP_VERSION` у `container/Dockerfile`, збігається з версією в `payload.ts`); у контейнері зі старого знімка без нього сервер тягнеться через `npx`. Обмеження: токен у вже запущеній сесії не оновлюється (див. Сільпо); якщо екран згоди в режимі «Testing», Google скидає refresh-токен за 7 днів, тож переведи застосунок у «In production» (для особистого використання перевірка не потрібна, лише попередження «unverified app»). Підпис у пості для інструментів — «викликає Календар: …».
 
 ### Запобіжники агента
 
