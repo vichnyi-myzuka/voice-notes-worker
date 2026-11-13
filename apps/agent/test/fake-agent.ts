@@ -1,9 +1,9 @@
-import type { Agent, DeployInfo, PostRef, AgentStatus, SessionReport, StartInput, WatchTarget } from "../src/domain/agent";
+import type { Agent, DeployInfo, ImageRef, PostRef, AgentStatus, SessionReport, StartInput, WatchTarget } from "../src/domain/agent";
 
 // Агент у пам'яті: те саме, що робить Durable Object з контейнером, але без контейнера й мережі.
 // Поведінка як у реальної реалізації: start ідемпотентний за id, abort повертає сесію у idle,
 // followUp будить сесію (working), а для невідомої сесії будь-яка дія — помилка. Веб-інтерфейс один на всі сесії.
-export type FakeSession = { input: StartInput; messages: string[]; posted?: boolean; status: AgentStatus; outcome?: SessionReport["outcome"]; cost?: number };
+export type FakeSession = { input: StartInput; messages: string[]; images?: ImageRef[]; posted?: boolean; status: AgentStatus; outcome?: SessionReport["outcome"]; cost?: number };
 
 const CHAT = -1001; // чат, у якому «живе» пост сесії
 
@@ -34,17 +34,18 @@ export function fakeAgent(origin = "https://agent.example") {
 			const label = typeof choice === "number" ? choices.get(id)?.[choice] : undefined;
 			return label && `Відповідь: ${label}`;
 		},
-		async resume(id, text, target) {
-			await agent.followUp(id, text);
+		async resume(id, text, target, images) {
+			await agent.followUp(id, text, images);
 			await agent.watch(id, target);
 		},
 		async start(id, input) {
 			if (!sessions.has(id)) sessions.set(id, { input, messages: [input.prompt], status: "working" });
 			return { id, url: `${origin}/s/${id}` };
 		},
-		async followUp(id, text) {
+		async followUp(id, text, images) {
 			const s = get(id);
 			s.messages.push(text);
+			if (images) (s.images ??= []).push(...images);
 			s.status = "working";
 			s.outcome = undefined;
 		},

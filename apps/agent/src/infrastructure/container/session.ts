@@ -1,7 +1,7 @@
 import { workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { folderFor, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { folderFor, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { removeTopic, renameTopic, sendChat, type Answers } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
@@ -9,6 +9,7 @@ import { Computer } from "./computer";
 import { JOB_ATTEMPTS, JOB_RETRY_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { Forms } from "./forms";
+import { extractImages, loadImages, sendImages, type OutImage } from "./images";
 import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./posts";
@@ -104,23 +105,26 @@ export class AgentSession extends DurableObject<Env> {
 			if (!(await this.ctx.storage.get(key))) continue; // уже оброблено вище (ліміт)
 			// Вільна: або вже відпрацювала, або ще не стартувала (дамо їй трохи часу).
 			if (!w.seenBusy && Date.now() - w.since < WATCH_INTERVAL_MS + 5000) continue;
-			await this.finishWatch(key, w, await this.summary(oc, w));
+			const done = await this.summary(oc, w);
+			await this.finishWatch(key, w, done.text, done.images);
 		}
 		return (await this.ctx.storage.list({ prefix: WATCH_PREFIX })).size > 0 || active.size > 0;
 	}
 
 	// Підсумок завершеної роботи: останнє повідомлення асистента, помилка чи нічого, якщо користувач сам зупинив.
-	private async summary(oc: Opencode, w: Watch): Promise<string> {
+	// Зображення з відповіді агента (`![підпис](шлях)`) не потрапляють у текст, а йдуть у чат окремими фото (див. finishWatch).
+	private async summary(oc: Opencode, w: Watch): Promise<{ text: string; images?: OutImage[] }> {
 		const [info, last] = await Promise.all([getSession(oc, w.ocId), lastAssistant(oc, w.ocId)]);
-		if (info.outcome === "interrupted") return "⏹ Зупинено. Відповідь на цей пост продовжить роботу.";
+		if (info.outcome === "interrupted") return { text: "⏹ Зупинено. Відповідь на цей пост продовжить роботу." };
 		if (info.outcome === "failed") {
 			const error = last.error ?? (last.text || "невідома");
 			// Cloudflare перед API моделі інколи блокує IP контейнера (сторінка-челендж 403): це тимчасово, достатньо повторити.
-			if (/403/.test(error) && /Cloudflare/i.test(error)) return "❌ Cloudflare тимчасово заблокував запит до API моделі (403 Attention Required). Це не помилка завдання: відповідь на цей пост повторить роботу за кілька хвилин.";
-			return `❌ Помилка: ${error}`.slice(0, SUMMARY_MAX);
+			if (/403/.test(error) && /Cloudflare/i.test(error)) return { text: "❌ Cloudflare тимчасово заблокував запит до API моделі (403 Attention Required). Це не помилка завдання: відповідь на цей пост повторить роботу за кілька хвилин." };
+			return { text: `❌ Помилка: ${error}`.slice(0, SUMMARY_MAX) };
 		}
-		const text = last.text.length > SUMMARY_MAX ? `${last.text.slice(0, SUMMARY_MAX)}…` : last.text;
-		return `✅ Готово${text ? `\n\n${text}` : ""}`;
+		const { text: body, images } = extractImages(last.text);
+		const text = body.length > SUMMARY_MAX ? `${body.slice(0, SUMMARY_MAX)}…` : body;
+		return { text: `✅ Готово${text ? `\n\n${text}` : ""}`, images };
 	}
 
 	// Деплой PR сесії у пості (див. Posts).
@@ -199,7 +203,7 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
-	private async finishWatch(key: string, w: Watch, text: string): Promise<void> {
+	private async finishWatch(key: string, w: Watch, text: string, images: OutImage[] = []): Promise<void> {
 		if (!(await this.ctx.storage.get(key))) return; // уже показано (подія й опитування можуть збігтися)
 		await this.ctx.storage.delete(key);
 		await this.forms.drop(watchId(key)); // питання, що лишилось без відповіді, неактуальне
@@ -213,9 +217,10 @@ export class AgentSession extends DurableObject<Env> {
 		const check = text.startsWith("✅") ? await this.pullCheck(watchId(key)) : { ok: false };
 		const mergeable = check.ok;
 		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
-		if (await this.posts.show(w, text, true, undefined, mergeable)) return void (await this.retitle(watchId(key), w, text));
+		const shown = await this.posts.show(w, text, true, undefined, mergeable);
 		await this.retitle(watchId(key), w, text);
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
+		if (!shown) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
+		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
 	}
 
 	// Після ходу агента назва теми або лишається, або оновлюється, якщо напрям розмови змінився (лише для тем, створених ботом).
@@ -248,14 +253,14 @@ export class AgentSession extends DurableObject<Env> {
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
 			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }) } satisfies Tracked);
 			// Сільпо просили, а входу немає (чи токен не оновився): агент скаже про це власнику замість мовчазної відсутності інструментів.
-			await prompt(this.opencode(), ocId, input.silpo && !silpo ? `${input.prompt}\n\n(Системна примітка: MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.)` : input.prompt);
+			await prompt(this.opencode(), ocId, input.silpo && !silpo ? `${input.prompt}\n\n(Системна примітка: MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.)` : input.prompt, await this.images(input.images));
 			await this.computer.markActive();
 			return { sessionId: ocId };
 		});
 	}
 
 	// Уточнення в сесію. Якщо сесії OpenCode вже немає (диск не відновився зі знімка), готуємо теку заново й створюємо нову.
-	async followUp(id: string, text: string): Promise<void> {
+	async followUp(id: string, text: string, images?: ImageRef[]): Promise<void> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked) throw new Error(`unknown session ${id}`);
 		await this.computer.ensureRunning();
@@ -270,8 +275,13 @@ export class AgentSession extends DurableObject<Env> {
 		}
 		this.asks.set(id, text);
 		await this.forms.cancel(id, text); // текст замість кнопки: відкрите питання не чекає далі
-		await prompt(this.opencode(), ocId, text);
+		await prompt(this.opencode(), ocId, text, await this.images(images));
 		await this.computer.markActive();
+	}
+
+	// Фото з Telegram → вкладення для моделі (без BOT_TOKEN, напр. у тестах, їх немає).
+	private async images(refs: ImageRef[] | undefined) {
+		return refs?.length && this.env.BOT_TOKEN ? loadImages({ BOT_TOKEN: this.env.BOT_TOKEN }, refs) : [];
 	}
 
 	// Змінює модель сесії для наступних ходів і запам'ятовує її (нова сесія OpenCode після сну теж піде на ній).
@@ -300,8 +310,8 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Те саме для уточнення; контейнер може спати.
-	async resume(id: string, text: string, target: WatchTarget): Promise<void> {
-		await this.enqueue({ id, text, target, attempts: 0 });
+	async resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
+		await this.enqueue({ id, text, target, attempts: 0, ...(images?.length && { images }) });
 	}
 
 	private async enqueue(job: Job): Promise<void> {
@@ -317,7 +327,7 @@ export class AgentSession extends DurableObject<Env> {
 					if (!this.computer.running) await this.posts.show(job.target, "⏳ Запускаю контейнер").catch(() => {});
 					await this.start(job.id, job.input);
 				} else {
-					await this.followUp(job.id, job.text);
+					await this.followUp(job.id, job.text, job.images);
 				}
 			} catch (err) {
 				console.error(`job ${job.id} failed (attempt ${job.attempts + 1}):`, err);
@@ -419,7 +429,8 @@ export class AgentSession extends DurableObject<Env> {
 		}
 		const [key, w] = entry;
 		if (kind === "started") return void (w.seenBusy || (await this.ctx.storage.put(key, { ...w, seenBusy: true } satisfies Watch)));
-		await this.finishWatch(key, w, await this.summary(this.opencode(), w));
+		const done = await this.summary(this.opencode(), w);
+		await this.finishWatch(key, w, done.text, done.images);
 	}
 
 	// Питання агента: текст у пост, а для простих (один вибір, так/ні) ще й кнопки-відповіді.

@@ -2,6 +2,7 @@ import type { ComputerInfo, ConnectionsInfo, SnapshotInfo } from "../../domain/a
 import type { Env } from "../../env";
 import { parseConnections } from "./connections";
 import { READY_ATTEMPTS, containerEnv, inactivityMs, snapshotIntervalMs } from "./config";
+import { IMAGE_MAX_BYTES } from "./images";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "./opencode";
 import { PAYLOAD, PAYLOAD_HASH, WRITER, mcpConfig, type McpWanted } from "./payload";
 import { sessionDir, type SavedSnapshot } from "./state";
@@ -221,6 +222,14 @@ export class Computer {
 		const proc = await this.ctx.container!.exec(cmd, { cwd: "/workspace", env: { HOME: "/root", ...env } });
 		const out = await proc.output();
 		return { exitCode: out.exitCode, stderr: new TextDecoder().decode(out.stderr).trim() };
+	}
+
+	// Читає зображення з контейнера для відправки в чат: лише png/jpg/gif/webp із /workspace чи /tmp і до IMAGE_MAX_BYTES; інше — undefined.
+	async readImage(path: string): Promise<Uint8Array | undefined> {
+		const script = `f=$(realpath -e "$1") || exit 3; case "$f" in /workspace/*|/tmp/*) ;; *) exit 3;; esac; case "$f" in *.png|*.jpg|*.jpeg|*.gif|*.webp) ;; *) exit 3;; esac; [ -f "$f" ] && [ "$(stat -c %s "$f")" -le ${IMAGE_MAX_BYTES} ] || exit 4; cat "$f"`;
+		const proc = await this.ctx.container!.exec(["sh", "-c", script, "sh", path], { cwd: "/workspace", env: { HOME: "/root" } });
+		const out = await proc.output();
+		return out.exitCode === 0 ? new Uint8Array(out.stdout as ArrayBufferLike) : undefined;
 	}
 
 	// Стан для діагностики: чому контейнер не засинає, коли був знімок. streams додає той, хто веде потоки.
