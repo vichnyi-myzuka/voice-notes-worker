@@ -526,7 +526,7 @@ cd apps/agent
 
 # 2. Секрети
 npx wrangler secret put OPENCODE_PASSWORD          # довгий випадковий рядок (пароль OpenCode V2, користувач завжди `opencode`)
-npx wrangler secret put ANTHROPIC_API_KEY          # або OPENAI_API_KEY: ключ моделі для OpenCode
+npx wrangler secret put ANTHROPIC_API_KEY          # або OPENAI_API_KEY: ключ моделі для OpenCode; той самий OPENAI_API_KEY вмикає gpt-6-luna для маршрутизації задач і голосу в чаті (без нього Gemma 4)
 npx wrangler secret put CLAUDE_CODE_OAUTH_TOKEN    # або замість ключа: токен підписки Claude (див. «Підписка Claude»)
 npx wrangler secret put GITHUB_TOKEN               # необов'язково: для приватних репозиторіїв і пушу гілок
 
