@@ -2,7 +2,7 @@ import { workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import { folderFor, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { sendChat, type Answers } from "../chat";
+import { removeTopic, sendChat, type Answers } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
@@ -211,7 +211,7 @@ export class AgentSession extends DurableObject<Env> {
 		const mergeable = check.ok;
 		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
 		if (await this.posts.show(w, text, true, undefined, mergeable)) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done").catch((err) => console.error("notify failed:", err));
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
 	}
 
 	// Ідемпотентно за id: повторний виклик не створює другу сесію OpenCode й не готує теку вдруге.
@@ -319,7 +319,7 @@ export class AgentSession extends DurableObject<Env> {
 		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
 		if (!this.env.BOT_TOKEN) return;
 		if (job.target.postId && (await this.posts.show(job.target, text, true))) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, "done").catch((err) => console.error("notify failed:", err));
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
 	}
 
 	// Статус не будить контейнер, що спить.
@@ -342,7 +342,7 @@ export class AgentSession extends DurableObject<Env> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked) throw new Error(`unknown session ${id}`);
 		// Пост сесії: новий (з першого виклику) запам'ятовується, у наступних (уточнення) береться зі сховища.
-		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url } : tracked.post;
+		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }) } : tracked.post;
 		if (target.postId) await this.ctx.storage.put(sessionKey(id), { ...tracked, post } satisfies Tracked);
 		const full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
@@ -467,6 +467,16 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ctx.storage.delete(sessionKey(id));
 		await this.ctx.storage.delete(watchKey(id));
 		if (tracked.post) await this.posts.forget(tracked.post.postId);
+		// Тема сесії зникає разом із нею (усі шляхи видалення — чат, кнопка, веб, мердж PR — проходять тут).
+		if (tracked.post?.threadId && tracked.post.chatId && this.env.BOT_TOKEN) await removeTopic({ BOT_TOKEN: this.env.BOT_TOKEN }, tracked.post.chatId, tracked.post.threadId);
+	}
+
+	// Сесія з постом у темі (див. Sessions.byThread).
+	async byThread(chatId: number, threadId: number): Promise<string | undefined> {
+		for (const [key, tracked] of await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX })) {
+			if (tracked.post?.threadId === threadId && tracked.post.chatId === chatId) return sessionId(key);
+		}
+		return undefined;
 	}
 
 	// PR з гілки agent/<folder> змерджено: прибирає сесію цієї гілки (див. remove). Повертає сесію й її пост у чаті, щоб

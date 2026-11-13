@@ -5,6 +5,8 @@ export type TgMessage = {
 	date: number;
 	chat: { id: number; type: string };
 	from?: { id: number };
+	// Тема (thread) чату: є в повідомленнях усередині теми, у «головному» чаті її немає.
+	message_thread_id?: number;
 	text?: string;
 	caption?: string;
 	voice?: TgFile;
@@ -43,9 +45,11 @@ export type TgInlineKeyboard = { inline_keyboard: { text: string; callback_data:
 // Методи Bot API, які використовує воркер: параметри й результат. Ключі — назви методів.
 export type TgMethods = {
 	sendMessage: {
-		params: { chat_id: ChatId; text: string; parse_mode?: "HTML"; entities?: TgEntity[]; link_preview_options?: { is_disabled: boolean }; reply_markup?: TgInlineKeyboard };
+		params: { chat_id: ChatId; message_thread_id?: number; text: string; parse_mode?: "HTML"; entities?: TgEntity[]; link_preview_options?: { is_disabled: boolean }; reply_markup?: TgInlineKeyboard };
 		result: MessageRef;
 	};
+	createForumTopic: { params: { chat_id: ChatId; name: string }; result: { message_thread_id: number } };
+	deleteForumTopic: { params: { chat_id: ChatId; message_thread_id: number }; result: boolean };
 	sendAudio: { params: { chat_id: ChatId; audio: string; title: string; caption: string }; result: MessageRef };
 	sendVoice: { params: { chat_id: ChatId; voice: string; caption: string }; result: MessageRef };
 	sendPhoto: { params: { chat_id: ChatId; photo: string; caption: string }; result: MessageRef };

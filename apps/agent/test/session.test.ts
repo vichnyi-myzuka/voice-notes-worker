@@ -365,6 +365,24 @@ describe("AgentSession", () => {
 		expect(opencode.execs.at(-1)!.cmd.at(-1)).toBe("docs-add-18");
 	});
 
+	it("тема сесії: byThread знаходить сесію за темою, а remove видаляє тему в чаті", async () => {
+		const { session } = setup({ BOT_TOKEN: "bot" });
+		const methods: { method: string; body: unknown }[] = [];
+		vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+			methods.push({ method: String(url).split("/").pop()!, body: JSON.parse(init.body as string) });
+			return Response.json({ ok: true, result: true });
+		});
+		await session.start(ID, { prompt: "Задача" });
+		await session.watch(ID, { chatId: 42, url: "u", postId: 7, header: "h", threadId: 555 });
+		expect(await session.byThread(42, 555)).toBe(ID);
+		expect(await session.byThread(42, 556)).toBeUndefined();
+		expect(await session.byThread(43, 555)).toBeUndefined();
+		await session.remove(ID);
+		expect(methods.filter((m) => m.method === "deleteForumTopic").map((m) => m.body)).toEqual([{ chat_id: 42, message_thread_id: 555 }]);
+		expect(await session.byThread(42, 555)).toBeUndefined();
+		vi.unstubAllGlobals();
+	});
+
 	it("resetComputer: знімок викидається, контейнер зупиняється; з unlessBusy зайнятого не чіпає", async () => {
 		const { session, container, opencode, store } = setup();
 		await session.start(ID, { prompt: "Задача" }); // агент зайнятий

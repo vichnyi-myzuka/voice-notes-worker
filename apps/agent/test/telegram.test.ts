@@ -18,13 +18,15 @@ const CHANNEL = -1001;
 function setup(transcript = "Поправ README", pick?: (user: string) => { repo?: string; type?: string; name?: string } | null) {
 	const agent = fakeAgent();
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
+	const topics = { id: 0 }; // id теми, яку «створює» Telegram; 0 — теми не підтримуються (як у чаті без режиму тем)
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (input: string, init?: RequestInit) => {
 			if (input.includes("/file/bot")) return new Response(new Uint8Array([1, 2, 3]));
 			const method = input.split("/").pop()!;
 			calls.push({ method, body: JSON.parse(init!.body as string) });
-			return Response.json({ ok: true, result: method === "getFile" ? { file_path: "voice/a.oga" } : { message_id: method === "sendMessage" && String(JSON.parse(init!.body as string).text).endsWith(" 💨") ? TEMP_ID : 1 } });
+			if (method === "createForumTopic" && !topics.id) return new Response("not a forum", { status: 400 });
+			return Response.json({ ok: true, result: method === "createForumTopic" ? { message_thread_id: topics.id } : method === "getFile" ? { file_path: "voice/a.oga" } : { message_id: method === "sendMessage" && String(JSON.parse(init!.body as string).text).endsWith(" 💨") ? TEMP_ID : 1 } });
 		}),
 	);
 	const llm: Llm = {
@@ -50,7 +52,7 @@ function setup(transcript = "Поправ README", pick?: (user: string) => { re
 	};
 	const answers = () => calls.filter((c) => c.method === "answerCallbackQuery").map((c) => c.body.text);
 	const replies = () => calls.filter((c) => c.method === "sendMessage").map((c) => (c.body.text as string).replace(/ 💨$/, ""));
-	return { ...agent, llm, sleep, send, press, answers, calls, replies };
+	return { ...agent, llm, sleep, send, press, answers, calls, replies, topics };
 }
 
 const post = (extra: Record<string, unknown>, id = 9) => ({ message_id: id, date: 1, chat: { id: CHANNEL, type: "channel" }, ...extra });
@@ -441,6 +443,53 @@ describe("вебхук Telegram", () => {
 			expect(describeReport({ status: "idle", outcome: "succeeded", cost: 0.4, tokens: 12_400 })).toBe("✅ Завершила ($0.40 · 12k токенів)");
 			expect(describeReport({ status: "idle", outcome: "failed" })).toBe("❌ Завершилась помилкою");
 			expect(describeReport({ status: "stopped" })).toContain("Контейнер спить");
+		});
+	});
+
+	describe("теми приватного чату", () => {
+		const SID = `tg-${OWNER}-7`;
+		const THREAD = 555;
+
+		it("нова сесія з головного чату отримує тему: пост іде в неї, оригінал прибирається, тема в спостереженні", async () => {
+			const t = setup();
+			t.topics.id = THREAD;
+			await t.send(msg({ text: "Поправ README" }));
+			expect(t.calls.find((c) => c.method === "createForumTopic")!.body).toMatchObject({ chat_id: OWNER });
+			const sent = t.calls.find((c) => c.method === "sendMessage")!.body;
+			expect(sent).toMatchObject({ message_thread_id: THREAD });
+			expect(sent.text).toContain("Поправ README"); // оригінал зникає, тож задача в пості
+			expect(t.calls.filter((c) => c.method === "deleteMessage").map((c) => c.body)).toEqual([{ chat_id: OWNER, message_id: 7 }]);
+			expect(t.watches[0].target).toMatchObject({ chatId: OWNER, postId: 1, threadId: THREAD });
+		});
+
+		it("теми не підтримуються (збій createForumTopic): усе як раніше, у самому чаті", async () => {
+			const t = setup();
+			await t.send(msg({ text: "Поправ README" }));
+			expect(t.calls.find((c) => c.method === "sendMessage")!.body).not.toHaveProperty("message_thread_id");
+			expect(t.calls.some((c) => c.method === "deleteMessage")).toBe(false);
+			expect(t.watches[0].target).not.toHaveProperty("threadId");
+		});
+
+		it("повідомлення в темі без reply — уточнення в сесію цієї теми; відповіді бота йдуть у ту ж тему", async () => {
+			const t = setup();
+			t.topics.id = THREAD;
+			await t.send(msg({ text: "Поправ README" }));
+			t.calls.length = 0;
+			await t.send(msg({ text: "Ще й CHANGELOG", message_thread_id: THREAD }, 8));
+			expect(t.sessions.size).toBe(1);
+			expect(t.sessions.get(SID)?.messages).toEqual(["Поправ README", "Ще й CHANGELOG"]);
+			expect(t.calls.some((c) => c.method === "createForumTopic")).toBe(false);
+			await t.send(msg({ text: "/status", message_thread_id: THREAD }, 9));
+			expect(t.calls.filter((c) => c.method === "sendMessage").map((c) => c.body)).toEqual([expect.objectContaining({ message_thread_id: THREAD, text: expect.stringContaining("Працює") })]);
+		});
+
+		it("повідомлення в темі, що не належить сесії, стартує сесію в ній без нової теми", async () => {
+			const t = setup();
+			t.topics.id = THREAD;
+			await t.send(msg({ text: "Поправ README", message_thread_id: 999 }));
+			expect(t.calls.some((c) => c.method === "createForumTopic")).toBe(false);
+			expect(t.calls.find((c) => c.method === "sendMessage")!.body).toMatchObject({ message_thread_id: 999 });
+			expect(t.watches[0].target).toMatchObject({ threadId: 999 });
 		});
 	});
 

@@ -2,7 +2,7 @@ import { tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes/core";
 import { callback } from "./callback";
 
 export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
-export { EPHEMERAL_MARK, EPHEMERAL_MS, removeMessage, removeOriginal, sayTemporarily } from "./messages";
+export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, removeOriginal, sayTemporarily } from "./messages";
 
 const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -86,14 +86,15 @@ function render(text: string, sessionUrl?: string): { html: string; plain: strin
 
 // Надсилає повідомлення з форматуванням і необов'язковим посиланням на сесію внизу. Якщо Telegram відхилив розмітку, шле
 // той самий текст без неї. Повертає message_id.
-export async function sendChat(env: BotEnv, chatId: number | string, text: string, sessionUrl?: string, buttons?: Buttons, answers?: Answers, review?: Review): Promise<number> {
+export async function sendChat(env: BotEnv, chatId: number | string, text: string, sessionUrl?: string, buttons?: Buttons, answers?: Answers, review?: Review, threadId?: number): Promise<number> {
 	const { html, plain } = render(text, sessionUrl);
 	const reply_markup = keyboard(sessionUrl, buttons, answers, review);
+	const thread = threadId ? { message_thread_id: threadId } : {};
 	try {
-		return (await tg(env, "sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML", link_preview_options: NO_PREVIEW, reply_markup })).message_id;
+		return (await tg(env, "sendMessage", { chat_id: chatId, ...thread, text: html, parse_mode: "HTML", link_preview_options: NO_PREVIEW, reply_markup })).message_id;
 	} catch (err) {
 		console.error("html message rejected, sending plain:", err);
-		return (await tg(env, "sendMessage", { chat_id: chatId, text: plain, link_preview_options: NO_PREVIEW, reply_markup })).message_id;
+		return (await tg(env, "sendMessage", { chat_id: chatId, ...thread, text: plain, link_preview_options: NO_PREVIEW, reply_markup })).message_id;
 	}
 }
 

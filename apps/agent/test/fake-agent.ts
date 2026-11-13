@@ -89,6 +89,9 @@ export function fakeAgent(origin = "https://agent.example") {
 		async link(id) {
 			return sessions.has(id) ? `ses_${id}` : undefined;
 		},
+		async byThread(chatId, threadId) {
+			return watches.find((w) => w.target.chatId === chatId && w.target.threadId === threadId)?.id;
+		},
 		async setDeploy(repo, folder, deploy) {
 			for (const [id, s] of sessions) {
 				if (s.input.repo === repo && `${s.input.name}-${id.split("-").at(-1)}` === folder && s.posted) {
