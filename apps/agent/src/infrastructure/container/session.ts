@@ -2,7 +2,7 @@ import { workersLlm } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import { folderFor, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { removeTopic, sendChat, type Answers } from "../chat";
+import { removeTopic, renameTopic, sendChat, type Answers } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
@@ -14,6 +14,7 @@ import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./posts";
 import { Silpo } from "./silpo";
+import { retitle } from "./title";
 import { WebProxy } from "./proxy";
 import { WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
 
@@ -37,6 +38,8 @@ export class AgentSession extends DurableObject<Env> {
 	// Останні дії агента (для маленької моделі, що описує поточну дію) і її попередній опис — за id сесії OpenCode.
 	private recent = new Map<string, string[]>();
 	private narration = new Map<string, string>();
+	// Останнє уточнення власника за id сесії: з ним модель вирішує, чи змінився напрям розмови (назва теми).
+	private asks = new Map<string, string>();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -214,10 +217,26 @@ export class AgentSession extends DurableObject<Env> {
 		const check = text.startsWith("✅") ? await this.pullCheck(watchId(key)) : { ok: false };
 		const mergeable = check.ok;
 		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
-		if (!(await this.posts.show(w, text, true, undefined, mergeable))) {
-			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
-		}
+		const shown = await this.posts.show(w, text, true, undefined, mergeable);
+		await this.retitle(watchId(key), w, text);
+		if (!shown) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
+	}
+
+	// Після ходу агента назва теми або лишається, або оновлюється, якщо напрям розмови змінився (лише для тем, створених ботом).
+	// Службові повідомлення (збій, ліміт, зупинка) назву не міняють. Збій моделі чи Telegram не критичний.
+	private async retitle(id: string, w: Watch, result: string): Promise<void> {
+		try {
+			if (!result.startsWith("✅") || !w.threadId || !w.title || !this.env.BOT_TOKEN) return;
+			const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+			const current = tracked?.post?.title;
+			if (!tracked?.post || !current) return;
+			const title = await retitle(workersLlm(this.env), current, (w.header ?? "").replace(/[]/g, ""), this.asks.get(id), result);
+			if (!title || title === current) return;
+			if (await renameTopic({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, title)) await this.ctx.storage.put(sessionKey(id), { ...tracked, post: { ...tracked.post, title } } satisfies Tracked);
+		} catch (err) {
+			console.error("retitle failed:", err);
+		}
 	}
 
 	// Ідемпотентно за id: повторний виклик не створює другу сесію OpenCode й не готує теку вдруге.
@@ -254,6 +273,7 @@ export class AgentSession extends DurableObject<Env> {
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
 		}
+		this.asks.set(id, text);
 		await this.forms.cancel(id, text); // текст замість кнопки: відкрите питання не чекає далі
 		await prompt(this.opencode(), ocId, text, await this.images(images));
 		await this.computer.markActive();
@@ -353,7 +373,7 @@ export class AgentSession extends DurableObject<Env> {
 		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (!tracked) throw new Error(`unknown session ${id}`);
 		// Пост сесії: новий (з першого виклику) запам'ятовується, у наступних (уточнення) береться зі сховища.
-		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }) } : tracked.post;
+		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }), ...(target.title && { title: target.title }) } : tracked.post;
 		if (target.postId) await this.ctx.storage.put(sessionKey(id), { ...tracked, post } satisfies Tracked);
 		const full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
@@ -478,6 +498,7 @@ export class AgentSession extends DurableObject<Env> {
 		});
 		await this.ctx.storage.delete(sessionKey(id));
 		await this.ctx.storage.delete(watchKey(id));
+		this.asks.delete(id);
 		if (tracked.post) await this.posts.forget(tracked.post.postId);
 		// Тема сесії зникає разом із нею (усі шляхи видалення — чат, кнопка, веб, мердж PR — проходять тут).
 		if (tracked.post?.threadId && tracked.post.chatId && this.env.BOT_TOKEN) await removeTopic({ BOT_TOKEN: this.env.BOT_TOKEN }, tracked.post.chatId, tracked.post.threadId);

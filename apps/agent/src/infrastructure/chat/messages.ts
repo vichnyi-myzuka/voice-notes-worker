@@ -22,6 +22,13 @@ export const createTopic = (env: BotEnv, chat: number, name: string): Promise<nu
 		(err) => (console.error("create topic failed:", err), undefined),
 	);
 
+// Перейменовує тему (напрям розмови змінився); збій не критичний.
+export const renameTopic = (env: BotEnv, chat: number, threadId: number, name: string) =>
+	tg(env, "editForumTopic", { chat_id: chat, message_thread_id: threadId, name: name.slice(0, 128) }).then(
+		() => true,
+		(err) => (console.error("rename topic failed:", err), false),
+	);
+
 // Видаляє тему разом з усіма повідомленнями в ній.
 export const removeTopic = (env: BotEnv, chat: number, threadId: number) =>
 	tg(env, "deleteForumTopic", { chat_id: chat, message_thread_id: threadId }).catch((err) => console.error("delete topic failed:", err));

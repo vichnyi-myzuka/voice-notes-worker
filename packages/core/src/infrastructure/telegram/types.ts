@@ -50,6 +50,7 @@ export type TgMethods = {
 		result: MessageRef;
 	};
 	createForumTopic: { params: { chat_id: ChatId; name: string }; result: { message_thread_id: number } };
+	editForumTopic: { params: { chat_id: ChatId; message_thread_id: number; name: string }; result: boolean };
 	deleteForumTopic: { params: { chat_id: ChatId; message_thread_id: number }; result: boolean };
 	sendAudio: { params: { chat_id: ChatId; audio: string; title: string; caption: string }; result: MessageRef };
 	sendVoice: { params: { chat_id: ChatId; voice: string; caption: string }; result: MessageRef };
