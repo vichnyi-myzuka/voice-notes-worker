@@ -50,7 +50,8 @@ export type TgMethods = {
 		result: MessageRef;
 	};
 	createForumTopic: { params: { chat_id: ChatId; name: string }; result: { message_thread_id: number } };
-	editForumTopic: { params: { chat_id: ChatId; message_thread_id: number; name: string }; result: boolean };
+	editForumTopic: { params: { chat_id: ChatId; message_thread_id: number; name?: string; icon_custom_emoji_id?: string }; result: boolean };
+	getForumTopicIconStickers: { params: Record<string, never>; result: { emoji?: string; custom_emoji_id?: string }[] };
 	deleteForumTopic: { params: { chat_id: ChatId; message_thread_id: number }; result: boolean };
 	sendAudio: { params: { chat_id: ChatId; audio: string; title: string; caption: string }; result: MessageRef };
 	sendVoice: { params: { chat_id: ChatId; voice: string; caption: string }; result: MessageRef };
