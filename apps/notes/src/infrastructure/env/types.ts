@@ -5,7 +5,7 @@ export interface Env {
 	QUEUE: Queue<Job>;
 	// secrets
 	SECRET: string;
-	OPENAI_KEY?: string; // для gpt-6-luna; без нього одразу Gemma
+	OPENAI_API_KEY?: string; // для gpt-6-luna; без нього одразу Gemma
 	BOT_TOKEN: string;
 	CHAT_ID: string; // куди надсилати нотатки (канал)
 	TG_WEBHOOK_SECRET?: string; // секрет вебхука Telegram

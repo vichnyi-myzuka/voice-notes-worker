@@ -43,7 +43,7 @@ describe("processNote", () => {
 	it("публікує текстову нотатку й прибирає запис та стан", async () => {
 		vi.spyOn(console, "log").mockImplementation(() => {});
 		const calls = stubNetwork();
-		const env = fakeEnv({ OPENAI_KEY: "k", BOT_TOKEN: "t" });
+		const env = fakeEnv({ OPENAI_API_KEY: "k", BOT_TOKEN: "t" });
 		await textNote(env);
 
 		const ack = await runQueue(env, 1);
@@ -59,7 +59,7 @@ describe("processNote", () => {
 		vi.spyOn(console, "log").mockImplementation(() => {});
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		const calls = stubNetwork(1);
-		const env = fakeEnv({ OPENAI_KEY: "k", BOT_TOKEN: "t" });
+		const env = fakeEnv({ OPENAI_API_KEY: "k", BOT_TOKEN: "t" });
 		await textNote(env);
 
 		await expect(runQueue(env, 1)).rejects.toThrow("Telegram sendMessage 500");
@@ -79,7 +79,7 @@ describe("processEdit", () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		const edited = { ...summary, title: "Нова назва" };
 		const calls = stubNetwork(1, "editMessageText", edited);
-		const env = fakeEnv({ OPENAI_KEY: "k", BOT_TOKEN: "t" });
+		const env = fakeEnv({ OPENAI_API_KEY: "k", BOT_TOKEN: "t" });
 		const note = { transcript: "Оригінал.", edits: [], meta: summary, triage: null, messageId: 42, recordedTs: 1762700000000, text: true };
 		await env.BUCKET.put("notes/n1.json", JSON.stringify(note));
 		await textNote(env);

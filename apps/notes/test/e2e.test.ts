@@ -83,7 +83,7 @@ function stubServices() {
 function makeEnv() {
 	const jobs: { key: string; edit?: string }[] = [];
 	const env = {
-		...fakeEnv({ OPENAI_KEY: "k", BOT_TOKEN: "t", CHAT_ID, TG_WEBHOOK_SECRET: "wh", TODOIST_TOKEN: "td" }),
+		...fakeEnv({ OPENAI_API_KEY: "k", BOT_TOKEN: "t", CHAT_ID, TG_WEBHOOK_SECRET: "wh", TODOIST_TOKEN: "td" }),
 		QUEUE: { send: vi.fn(async (job: { key: string; edit?: string }) => void jobs.push(job)) } as unknown as Queue,
 	};
 	return { env, jobs };
