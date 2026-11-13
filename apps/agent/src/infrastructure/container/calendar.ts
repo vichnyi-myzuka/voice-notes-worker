@@ -34,8 +34,9 @@ export class Calendar {
 	private load = async () => (await this.storage.get<State>(KEY)) ?? {};
 	private save = (s: State) => this.storage.put(KEY, s);
 
+	// Вхід є й токен придатний: протермінований refresh-токен (7 днів у режимі Testing) вважається відсутнім входом, щоб бот одразу дав посилання.
 	async connected(): Promise<boolean> {
-		return !!(await this.load()).tokens;
+		return !!(await this.accessToken());
 	}
 
 	// Адреса входу в Google: запам'ятовує PKCE і state. Без client id/secret вхід неможливий.
