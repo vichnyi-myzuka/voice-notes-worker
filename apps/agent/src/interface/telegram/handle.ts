@@ -1,7 +1,7 @@
 import { DOWNLOAD_MAX_BYTES, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import { folderFor, type Agent } from "../../domain/agent";
 import type { Env } from "../../env";
-import { QUOTE_CLOSE, QUOTE_OPEN, removeMessage, sayTemporarily, sendChat } from "../../infrastructure/chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, createTopic, removeMessage, sayTemporarily, sendChat } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
 import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
 import { routeTask, type KnownRepo } from "./repo";
@@ -71,7 +71,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 		deps.defer(
 			handleMessage(bot, msg, inChannel, deps, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
 				console.error("telegram message failed:", err);
-				await tgSendMessage(bot, msg.chat.id, "⚠️ Не вдалося створити сесію, спробуй ще раз.").catch(() => {});
+				await tgSendMessage(bot, msg.chat.id, "⚠️ Не вдалося створити сесію, спробуй ще раз.", msg.message_thread_id).catch(() => {});
 			}),
 		);
 	}
@@ -137,10 +137,14 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const text = msg.text?.trim();
-	const replied = SESSION_URL.exec(textWithLinks(msg.reply_to_message));
-	const say = (t: string) => tgSendMessage(env, chat, t);
+	// Тема приватного чату: повідомлення в ній без reply теж належить сесії цієї теми (тема створюється під кожну нову сесію).
+	const threadId = inChannel ? undefined : msg.message_thread_id;
+	const viaReply = SESSION_URL.exec(textWithLinks(msg.reply_to_message));
+	const threadSession = !viaReply && threadId ? await agent.byThread(chat, threadId) : undefined;
+	const replied: [string, string] | undefined = viaReply ? [viaReply[0], viaReply[1]] : threadSession ? [agent.url(threadSession), threadSession] : undefined;
+	const say = (t: string) => tgSendMessage(env, chat, t, threadId);
 	const cleanups: Promise<unknown>[] = [];
-	const sayTemp: Say = (t) => sayTemporarily(env, chat, t, sleep, cleanups);
+	const sayTemp: Say = (t) => sayTemporarily(env, chat, t, sleep, cleanups, threadId);
 
 	if (!file && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
@@ -176,7 +180,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		if (!(await agent.link(id))) return void (await say("⚠️ Сесію не знайдено (можливо, вона з іншого агента)."));
 		const followUp = await transcribe(env, llm, file, text);
 		if (!followUp) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
-		await agent.resume(id, followUp, { chatId: chat, url });
+		await agent.resume(id, followUp, { chatId: chat, url, ...(threadId && { threadId }) });
 		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), стан видно в пості сесії (він оновлюється на місці) і за 👨‍💻.
 		await removeMessage(env, chat, msg.message_id);
 		return;
@@ -206,7 +210,12 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 
 	console.log(`telegram ${chat}/${msg.message_id}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo}`);
 	const url = agent.url(id);
-	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.
+	// Приватний чат: кожна нова сесія отримує свою тему, і далі розмова йде в ній. Теми не ввімкнено (чи збій) — усе в самому чаті.
+	// Повідомлення з уже наявної, не прив'язаної до сесії теми лишається в ній.
+	const created = !inChannel && !threadId ? await createTopic(env, chat, route.name ?? prompt.replace(/\s+/g, " ").slice(0, 60)) : undefined;
+	const thread = created ?? threadId;
+	// У каналі й у новій темі оригінал замінюється постом із задачею (як у нотатках), у приваті без теми оригінал лишається, тож задачу не дублюємо.
+	const moved = inChannel || !!created;
 	const clipped = prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt;
 	// Без прев'ю: інакше Telegram показує картку сторінки за Access.
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
@@ -215,15 +224,15 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : ""].filter(Boolean).join("\n");
 	const header = (
 		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
-		: `${inChannel ? `${clipped}\n\n` : ""}${where}`
+		: `${moved ? `${clipped}\n\n` : ""}${where}`
 	).trim();
-	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working");
+	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }) }, { chatId: chat, url, postId, header });
-	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст.
-	if (inChannel || file) await removeMessage(env, chat, msg.message_id);
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }) });
+	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
+	if (moved || file) await removeMessage(env, chat, msg.message_id);
 	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
-	if (silpo && !(await agent.silpoConnected().catch(() => true))) await say(`🛒 Сільпо ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/silpo/login`);
+	if (silpo && !(await agent.silpoConnected().catch(() => true))) await tgSendMessage(env, chat, `🛒 Сільпо ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/silpo/login`, thread);
 }
 
 // Голосове → текст через Whisper; текст як є. Порожній рядок — не розібрали.

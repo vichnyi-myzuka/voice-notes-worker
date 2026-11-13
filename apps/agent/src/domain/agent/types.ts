@@ -23,7 +23,8 @@ export type SessionReport = {
 // postId: пост сесії в чаті; поки сесія працює, на ньому стоїть 👨‍💻, після завершення реакцію знімає агент
 // header: текст пост-шапки (завдання, репозиторій): агент оновлює пост на місці (шапка + стан/підсумок), тому потрібен його вміст;
 // postId разом із header задається при першому спостереженні, далі пост сесії береться зі сховища
-export type WatchTarget = { chatId: number; url: string; postId?: number; header?: string };
+// threadId: тема приватного чату, створена під сесію (усі пости сесії йдуть у неї; тема видаляється разом із сесією)
+export type WatchTarget = { chatId: number; url: string; postId?: number; header?: string; threadId?: number };
 
 // Стан спільного контейнера для діагностики: що тримає його живим і коли був останній знімок.
 export type ComputerInfo = {
@@ -45,6 +46,7 @@ export type SnapshotInfo = { id: string; bytes: number; ms: number };
 
 // Прибрана сесія і її пост у чаті (щоб прибрати й пост).
 export type RemovedSession = { id: string; chatId?: number; postId?: number };
+// Тема сесії видаляється разом із нею (у Durable Object, див. remove), тож викликачу про неї дбати не треба.
 
 // Пост чату, який потім треба оновити (запит на схвалення деплою → його результат); живе у сховищі воркера.
 export type PostRef = { chatId: number | string; messageId: number; text: string };
@@ -94,6 +96,8 @@ export type Sessions = {
 	pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined>;
 	// Id сесії в OpenCode для прямого посилання на сесію; undefined, якщо такої сесії немає.
 	link(id: string): Promise<string | undefined>;
+	// Сесія, пост якої живе в темі threadId чату chatId (повідомлення в темі без reply — уточнення в неї); undefined, якщо такої немає.
+	byThread(chatId: number, threadId: number): Promise<string | undefined>;
 };
 
 // Спільний комп'ютер агента: веб-інтерфейс, діагностика, знімки диска й скидання контейнера.

@@ -12,8 +12,8 @@ export async function tg<M extends keyof TgMethods>(env: BotEnv, method: M, body
 	return (await res.json<{ result: TgMethods[M]["result"] }>()).result;
 }
 
-export async function tgSendMessage(env: BotEnv, chatId: string | number, text: string): Promise<void> {
-	await tg(env, "sendMessage", { chat_id: chatId, text });
+export async function tgSendMessage(env: BotEnv, chatId: string | number, text: string, threadId?: number): Promise<void> {
+	await tg(env, "sendMessage", { chat_id: chatId, text, ...(threadId && { message_thread_id: threadId }) });
 }
 
 // Надсилає нотатку в CHAT_ID і повертає message_id.

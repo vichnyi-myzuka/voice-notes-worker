@@ -13,6 +13,7 @@ describe("durableAgent", () => {
 			status: vi.fn(async () => "working" as const),
 			abort: vi.fn(async () => {}),
 			link: vi.fn(async () => "ses_oc1"),
+			byThread: vi.fn(async () => undefined),
 			pullTarget: vi.fn(async () => undefined),
 			setDeploy: vi.fn(async () => false),
 			setDeployByPost: vi.fn(async () => false),
