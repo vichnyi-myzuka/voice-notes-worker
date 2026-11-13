@@ -3,6 +3,32 @@ import { chatHtml, editChat, QUOTE_CLOSE, QUOTE_OPEN, sendChat } from "../src/in
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("chatHtml: таблиці", () => {
+	const table = "| Проєкт | ★ | Мова |\n|---|---|---|\n| a/b | 3513 | Python |\n| c/d | 12 | Go |";
+
+	it("широка таблиця стає картками: перша колонка жирним, решта «Колонка: значення»", () => {
+		expect(chatHtml(`Ось:\n\n${table}\n\nГотово.`)).toBe("Ось:\n\n<b>a/b</b>\n• ★: 3513\n• Мова: Python\n\n<b>c/d</b>\n• ★: 12\n• Мова: Go\n\nГотово.");
+	});
+
+	it("двоколонкова — рядки «• жирне — значення»; порожні клітинки й вирівнювання (:---:) не заважають", () => {
+		expect(chatHtml("| Ключ | Значення |\n| :--- | ---: |\n| a | 1 |\n| b |  |")).toBe("• <b>a</b> — 1\n• <b>b</b>");
+	});
+
+	it("клітинки зберігають код, посилання й екранування; `\\|` — символ, а не межа", () => {
+		expect(chatHtml("| Назва | Опис |\n|---|---|\n| **x** | `a<b` і [л](https://e.com) a\\|b |")).toBe('• <b>x</b> — <code>a&lt;b</code> і <a href="https://e.com">л</a> a|b');
+	});
+
+	it("таблиця без обрамлювальних `|` і впритул до тексту відділяється порожнім рядком", () => {
+		expect(chatHtml("Текст\nА | Б\n--|--\n1 | 2")).toBe("Текст\n\n• <b>1</b> — 2");
+	});
+
+	it("у блоці коду таблиця лишається як є; звичайний текст з `|` не чіпається", () => {
+		const code = "```\n| a | b |\n|---|---|\n| 1 | 2 |\n```";
+		expect(chatHtml(code)).toContain("|---|---|");
+		expect(chatHtml("a | b і c | d")).toBe("a | b і c | d");
+	});
+});
+
 describe("chatHtml", () => {
 	it("голі посилання стають клікабельними з коротким підписом; GitHub PR — owner/repo#N", () => {
 		expect(chatHtml("PR: https://github.com/me/app/pull/13.")).toBe('PR: <a href="https://github.com/me/app/pull/13">me/app#13</a>.');
