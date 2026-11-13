@@ -17,7 +17,8 @@ export async function askJson<T>(env: LlmEnv, req: JsonRequest, parse: (text: st
 			console.log(`${req.name} by ${model}`);
 			return result;
 		} catch (err) {
-			console.error(`${req.name}: ${model} failed:`, err, text);
+			// У Workers console.error з Error друкує лише стек, без тексту: додаємо повідомлення явно.
+			console.error(`${req.name}: ${model} failed: ${err instanceof Error ? err.message : String(err)}`, err, text);
 		}
 	}
 	return null;
