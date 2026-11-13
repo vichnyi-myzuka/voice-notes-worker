@@ -15,7 +15,7 @@ const TEMP_ID = 500; // message_id, який мок Telegram віддає слу
 const CHANNEL = -1001;
 
 // Telegram Bot API на підміненому fetch: запам'ятовує виклики методів і віддає файл для getFile.
-function setup(transcript = "Поправ README", pick?: (user: string) => { repo?: string; type?: string; name?: string } | null) {
+function setup(transcript = "Поправ README", pick?: (user: string) => { repo?: string; type?: string; name?: string; title?: string } | null) {
 	const agent = fakeAgent();
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
 	const topics = { id: 0 }; // id теми, яку «створює» Telegram; 0 — теми не підтримуються (як у чаті без режиму тем)
@@ -460,6 +460,14 @@ describe("вебхук Telegram", () => {
 			expect(sent.text).toContain("Поправ README"); // оригінал зникає, тож задача в пості
 			expect(t.calls.filter((c) => c.method === "deleteMessage").map((c) => c.body)).toEqual([{ chat_id: OWNER, message_id: 7 }]);
 			expect(t.watches[0].target).toMatchObject({ chatId: OWNER, postId: 1, threadId: THREAD });
+		});
+
+		it("тема отримує семантичну назву від моделі, яка запам'ятовується для подальших оновлень", async () => {
+			const t = setup("Поправ README", () => ({ repo: "none", type: "docs", name: "readme", title: " Виправлення README. " }));
+			t.topics.id = THREAD;
+			await t.send(msg({ text: "Поправ README" }));
+			expect(t.calls.find((c) => c.method === "createForumTopic")!.body).toMatchObject({ name: "Виправлення README" });
+			expect(t.watches[0].target).toMatchObject({ threadId: THREAD, title: "Виправлення README" });
 		});
 
 		it("теми не підтримуються (збій createForumTopic): усе як раніше, у самому чаті", async () => {
