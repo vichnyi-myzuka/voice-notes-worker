@@ -180,7 +180,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const transcript = await transcribe(env, llm, file, text);
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
-	const { task, model, sure: forcedSure, silpo: forcedSilpo } = parsePrefixes(transcript);
+	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo } = parsePrefixes(transcript);
 	const withRepo = REPO_PREFIX.exec(task);
 	const prompt = withRepo ? withRepo[2].trim() : task;
 	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
@@ -189,6 +189,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const sure = forcedSure || route.sure === true;
 	// Сільпо так само: явно («сільпо, …», «@silpo») або модель побачила, що треба дивитись, що власник купував у магазині.
 	const silpo = forcedSilpo || route.silpo === true;
+	// Задачі з даними Sure чи Сільпо прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
+	const model = requestedModel ?? (sure || silpo ? "haiku" : undefined);
 
 	const url = agent.url(id);
 	// У каналі оригінал замінюється постом із задачею (як у нотатках), у приваті оригінал лишається, тож задачу не дублюємо.

@@ -36,7 +36,15 @@ export class Forms {
 		if (!form) return undefined;
 		const w = await this.storage.get<Watch>(watchKey(id));
 		const sent = async (value: string | boolean | string[], label: string) => {
-			await replyForm(this.opencode(), form.ocId, form.formId, { [form.key]: value });
+			const answers = { ...form.answers, [form.key]: value };
+			const [step, ...rest] = form.next ?? [];
+			if (step) {
+				// Далі ще питання форми: показуємо наступне з його кнопками, агентові відповідь піде після останнього.
+				await this.storage.put(formKey(id), { ...form, ...step, selected: [], next: rest, answers } satisfies PendingForm);
+				if (w) await this.posts.show(w, step.text, false, { labels: step.choices.map((c) => c.label), multiple: step.multiple }).catch(() => {});
+				return `Відповідь: ${label}`;
+			}
+			await replyForm(this.opencode(), form.ocId, form.formId, answers);
 			await this.storage.delete(formKey(id));
 			if (w) await this.posts.show(w, `${WORKING} · відповідь: ${label}`).catch(() => {});
 			return `Відповідь: ${label}`;

@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { describeActivity, describeForm, formChoices } from "../src/infrastructure/container/activity";
+import { describeActivity, describeForm, formChoices, formSteps } from "../src/infrastructure/container/activity";
+
+describe("formSteps", () => {
+	const opt = [{ label: "A", value: "a" }, { label: "B", value: "b" }];
+	it("кілька полів з варіантами → крок на кожне з кнопками", () => {
+		const steps = formSteps({ title: "Т", fields: [{ key: "x", type: "string", title: "Де", options: opt }, { key: "y", type: "string", title: "Яка", options: opt }] });
+		expect(steps?.map((s) => s.key)).toEqual(["x", "y"]);
+		expect(steps?.[1].text).toContain("(2/2)");
+	});
+	it("поле без варіантів → без кроків (відповідь текстом)", () => {
+		expect(formSteps({ fields: [{ key: "x", type: "string", options: opt }, { key: "y", type: "string" }] })).toBeUndefined();
+	});
+});
 
 describe("describeActivity", () => {
 	it("файли: шлях без теки сесії", () => {

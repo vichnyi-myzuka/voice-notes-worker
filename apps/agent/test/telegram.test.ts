@@ -278,6 +278,18 @@ describe("вебхук Telegram", () => {
 			expect(JSON.stringify(a.calls.map((c) => c.body))).toContain("https://agent.example/silpo/login");
 		});
 
+		it("задачі зі Sure чи Сільпо за замовчуванням на haiku, явна модель сильніша", async () => {
+			const a = setup();
+			await a.send(msg({ text: "Шур, скільки я витратив у жовтні" }));
+			expect(a.sessions.get(SID)?.input.model).toBe("haiku");
+			const b = setup();
+			await b.send(msg({ text: "Сільпо, що я купував" }));
+			expect(b.sessions.get(SID)?.input.model).toBe("haiku");
+			const c = setup();
+			await c.send(msg({ text: "@opus шур, покажи бюджет" }));
+			expect(c.sessions.get(SID)?.input.model).toBe("opus");
+		});
+
 		it("явне «шур, задача» / «@sure задача» вмикає MCP Sure для сесії (разом із моделлю в будь-якому порядку)", async () => {
 			const a = setup();
 			await a.send(msg({ text: "Шур, скільки я витратив у жовтні" }));
