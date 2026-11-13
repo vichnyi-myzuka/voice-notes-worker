@@ -187,6 +187,23 @@ describe("вебхук GitHub", () => {
 			expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("🔀 PR #5 змерджено");
 		});
 
+		it("репозиторій із site: після мержу сесії дописується завдання опублікувати main; без site — ні", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			withPulls(s, [{ number: 5 }]);
+			await press(s);
+			expect(s.sessions.get("tg--1001-7")?.messages).toEqual(["p"]);
+
+			const withSite = { ...env, AGENT_REPOS: JSON.stringify([{ repo: "me/bot", about: "x", site: "my-game" }]) } as unknown as Env;
+			const query = { id: "q", from: { id: 42 }, message: { message_id: 77, chat: { id: -1001, type: "channel" }, text: "x" }, data: "merge:tg--1001-7" };
+			await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret" }, body: JSON.stringify({ callback_query: query }) }), withSite, { ...s.deps, llm: {} as never });
+			await Promise.all(s.pending.splice(0));
+			const messages = s.sessions.get("tg--1001-7")!.messages;
+			expect(messages).toHaveLength(2);
+			expect(messages[1]).toContain("publish --public <dir> my-game");
+			expect(messages[1]).toContain("#5");
+		});
+
 		it("відмова GitHub (перевірки не пройшли) показується в підказці, кнопка лишається", async () => {
 			const s = setup();
 			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });

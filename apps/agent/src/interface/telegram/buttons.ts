@@ -3,13 +3,14 @@ import type { Deploys, Sessions } from "../../domain/agent";
 import type { Env } from "../../env";
 import { parseCallback, removeMessage, removeOriginal, type SessionAction } from "../../infrastructure/chat";
 import { handleMergeButton, handleReviewButton } from "../github/review";
+import { parseRepos } from "./repo";
 
 type Query = NonNullable<TgUpdate["callback_query"]>;
 type Handler = (ctx: { bot: BotEnv; query: Query; env: Env; agent: Sessions & Deploys; id: string; chatId: number; messageId: number; answer: (text: string) => Promise<unknown> }) => Promise<void>;
 
 // Дії над сесією: кожна отримує вже перевірені чат, повідомлення й id сесії та сама відповідає спливаючою підказкою.
 const sessionActions: Record<Exclude<SessionAction, "ok">, Handler> = {
-	merge: ({ bot, query, env, agent, id }) => handleMergeButton(bot, query, env, agent, id),
+	merge: ({ bot, query, env, agent, id }) => handleMergeButton(bot, query, env, agent, id, (repo) => parseRepos(env.AGENT_REPOS).find((r) => r.repo === repo)?.site),
 	async del({ bot, agent, id, chatId, messageId, answer }) {
 		await agent.remove(id);
 		await removeMessage(bot, chatId, messageId);
