@@ -76,7 +76,9 @@ export type CalendarLogin = {
 };
 
 // Деплой PR сесії для її поста: text — рядки під станом сесії; repo+runId — чекає схвалення (кнопки); done — деплой завершено, сесію прибрано.
-export type DeployInfo = { text: string; repo?: string; runId?: number; done?: boolean };
+// stage — стадія деплою для іконки теми: чекає схвалення, змерджено/виконується, успіх, збій чи відхилення.
+export type DeployStage = "approval" | "deploying" | "deployed" | "failed";
+export type DeployInfo = { text: string; repo?: string; runId?: number; done?: boolean; stage?: DeployStage };
 
 // Сесії агента: поставити задачу, дописати уточнення, спитати стан, зупинити, видалити.
 export type Sessions = {

@@ -30,7 +30,7 @@ export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env
 		await mergePull(token, target.repo, number);
 		const message = query.message!;
 		// Пост одразу показує, що PR змерджено і йде деплой (кнопка «Змерджити» зникає); далі рядок замінить вебхук GitHub
-		const shown = await agent.setDeployByPost(message.message_id, { text: `🔀 PR #${number} змерджено, чекаємо на деплой` }, true).catch(() => false);
+		const shown = await agent.setDeployByPost(message.message_id, { text: `🔀 PR #${number} змерджено, чекаємо на деплой`, stage: "deploying" }, true).catch(() => false);
 		if (!shown) await tg(bot, "editMessageReplyMarkup", { chat_id: message.chat.id, message_id: message.message_id, reply_markup: { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: callback.del(id) }]] } }).catch((err) => console.error("edit failed:", err));
 		await answer(`🔀 PR #${number} змерджено`);
 		// Репозиторій-сайт: агент сам оновлює публічний сайт з main і прибирає прев'ю (збій тут не скасовує мерж)
@@ -63,7 +63,8 @@ export async function handleReviewButton(bot: BotEnv, query: TgCallbackQuery, en
 	const verdict = done === 0 ? "ℹ️ Уже оброблено (або немає права)" : approve ? "✅ Схвалено" : "❌ Відхилено";
 	// Пост сесії показує деплой: оновлюємо його рядок (форматування й кнопки сесії лишаються), а не весь текст
 	const line = done === 0 ? "ℹ️ Деплой уже оброблено (або немає права)" : approve ? "✅ Деплой схвалено, виконується" : "❌ Деплой відхилено";
-	if (await agent.setDeployByPost(message.message_id, { text: line }).catch(() => false)) return void (await answer(verdict));
+	const stage = done === 0 ? undefined : approve ? "deploying" : "failed";
+	if (await agent.setDeployByPost(message.message_id, { text: line, stage }).catch(() => false)) return void (await answer(verdict));
 	// editMessageText без reply_markup прибирає кнопки
 	await tg(bot, "editMessageText", { chat_id: message.chat.id, message_id: message.message_id, text: `${message.text ?? ""}\n\n${verdict}`, link_preview_options: { is_disabled: true } }).catch((err) => console.error("edit failed:", err));
 	await answer(verdict);
