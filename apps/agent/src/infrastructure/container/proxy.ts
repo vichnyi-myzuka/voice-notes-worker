@@ -21,6 +21,9 @@ export class WebProxy {
 
 	// onPrompted: повідомлення з веб-інтерфейсу в сесію OpenCode (id сесії) вдалося — за нею треба почати стежити.
 	async handle(request: Request, onPrompted: (ocId: string) => Promise<void>): Promise<Response> {
+		// Потік подій забутої вкладки не будить сплячий контейнер (204: EventSource не перепідключається); будить звичайний запит сторінки.
+		const sse = (request.headers.get("accept") ?? "").includes("text/event-stream");
+		if (sse && !this.computer.running) return new Response(null, { status: 204 });
 		await this.computer.ensureRunning();
 		// Зміни з веб-інтерфейсу (повідомлення, правки) теж треба зберегти; читання й SSE — ні.
 		if (!["GET", "HEAD"].includes(request.method)) await this.computer.markActive();
@@ -35,7 +38,7 @@ export class WebProxy {
 		headers.delete("origin");
 		const upstream = new Request(`http://container${url.pathname}${url.search}`, new Request(request, { headers })) as unknown as Request<unknown, CfProperties>;
 		const port = this.ctx.container!.getTcpPort(OPENCODE_PORT);
-		if (!(request.headers.get("accept") ?? "").includes("text/event-stream")) {
+		if (!sse) {
 			const res = await port.fetch(upstream);
 			if (promptedOc && res.ok) await onPrompted(promptedOc).catch((err) => console.error("watch of web prompt failed:", err));
 			return res;

@@ -66,8 +66,11 @@ export class AgentSession extends DurableObject<Env> {
 	async alarm(): Promise<void> {
 		if (await this.runJobs()) return void (await this.ctx.storage.setAlarm(Date.now() + JOB_RETRY_MS));
 		// Поки хтось працює чи за кимось стежать, опитуємо часто (підсумки, ліміти) й знімок відкладаємо.
-		if (await this.tick()) return void (await this.ctx.storage.setAlarm(Date.now() + WATCH_INTERVAL_MS));
-		await this.computer.snapshotIfChanged();
+		if (await this.tick()) {
+			await this.computer.markUsed();
+			return void (await this.ctx.storage.setAlarm(Date.now() + WATCH_INTERVAL_MS));
+		}
+		await this.computer.settle();
 	}
 
 	// Один оберт опитування: зупиняє сесії, що перевищили ліміти, і повідомляє в чат про завершені. Повертає true, поки є що

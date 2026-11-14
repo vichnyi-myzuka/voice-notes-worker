@@ -1240,12 +1240,38 @@ describe("AgentSession", () => {
 			return t;
 		}
 
-		it("alarm планується після активності, але не після знімка (інакше контейнер не засне)", async () => {
-			const { session, alarm } = await finishedTask();
-			expect(alarm.at).not.toBeNull();
+		it("після знімка alarm перепланується на момент зупинки через простій, а тоді контейнер зупиняється й більше не будить alarm", async () => {
+			const { session, alarm, container } = await finishedTask({ AGENT_IDLE_STOP_MS: "60000" });
 			alarm.at = null;
 			await session.alarm();
-			expect(alarm.at).toBeNull();
+			expect(container.running).toBe(true);
+			expect(alarm.at).toBeGreaterThan(Date.now() + 30_000);
+			expect(alarm.at).toBeLessThanOrEqual(Date.now() + 60_000);
+			vi.useFakeTimers({ toFake: ["Date"] });
+			try {
+				vi.setSystemTime(Date.now() + 61_000);
+				alarm.at = null;
+				await session.alarm();
+				expect(container.running).toBe(false);
+				expect(alarm.at).toBeNull();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it("простій не зупиняє контейнер, поки агент працює", async () => {
+			const { session, alarm, container, opencode } = setup({ AGENT_IDLE_STOP_MS: "1000" });
+			await session.start(ID, { prompt: "Задача" });
+			expect(opencode.busy.size).toBe(1);
+			vi.useFakeTimers({ toFake: ["Date"] });
+			try {
+				vi.setSystemTime(Date.now() + 3_600_000);
+				alarm.at = null;
+				await session.alarm();
+				expect(container.running).toBe(true);
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 
 		it("alarm знімає диск, коли агент вільний, і зберігає handle разом з образом", async () => {

@@ -8,6 +8,9 @@ export const READY_ATTEMPTS = 150;
 export const STREAM_MAX_MS = 10 * 60 * 1000;
 // Знімок диска робимо не частіше й лише коли була активність; поки контейнер працює, alarm перевіряє це.
 export const DEFAULT_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+// Контейнер зупиняємо самі, коли агенти вільні й нічого не змінювалось стільки часу. Таймаут простою Cloudflare для цього
+// не годиться: його продовжує кожен запит, тож забута вкладка, термінал чи опитування тримали б контейнер добами.
+export const DEFAULT_IDLE_STOP_MS = 15 * 60 * 1000;
 
 // Поки сесія працює чи за нею стежать, alarm спрацьовує частіше: підсумок у чаті й ліміти витрат.
 export const WATCH_INTERVAL_MS = 15 * 1000;
@@ -39,6 +42,7 @@ export function positiveInt(value: string | undefined): number | undefined {
 
 export const inactivityMs = (env: Env): number => positiveInt(env.AGENT_INACTIVITY_MS) ?? DEFAULT_INACTIVITY_MS;
 export const snapshotIntervalMs = (env: Env): number => positiveInt(env.AGENT_SNAPSHOT_INTERVAL_MS) ?? DEFAULT_SNAPSHOT_INTERVAL_MS;
+export const idleStopMs = (env: Env): number => positiveInt(env.AGENT_IDLE_STOP_MS) ?? DEFAULT_IDLE_STOP_MS;
 export const progressMs = (env: Env): number => positiveInt(env.AGENT_PROGRESS_MS) ?? PROGRESS_INTERVAL_MS;
 export const maxCostUsd = (env: Env): number => positiveNumber(env.AGENT_MAX_COST_USD) ?? DEFAULT_MAX_COST_USD;
 export const maxTokens = (env: Env): number => positiveInt(env.AGENT_MAX_TOKENS) ?? DEFAULT_MAX_TOKENS;
