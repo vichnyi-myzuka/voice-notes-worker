@@ -23,8 +23,10 @@ import { Watcher } from "./watcher";
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
 // історично: перейменування потребувало б міграції Durable Object.
 //
-// Тут лише сесії: завдання, стеження за ними, події OpenCode і підсумки. Решту робить окремий модуль: Computer (контейнер і знімки),
-// Posts (пост у чаті й деплой), Forms (питання агента), WebProxy (веб-інтерфейс). Публічні методи — RPC-вхід порту Agent.
+// Сам клас — фасад: публічні методи — RPC-вхід порту Agent, alarm і складання модулів; тут же старт, уточнення й видалення сесії.
+// Решту роблять модулі поруч: SessionStore (записи сховища), Jobs (черга прийнятих завдань), Watcher (стеження до підсумку),
+// Progress (опис дії, питання, іконка й назва теми), Limits (ліміти Claude), Mcp (сервіси власника), Computer (контейнер і знімки),
+// Posts (пост у чаті й деплой), Forms (питання агента), WebProxy (веб-інтерфейс).
 export class AgentSession extends DurableObject<Env> {
 	private readonly computer: Computer;
 	private readonly posts: Posts;
