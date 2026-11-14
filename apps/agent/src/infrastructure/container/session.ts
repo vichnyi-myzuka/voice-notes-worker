@@ -9,7 +9,7 @@ import { Computer } from "./computer";
 import { Mcp, requestedMcp } from "./mcp";
 import { settedRepo } from "./repo";
 import { stamp, stopwatch } from "../../timing";
-import { JOB_ATTEMPTS, JOB_RETRY_MS, JOB_STALE_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
+import { JOB_RETRY_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { Forms } from "./forms";
 import { extractImages, loadImages, sendImages, type OutImage } from "./images";
@@ -19,8 +19,9 @@ import { DEPLOY_ICON, Posts } from "./posts";
 import { retitle } from "./title";
 import { isLimitError } from "../quota";
 import { WebProxy } from "./proxy";
-import { FORM_PREFIX, deployKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
+import { FORM_PREFIX, deployKey, type PendingForm, type Tracked, type Watch } from "./state";
 import { SessionStore } from "./store";
+import { Jobs } from "./jobs";
 import { Limits } from "./limits";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
@@ -37,6 +38,7 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly limits: Limits;
 	private readonly proxy: WebProxy;
 	private readonly mcp: Mcp;
+	private readonly jobs: Jobs;
 	// Підписка на події OpenCode, поки за якоюсь сесією стежать (див. listen).
 	private events: AbortController | undefined;
 	// Назви інструментів за id виклику й час останнього оновлення поста сесії.
@@ -57,6 +59,12 @@ export class AgentSession extends DurableObject<Env> {
 		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, (id, tracked, text) => this.tell(id, tracked, text));
+		this.jobs = new Jobs(ctx, env, this.store, this.posts, {
+			running: () => this.computer.running,
+			start: (id, input) => this.start(id, input),
+			followUp: (id, text, images) => this.followUp(id, text, images),
+			watch: (id, target) => this.watch(id, target),
+		});
 		this.computer.applyInactivityTimeout();
 	}
 
@@ -77,7 +85,7 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	private async work(): Promise<void> {
-		if (await this.runJobs()) return void (await this.computer.alarmNoLater(Date.now() + JOB_RETRY_MS));
+		if (await this.jobs.run()) return void (await this.computer.alarmNoLater(Date.now() + JOB_RETRY_MS));
 		// Поки хтось працює чи за кимось стежать, опитуємо часто (підсумки, ліміти) й знімок відкладаємо.
 		if (await this.tick()) {
 			await this.computer.markUsed();
@@ -389,94 +397,13 @@ export class AgentSession extends DurableObject<Env> {
 		return (await this.store.session(id))?.ocId ?? ((await this.store.job(id)) ? "pending" : undefined);
 	}
 
-	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
-	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
-		if (await this.link(id)) return;
-		await this.enqueue({ id, input, target, attempts: 0 });
+	// Приймає нову сесію чи уточнення в чергу завдань (див. Jobs).
+	begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
+		return this.jobs.begin(id, input, target);
 	}
 
-	// Те саме для уточнення; контейнер може спати.
-	async resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
-		// Завдання одне на сесію (ключ job:<id>): уточнення, що прийшло, поки попереднє ще не почало виконуватись, не затирає його, а
-		// додається до нього (інакше текст чи фото губиться, а в темі лишається «Працює» без відповіді).
-		const queued = await this.store.job(id);
-		if (queued && "text" in queued && !queued.startedAt) {
-			const merged = [...(queued.images ?? []), ...(images ?? [])];
-			await this.store.saveJob({ ...queued, text: `${queued.text}\n\n${text}`, target, ...(merged.length && { images: merged }) } satisfies Job);
-			await this.ctx.storage.setAlarm(Date.now());
-			return;
-		}
-		// Старт ще не почався: уточнення дописується до задачі старту (інакше нове завдання з тим самим ключем стерло б сам старт).
-		if (queued && "input" in queued && !queued.startedAt) {
-			const merged = [...(queued.input.images ?? []), ...(images ?? [])];
-			await this.store.saveJob({ ...queued, input: { ...queued.input, prompt: `${queued.input.prompt}\n\n${text}`, ...(merged.length && { images: merged }) } } satisfies Job);
-			await this.ctx.storage.setAlarm(Date.now());
-			return;
-		}
-		await this.enqueue({ id, text, target, attempts: 0, ...(images?.length && { images }) });
-	}
-
-	private async enqueue(job: Job): Promise<void> {
-		await this.store.saveJob({ ...job, queuedAt: Date.now() });
-		await this.ctx.storage.setAlarm(Date.now());
-	}
-
-	// Завдання, що виконуються в цьому екземплярі Durable Object (після вивантаження набір порожній, і alarm підхоплює їх знову).
-	private readonly activeJobs = new Set<string>();
-
-	// Запускає прийняті завдання у фоні й одразу повертається: alarm не чекає довгого старту (clone, контейнер), тож нове
-	// повідомлення не стоїть за ним. Завдання з `startedAt` вважається виконуваним, доки не мине JOB_STALE_MS (страховка від
-	// вивантаження). Клони йдуть по черзі в computer.serial, старт контейнера спільний (ensureRunning). Повертає true, поки є завдання.
-	private async runJobs(): Promise<boolean> {
-		for (const job of await this.store.jobs()) {
-			if (this.activeJobs.has(job.id)) continue;
-			if (job.startedAt && Date.now() - job.startedAt < JOB_STALE_MS) continue;
-			const started: Job = { ...job, startedAt: Date.now() };
-			await this.store.saveJob(started);
-			this.activeJobs.add(job.id);
-			this.ctx.waitUntil(this.runJob(started).catch((err) => console.error(`job ${job.id} crashed:`, err)).finally(() => this.activeJobs.delete(job.id)));
-		}
-		return (await this.store.jobs()).length > 0;
-	}
-
-	private async runJob(job: Job): Promise<void> {
-		// Скільки завдання чекало на alarm і попередні завдання: від прийняття (begin/resume) до початку виконання.
-		if (job.queuedAt && job.attempts === 0) console.log(`latency job ${job.id}: queued=${Date.now() - job.queuedAt}ms accepted=${stamp(job.queuedAt)} at=${stamp()} kind=${"input" in job ? "new" : "follow-up"} cold=${!this.computer.running}`);
-		try {
-			if ("input" in job) {
-				if (!this.computer.running) await this.posts.show(job.target, "⏳ Запускаю контейнер").catch(() => {});
-				await this.start(job.id, job.input);
-			} else {
-				await this.followUp(job.id, job.text, job.images);
-			}
-		} catch (err) {
-			console.error(`job ${job.id} failed (attempt ${job.attempts + 1}):`, err);
-			if (!(await this.isCurrent(job))) return; // за цей час у чергу став новіший запис: його не чіпаємо
-			if (job.attempts + 1 < JOB_ATTEMPTS) {
-				const { startedAt: _, ...rest } = job;
-				await this.store.saveJob({ ...rest, attempts: job.attempts + 1 }); // знову готове до запуску наступним alarm
-				return;
-			}
-			await this.store.dropJob(job.id);
-			await this.reportFailure(job);
-			return;
-		}
-		if (await this.isCurrent(job)) await this.store.dropJob(job.id); // запущено: далі повтор уточнення чи старту не потрібен
-		await this.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
-		if ("input" in job) await this.posts.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
-	}
-
-	// Чи запис черги досі той самий, що виконувався (уточнення, яке прийшло під час виконання, замінює запис новим queuedAt).
-	private async isCurrent(job: Job): Promise<boolean> {
-		const stored = await this.store.job(job.id);
-		return !stored || stored.queuedAt === job.queuedAt;
-	}
-
-	private async reportFailure(job: Job): Promise<void> {
-		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
-		if (!this.env.BOT_TOKEN) return;
-		if (job.target.postId && (await this.posts.show(job.target, text, true))) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
+	resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
+		return this.jobs.resume(id, text, target, images);
 	}
 
 	// Статус не будить контейнер, що спить.
@@ -585,7 +512,7 @@ export class AgentSession extends DurableObject<Env> {
 	// Повідомлення агентові від воркера: як уточнення від власника (job: сесія прокидається, а пост знову показує «Працює»).
 	private async tell(id: string, tracked: Tracked, text: string): Promise<void> {
 		const post = tracked.post;
-		if (post?.chatId && post.url) await this.enqueue({ id, text, target: { chatId: post.chatId, url: post.url, ...(post.threadId && { threadId: post.threadId }) }, attempts: 0 });
+		if (post?.chatId && post.url) await this.jobs.enqueue({ id, text, target: { chatId: post.chatId, url: post.url, ...(post.threadId && { threadId: post.threadId }) }, attempts: 0 });
 		else await this.followUp(id, text);
 	}
 
