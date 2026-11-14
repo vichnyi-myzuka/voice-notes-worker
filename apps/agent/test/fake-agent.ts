@@ -15,6 +15,7 @@ export function fakeAgent(origin = "https://agent.example") {
 	const watches: { id: string; target: WatchTarget }[] = [];
 	const choices = new Map<string, string[]>(); // id сесії → підписи варіантів поточного питання (тест задає)
 	const refs = new Map<string, PostRef>();
+	const keyViews: string[] = [];
 	const deploys: { repo?: string; folder?: string; postId?: number; deploy: DeployInfo }[] = [];
 	const silpoCodes: string[] = [];
 	const calendarCodes: string[] = [];
@@ -122,6 +123,12 @@ export function fakeAgent(origin = "https://agent.example") {
 			deploys.push({ postId, deploy });
 			return postId === 77;
 		},
+		async keyView(id, view) {
+			keyViews.push(`${id}:${view}`);
+		},
+		async pendingReview() {
+			return undefined;
+		},
 		async saveRef(key, ref) {
 			refs.set(key, ref);
 		},
@@ -184,5 +191,5 @@ export function fakeAgent(origin = "https://agent.example") {
 			return { id: `snap${snapshots.length}`, bytes: 1, ms: 2 };
 		},
 	};
-	return { agent, mcpAnswers, deploys, choices, sessions, served, snapshots, resets, watches, failSnapshot: (message: string) => void (snapshotError = message) };
+	return { agent, mcpAnswers, keyViews, deploys, choices, sessions, served, snapshots, resets, watches, failSnapshot: (message: string) => void (snapshotError = message) };
 }

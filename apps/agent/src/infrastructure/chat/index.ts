@@ -4,6 +4,7 @@ import type { McpName } from "../../domain/agent";
 import { callback } from "./callback";
 
 export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
+export { KEYS, NEW_SESSION, keyAction, sendNewSessionKeyboard, showKeys, threadUi, type KeySet, type KeyState, type KeyView, type SessionKey, type ThreadUi } from "./thread-ui";
 export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
 export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
 
@@ -13,7 +14,8 @@ export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, 
 // "mergeable": сесія завершена, а в її гілки є відкритий PR: додається «Змерджити» (`merge:<id>`).
 // "dismiss": деплой завершено, сесію прибрано: лишається лише «Видалити» (просте видалення повідомлення, `dismiss`).
 // "retry": сесія впала на лімітах Claude: додається «Повторити» (`retry:<id>`), що просить агента продовжити.
-export type Buttons = "working" | "done" | "mergeable" | "dismiss" | "retry";
+// "none": без кнопок керування (режим THREAD_UI=messages: ними керує «Меню сесії»), лишаються лише відповіді на питання й схвалення.
+export type Buttons = "working" | "done" | "mergeable" | "dismiss" | "retry" | "none";
 // Запит на схвалення деплою в пості сесії: кнопки «Схвалити/Відхилити» (`appr|rej:<repo>:<id запуску>`, обробляє interface/github/review).
 export type Review = { repo: string; runId: number };
 // Кнопки-відповіді на питання агента: підписи (для множинного вибору з позначками) й режим: одразу відповісти чи перемикати + «Підтвердити».
@@ -22,7 +24,7 @@ const SESSION_ID = /\/s\/(tg-[\w-]+)/;
 function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, answers?: Answers, review?: Review): TgInlineKeyboard | undefined {
 	const id = sessionUrl && buttons ? SESSION_ID.exec(sessionUrl)?.[1] : undefined;
 	if (!id) return undefined;
-	const row = [
+	const row = buttons === "none" ? [] : [
 		...(buttons === "working" ? [{ text: "⏹ Стоп", callback_data: callback.stop(id) }] : []),
 		...(buttons === "retry" ? [{ text: "🔄 Повторити", callback_data: callback.retry(id) }] : []),
 		...(buttons === "mergeable" ? [{ text: "🔀 Змерджити", callback_data: callback.merge(id) }] : []),
@@ -32,7 +34,8 @@ function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, 
 	// Варіанти відповіді на питання агента: по кнопці в рядку над службовими (callback_data `ans:<id>:<номер варіанта>`)
 	const choices = (answers?.labels ?? []).map((label, i) => [{ text: label.length > 32 ? `${label.slice(0, 31)}…` : label, callback_data: answers?.multiple ? callback.toggle(id, i) : callback.answer(id, i) }]);
 	const confirm = answers?.multiple ? [[{ text: "✅ Підтвердити", callback_data: callback.confirm(id) }]] : [];
-	return { inline_keyboard: [...choices, ...confirm, ...approval, row] };
+	const rows = [...choices, ...confirm, ...approval, ...(row.length > 0 ? [row] : [])];
+	return rows.length > 0 ? { inline_keyboard: rows } : undefined;
 }
 
 // Текст повідомлення в двох видах: HTML і простий (запасний, якщо Telegram відхилить розмітку). Внизу, за потреби,

@@ -1069,6 +1069,85 @@ describe("AgentSession", () => {
 				expect(edit.text).toBe(`🗣 ${"я".repeat(397)}…\n\n✅ Готово\n\nГотово: <b>ok</b>\n\n${link}`);
 			});
 
+			it("THREAD_UI=messages: схвалення деплою — клавіші внизу теми, а не кнопки під постом; pendingReview віддає запит", async () => {
+				const t = setup({ BOT_TOKEN: "bot", THREAD_UI: "messages" });
+				const SID = "tg-1-1";
+				await t.session.start(SID, { prompt: "Задача", repo: "me/app", name: "card" });
+				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 });
+				expect(await t.session.pendingReview(SID)).toBeUndefined();
+				sent.length = 0;
+				await t.session.setDeploy("me/app", "card-1", { text: "🚀 Деплой чекає схвалення", repo: "me/app", runId: 9, stage: "approval" });
+				expect(JSON.stringify(edits().at(-1))).not.toContain("appr:");
+				const keyboard = sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup) as unknown as { reply_markup: { keyboard: { text: string }[][] } }[];
+				expect(keyboard.at(-1)!.reply_markup.keyboard[0].map((b) => b.text)).toEqual(["✅ Схвалити", "❌ Відхилити", "🗑 Видалити"]);
+				expect(await t.session.pendingReview(SID)).toEqual({ postId: 77, repo: "me/app", runId: 9 });
+				// стан деплою ще й окремим повідомленням унизу теми (повтор того самого тексту нового не шле)
+				const below = () => sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {})) && String(c.text).includes("Деплой чекає схвалення"));
+				expect(below()).toHaveLength(1);
+				await t.session.setDeploy("me/app", "card-1", { text: "🚀 Деплой чекає схвалення", repo: "me/app", runId: 9, stage: "approval" });
+				expect(below()).toHaveLength(1);
+			});
+
+			it("THREAD_UI=messages: уточнення відкриває нове повідомлення зі станом, воно оновлюється до підсумку; початковий пост не чіпається", async () => {
+				const t = setup({ BOT_TOKEN: "bot", THREAD_UI: "messages" });
+				const SID = "tg-1-1";
+				await t.session.start(SID, { prompt: "Задача" });
+				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 });
+				sent.length = 0;
+				await t.session.watch(SID, { chatId: 5, url: "https://agent.example/s/tg-1-1" }); // уточнення: без postId
+				const fresh = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {}))) as unknown as { message_thread_id: number; text: string }[];
+				expect(fresh).toHaveLength(1);
+				expect(fresh[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Працює") });
+				expect(edits().filter((e) => e.message_id === 77)).toEqual([]); // початковий пост не редагується
+				t.opencode.lastText = "Друга відповідь";
+				await t.session.alarm();
+				t.opencode.busy.clear();
+				t.opencode.info[ocId] = { outcome: "succeeded" };
+				await t.session.alarm();
+				expect(edits().some((e) => e.message_id !== 77 && e.text.includes("✅ Готово"))).toBe(true);
+				expect(edits().some((e) => e.message_id === 77)).toBe(false);
+			});
+
+			it("THREAD_UI=messages: «⚙️ Команди» показує загальні команди, «← Назад» повертає дії сесії; зміна стану теж повертає до дій", async () => {
+				const t = setup({ BOT_TOKEN: "bot", THREAD_UI: "messages" });
+				const SID = "tg-1-1";
+				await t.session.start(SID, { prompt: "Задача" });
+				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 });
+				await t.session.begin("tg-2-2", { prompt: "Інша" }, { chatId: 5, url: "u", threadId: 9 }); // стан «працює» у темі 9
+				const rows = () => (sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup).at(-1) as unknown as { reply_markup: { keyboard: { text: string }[][] } }).reply_markup.keyboard.map((r) => r.map((b) => b.text));
+				expect(rows()).toEqual([["⏹ Стоп", "🗑 Видалити"], ["⚙️ Команди"]]);
+				await t.session.keyView(SID, "commands");
+				expect(rows()).toEqual([["📊 Ліміти", "ℹ️ Стан"], ["🔄 Оновити контейнер"], ["← Назад"]]);
+				await t.session.keyView(SID, "session");
+				expect(rows()).toEqual([["⏹ Стоп", "🗑 Видалити"], ["⚙️ Команди"]]);
+			});
+
+			it("THREAD_UI=messages: у темі пост без кнопок керування лишається станом, а підсумок іде окремим повідомленням; без прапорця — як раніше", async () => {
+				const finish = async (extra: Record<string, string>) => {
+					sent.length = 0;
+					const t = setup({ BOT_TOKEN: "bot", ...extra });
+					await t.session.start(ID, { prompt: "Задача" });
+					await t.session.watch(ID, { ...POST, threadId: 9 });
+					t.opencode.lastText = "Готово: **ok**";
+					await t.session.alarm();
+					t.opencode.busy.clear();
+					t.opencode.info[ocId] = { outcome: "succeeded" };
+					await t.session.alarm();
+				};
+				await finish({});
+				expect(sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c))).toEqual([]); // classic: нових повідомлень немає
+				await finish({ THREAD_UI: "messages" });
+				expect(edits().at(-1)!.text).toContain("✅ Готово");
+				expect(edits().at(-1)!.text).not.toContain("Готово: ok");
+				expect(JSON.stringify((edits().at(-1) as { reply_markup?: unknown }).reply_markup ?? null)).not.toContain("del:");
+				const summary = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {}))) as unknown as { message_thread_id: number; text: string }[];
+				expect(summary).toHaveLength(1);
+				expect(summary[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Готово: <b>ok</b>") });
+				// клавіші внизу теми за станом: після завершення лише 🗑 Видалити (⏹ Стоп показує begin/resume)
+				const keyboards = sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup) as unknown as { reply_markup: { keyboard: { text: string }[][] } }[];
+				expect(keyboards.map((k) => k.reply_markup.keyboard[0].map((b) => b.text))).toEqual([["🗑 Видалити"]]);
+			});
+
 			it("деплой PR сесії дописується в її пост: запит на схвалення з кнопками, потім результат лише з «Видалити»", async () => {
 				const t = setup({ BOT_TOKEN: "bot" });
 				const SID = "tg-1-1";

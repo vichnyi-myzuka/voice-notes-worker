@@ -2,8 +2,9 @@ import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendM
 import { MCP_WRITES, type Agent, type ImageRef, type McpName } from "../../domain/agent";
 import type { Env } from "../../env";
 import { stamp, stopwatch } from "../../timing";
-import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
+import { NEW_SESSION, keyAction, removeMessage, sayTemporarily, sendNewSessionKeyboard, threadUi } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
+import { handleKey, handleNewSession } from "./keys";
 import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
 import { askRepo, proceed, type Pending } from "./launch";
 import { routeTask, type KnownRepo } from "./repo";
@@ -13,7 +14,7 @@ export const TELEGRAM_PATH = "/telegram";
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
 // repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. repo.ts); без них репозиторій задає лише префікс.
 // syncCommands: виставляти меню `/`-команд (див. syncCommands); у тестах вимкнено.
-export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean };
+export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean; keepFollowUps?: boolean; topicStart?: boolean };
 
 // Меню `/`-команд у приваті. Єдине місце, де вони перелічені: додаєш команду в обробник — додай і сюди.
 export const COMMANDS = [
@@ -70,9 +71,21 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	console.log(
 		`telegram message ${msg.chat.id}/${msg.message_id}: chat=${msg.chat.type} from=${msg.from?.id ?? "-"} kind=${msg.voice ? "voice" : msg.audio ? "audio" : msg.photo ? "photo" : msg.document ? "document" : msg.text ? "text" : "other"} reply=${msg.reply_to_message?.message_id ?? "-"} route=${inChannel ? "channel" : inPrivate ? "private" : "DROPPED"}${!inChannel && !inPrivate ? ` (CHAT_ID set: ${!!env.CHAT_ID}, TG_OWNER_ID set: ${!!env.TG_OWNER_ID})` : ""}`,
 	);
+	// Клавіші внизу теми (режим THREAD_UI=messages): «⏹ Стоп», «🔀 Змерджити»… надходять текстом у тему сесії.
+	const key = inPrivate && msg.message_thread_id && !msg.voice && !msg.audio ? keyAction(msg.text) : undefined;
+	if (key) {
+		deps.defer(handleKey(bot, env, msg, key, deps).catch((err) => console.error("telegram key failed:", err)));
+		return new Response("ok");
+	}
+	const ui = inPrivate ? await threadUi(env, true) : undefined;
+	// Кнопка «➕ Нова сесія» у головному чаті (режим messages): створює порожню тему під сесію.
+	if (inPrivate && !msg.message_thread_id && msg.text?.trim() === NEW_SESSION) {
+		deps.defer(handleNewSession(bot, msg).catch((err) => console.error("new session failed:", err)));
+		return new Response("ok");
+	}
 	if (inChannel || inPrivate) {
 		deps.defer(
-			handleMessage(bot, msg, inChannel, deps, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
+			handleMessage(bot, msg, inChannel, { ...deps, keepFollowUps: !!ui?.keepFollowUps && !!msg.message_thread_id, topicStart: !!ui?.topicOnlyStart }, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
 				console.error("telegram message failed:", err);
 				await tgSendMessage(bot, msg.chat.id, "⚠️ Не вдалося створити сесію, спробуй ще раз.", msg.message_thread_id).catch(() => {});
 			}),
@@ -155,7 +168,7 @@ function parsePrefixes(transcript: string): { task: string; model?: string; sure
 }
 
 // spoken — уже розшифроване голосове (запис із Shortcut): задача йде як голосова, але Whisper не викликається.
-async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string, spoken?: string): Promise<void> {
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], keepFollowUps = false, topicStart = false, sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string, spoken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const voiced = !!file || spoken !== undefined;
@@ -176,7 +189,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	if (!voiced && !image && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
 		console.log(`telegram ${chat}/${msg.message_id}: command=${command ?? "(empty)"} reply-to-session=${replied?.[1] ?? "-"}`);
-		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /model opus змінює модель сесії (початок тексту «@opus задача» задає модель одразу), /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер з поточного образу.");
+		if (command === "/start" && topicStart) await sendNewSessionKeyboard(env, chat, `Сесії починаються в окремих темах: натисни «${NEW_SESSION}» внизу й пиши задачу там. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /model opus змінює модель сесії, /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер.`);
+		else if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /model opus змінює модель сесії (початок тексту «@opus задача» задає модель одразу), /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер з поточного образу.");
 		else if (command === "/update") await updateContainer(sayTemp, agent, /\bforce\b/i.test(text ?? ""));
 		else if (command === "/quota") await sayTemp(await quotaText(claudeToken));
 		else if (command === "/model") {
@@ -192,6 +206,12 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		// Команда виконана: саму команду з чату прибираємо (відповідь бота лишається), як і прийняті уточнення.
 		if (command === "/status" || command === "/stop" || command === "/delete" || command === "/update" || command === "/quota" || command === "/model") await removeMessage(env, chat, msg.message_id);
 		await Promise.all(cleanups); // відповідь зникне через EPHEMERAL_MS
+		return;
+	}
+	// Режим messages: у головному чаті (поза темою) текст сесії не починає: підказка й кнопка «➕ Нова сесія». Запис із Shortcut (spoken)
+	// і відповіді на пости сесій цього не стосуються.
+	if (topicStart && !threadId && !inChannel && !replied && spoken === undefined) {
+		await sendNewSessionKeyboard(env, chat, `Сесії починаються в окремих темах: натисни «${NEW_SESSION}» внизу й напиши задачу там.`);
 		return;
 	}
 	if (((file?.file_size ?? image?.size) ?? 0) > DOWNLOAD_MAX_BYTES) {
@@ -218,7 +238,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		sw.mark("resume");
 		sw.log({ flow: "follow-up", kind, "lag-s": lag, sent: stamp(msg.date * 1000) });
 		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), стан видно в пості сесії (він оновлюється на місці) і за 👨‍💻.
-		await removeMessage(env, chat, msg.message_id);
+		// (режим messages: повідомлення-уточнення лишається в темі як історія розмови)
+		if (!keepFollowUps) await removeMessage(env, chat, msg.message_id);
 		return;
 	}
 
@@ -258,7 +279,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
 	// Cloudflare сюди не входить: аналіз витрат і неефективностей потребує міркувань, модель лишається за замовчуванням.
 	const model = requestedModel ?? route.model ?? (sure || silpo || calendar || ask.some((n) => n !== "cloudflare") ? "haiku" : undefined);
-	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: voiced, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ask, ...(images && { images }) };
+	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), ...(topicStart && threadId && { renameTopic: true }), voice: voiced, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ask, ...(images && { images }) };
 	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.
 	if (!repo && route.unsure) {
 		await askRepo(env, agent, repos, pending);

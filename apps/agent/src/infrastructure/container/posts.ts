@@ -1,9 +1,11 @@
 import { tg } from "@voice-notes/core";
 import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../domain/agent";
 import type { Env } from "../../env";
-import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, type Answers, type Buttons, type TopicState } from "../chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, editChat, sendChat, setTopicIcon, showKeys, threadUi, type Answers, type KeySet, type KeyState, type KeyView, type Buttons, type TopicState } from "../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "./config";
 import { SESSION_PREFIX, deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
+
+type KeysShown = { state: KeyState; view?: KeyView; messageId?: number };
 
 // Іконка теми за стадією деплою.
 export const DEPLOY_ICON: Record<DeployStage, TopicState> = { approval: "approval", deploying: "deploying", deployed: "deployed", failed: "deployFailed" };
@@ -42,11 +44,37 @@ export class Posts {
 		// щоб вебхук GitHub міг перемалювати пост (див. applyDeploy).
 		const deploy = await this.storage.get<DeployInfo>(deployKey(w.postId));
 		await this.storage.put(lastKey(w.postId), { status, final, mergeable } satisfies LastShown);
-		const buttons: Buttons = deploy?.done ? "dismiss" : final ? (retry ? "retry" : mergeable && !deploy ? "mergeable" : "done") : "working";
-		const review = deploy?.runId && deploy.repo ? { repo: deploy.repo, runId: deploy.runId } : undefined;
+		const ui = await threadUi(this.env, !!w.threadId);
+		const buttons: Buttons = ui.postButtons({ final, retry, mergeable: mergeable && !deploy, deployDone: !!deploy?.done });
+		const review = deploy?.runId && deploy.repo && !ui.approvalKeys ? { repo: deploy.repo, runId: deploy.runId } : undefined;
 		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
 		const text = deploy?.done ? this.text(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.text(w, deploy ? `${status}\n\n${deploy.text}` : status, final);
 		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.url, buttons, answers, review);
+	}
+
+	// Клавіші внизу теми за станом сесії (лише режим messages; повтор того ж стану нічого не шле, але з екрана команд повертає до дій сесії).
+	// Збій не критичний.
+	async keys(w: { chatId: number; threadId?: number }, state: KeyState): Promise<void> {
+		const set = w.threadId && this.env.BOT_TOKEN ? (await threadUi(this.env, true)).keys(state) : undefined;
+		if (!set || !w.threadId) return;
+		const last = await this.storage.get<KeysShown>(`keys:${w.chatId}:${w.threadId}`);
+		if (last?.state === state && last.view !== "commands") return;
+		await this.drawKeys({ chatId: w.chatId, threadId: w.threadId }, set, state, "session", last);
+	}
+
+	// Перемикає клавіші внизу теми між діями сесії й екраном загальних команд («⚙️ Команди» / «← Назад»).
+	async keyView(w: { chatId: number; threadId?: number }, view: KeyView): Promise<void> {
+		if (!w.threadId || !this.env.BOT_TOKEN) return;
+		const ui = await threadUi(this.env, true);
+		const last = await this.storage.get<KeysShown>(`keys:${w.chatId}:${w.threadId}`);
+		const state = last?.state ?? "done";
+		const set = view === "commands" ? ui.commands() : ui.keys(state);
+		if (set) await this.drawKeys({ chatId: w.chatId, threadId: w.threadId }, set, state, view, last);
+	}
+
+	private async drawKeys(w: { chatId: number; threadId: number }, set: KeySet, state: KeyState, view: KeyView, last?: KeysShown): Promise<void> {
+		const messageId = await showKeys({ BOT_TOKEN: this.env.BOT_TOKEN! }, w.chatId, w.threadId, set, last?.messageId);
+		await this.storage.put(`keys:${w.chatId}:${w.threadId}`, { state, view, ...(messageId && { messageId }) } satisfies KeysShown);
 	}
 
 	// Ставить правку в чергу після попередніх; спостереження могло закінчитись, поки чекали, тож працю виконує викликач.
@@ -64,10 +92,16 @@ export class Posts {
 	// Дописує в пост сесії її деплой (запит на схвалення, результат) і перемальовує пост на місці. false — поста немає чи правка не вдалась.
 	private async applyDeploy(post: NonNullable<Tracked["post"]>, deploy: DeployInfo): Promise<boolean> {
 		if (!post.chatId || !post.url) return false;
+		const before = await this.storage.get<DeployInfo>(deployKey(post.postId));
 		await this.storage.put(deployKey(post.postId), deploy);
+		// Режим messages: зміна стану деплою ще й дописується новим повідомленням унизу теми (перший пост теж оновлюється нижче).
+		if (post.threadId && this.env.BOT_TOKEN && before?.text !== deploy.text && (await threadUi(this.env, true)).statusPerTurn) {
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, deploy.text, post.url, "none", undefined, undefined, post.threadId).catch((err) => console.error("deploy message failed:", err));
+		}
+		if (post.threadId) await this.keys({ chatId: post.chatId, threadId: post.threadId }, deploy.stage === "approval" ? "approval" : "done").catch((err) => console.error("keys failed:", err));
 		if (post.threadId && deploy.stage && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, DEPLOY_ICON[deploy.stage]);
 		const last = (await this.storage.get<LastShown>(lastKey(post.postId))) ?? { status: "✅ Готово", final: true, mergeable: false };
-		return this.show({ chatId: post.chatId, url: post.url, postId: post.postId, header: post.header }, last.status, last.final);
+		return this.show({ chatId: post.chatId, url: post.url, postId: post.postId, header: post.header, ...(post.threadId && { threadId: post.threadId }) }, last.status, last.final);
 	}
 
 	// Деплой PR з гілки agent/<folder> у репозиторії repo: показує його в пості цієї сесії. false — сесії з постом немає (тоді вебхук шле окреме повідомлення).
@@ -90,6 +124,13 @@ export class Posts {
 			if (tracked.post?.postId === postId) return this.applyDeploy(tracked.post, deploy);
 		}
 		return false;
+	}
+
+	// Деплой, що чекає схвалення, у пості цієї сесії.
+	async pendingReview(tracked: Tracked | undefined): Promise<{ postId: number; repo: string; runId: number } | undefined> {
+		if (!tracked?.post) return undefined;
+		const deploy = await this.storage.get<DeployInfo>(deployKey(tracked.post.postId));
+		return deploy?.stage === "approval" && deploy.repo && deploy.runId ? { postId: tracked.post.postId, repo: deploy.repo, runId: deploy.runId } : undefined;
 	}
 
 	// Пости, які пізніше оновлює вебхук GitHub (ключ → пост); забирається один раз.

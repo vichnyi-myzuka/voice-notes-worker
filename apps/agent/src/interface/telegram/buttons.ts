@@ -12,7 +12,7 @@ type Query = NonNullable<TgUpdate["callback_query"]>;
 type Handler = (ctx: { bot: BotEnv; query: Query; env: Env; agent: Sessions & Deploys; id: string; chatId: number; messageId: number; answer: (text: string) => Promise<unknown> }) => Promise<void>;
 
 // Що кажемо агентові, коли власник натиснув «Повторити» після лімітів.
-const RETRY_TEXT = "Ліміти скинулись. Продовж виконувати попереднє завдання з того місця, де зупинився.";
+export const RETRY_TEXT = "Ліміти скинулись. Продовж виконувати попереднє завдання з того місця, де зупинився.";
 
 const MCP_ANSWERS: Record<McpAnswer, string> = { connected: "Підключено, агент продовжує.", declined: "Відхилено.", login: "Потрібен вхід у сервіс.", unavailable: "Сервіс не налаштований." };
 
