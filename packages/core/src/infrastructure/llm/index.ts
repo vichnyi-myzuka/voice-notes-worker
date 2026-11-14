@@ -9,5 +9,5 @@ export type { LlmEnv } from "./env";
 
 export const workersLlm = (env: LlmEnv): Llm => ({
 	askJson: (req, parse) => askJson(env, req, parse),
-	transcribe: (audio, contentType) => whisper(env, audio, contentType),
+	transcribe: (audio, contentType, hint) => whisper(env, audio, contentType, hint),
 });

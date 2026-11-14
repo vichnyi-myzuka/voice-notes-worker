@@ -223,8 +223,9 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Календар так само: явно («календар, …», «@calendar») або модель побачила, що треба дивитись чи міняти події власника.
 	const calendar = forcedCalendar || route.calendar === true;
 	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
-	const model = requestedModel ?? (sure || silpo || calendar ? "haiku" : undefined);
+	const model = requestedModel ?? route.model ?? (sure || silpo || calendar ? "haiku" : undefined);
 
+	console.log(`telegram ${chat}/${msg.message_id}: route ${JSON.stringify(route)}`);
 	console.log(`telegram ${chat}/${msg.message_id}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo} calendar=${calendar}`);
 	const url = agent.url(id);
 	// Приватний чат: кожна нова сесія отримує свою тему, і далі розмова йде в ній. Теми не ввімкнено (чи збій) — усе в самому чаті.
@@ -256,9 +257,12 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	if (calendar && !(await agent.calendarConnected().catch(() => true))) await tgSendMessage(env, chat, `📅 Календар ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/calendar/login`, thread);
 }
 
+// Слова, які Whisper часто псує в диктовці задач («Opus» → «опис», «воркер» → «ворки»): іде йому як initial_prompt.
+const VOICE_HINT = "Opus, Sonnet, Haiku, Sure, Сільпо, Google Calendar, воркер, агент, бот, репозиторій, pull request, Cloudflare, Telegram.";
+
 // Голосове → текст через Whisper; текст як є. Порожній рядок — не розібрали.
 async function transcribe(env: BotEnv, llm: Llm, file: { file_id: string; mime_type?: string } | undefined, text: string | undefined): Promise<string> {
 	if (!file) return text ?? "";
 	const { data } = await downloadTelegramFile(env, file.file_id);
-	return llm.transcribe(data, file.mime_type ?? "audio/ogg");
+	return llm.transcribe(data, file.mime_type ?? "audio/ogg", VOICE_HINT);
 }

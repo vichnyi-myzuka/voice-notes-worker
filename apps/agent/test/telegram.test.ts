@@ -15,7 +15,7 @@ const TEMP_ID = 500; // message_id, який мок Telegram віддає слу
 const CHANNEL = -1001;
 
 // Telegram Bot API на підміненому fetch: запам'ятовує виклики методів і віддає файл для getFile.
-function setup(transcript = "Поправ README", pick?: (user: string) => { repo?: string; type?: string; name?: string; title?: string } | null) {
+function setup(transcript = "Поправ README", pick?: (user: string) => { repo?: string; type?: string; name?: string; title?: string; model?: string } | null) {
 	const agent = fakeAgent();
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
 	const topics = { id: 0 }; // id теми, яку «створює» Telegram; 0 — теми не підтримуються (як у чаті без режиму тем)
@@ -100,7 +100,7 @@ describe("вебхук Telegram", () => {
 	it("голосове → транскрипція Whisper стає промптом, у відповіді видно, що розібрано", async () => {
 		const { send, sessions, replies, llm } = setup("Додай CHANGELOG");
 		await send(msg({ voice: { file_id: "f1", file_size: 1000, mime_type: "audio/ogg" } }));
-		expect(llm.transcribe).toHaveBeenCalledWith(expect.any(ArrayBuffer), "audio/ogg");
+		expect(llm.transcribe).toHaveBeenCalledWith(expect.any(ArrayBuffer), "audio/ogg", expect.stringContaining("Opus"));
 		expect([...sessions.values()][0].input.prompt).toBe("Додай CHANGELOG");
 		expect(replies()).toEqual([`<blockquote expandable>🗣 Додай CHANGELOG</blockquote>\n\n⏳ Запускаю\n\n🔗 <a href="https://agent.example/s/tg-${OWNER}-7">Відкрити сесію</a>`]);
 	});
@@ -267,6 +267,22 @@ describe("вебхук Telegram", () => {
 			await b.send(msg({ text: "Модель користувача поправ README" }));
 			expect(b.sessions.get(SID)?.input.model).toBeUndefined();
 			expect(b.sessions.get(SID)?.input.prompt).toBe("Модель користувача поправ README");
+		});
+
+		it("модель зі середини фрази (спотворена розпізнаванням: «опис») бере роутер; явний префікс сильніший; «none» і невідоме ігноруються", async () => {
+			const phrase = "Що може покращити розпізнавання, використай модель опис";
+			const a = setup("", () => ({ model: "opus", type: "docs", name: "voice-hints" }));
+			await a.send(msg({ text: phrase }));
+			expect(a.sessions.get(SID)?.input).toMatchObject({ prompt: phrase, model: "opus" });
+			expect(a.replies()[0]).toContain("🤖 opus");
+			const b = setup("", () => ({ model: "opus", name: "voice-hints" }));
+			await b.send(msg({ text: "@haiku " + phrase }));
+			expect(b.sessions.get(SID)?.input.model).toBe("haiku");
+			for (const model of ["none", "gpt-9"]) {
+				const c = setup("", () => ({ model, name: "voice-hints" }));
+				await c.send(msg({ text: phrase }));
+				expect(c.sessions.get(SID)?.input.model).toBeUndefined();
+			}
 		});
 
 		it("явне «сільпо, задача» / «@silpo задача» вмикає MCP Сільпо (окремо й разом зі Sure, з моделлю в будь-якому порядку)", async () => {
