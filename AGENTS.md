@@ -8,6 +8,8 @@
 - **Зміни йдуть через PR, деплоїть GitHub Actions** (`.github/workflows`): PR → `check` → мерж у `main` → `deploy` змінених застосунків (`agent` чекає схвалення власника в environment `production-agent`). Агент пушить лише у свою гілку `agent/<назва>` і відкриває PR; у `main` не пушить, `wrangler deploy` не запускає, `.github/` не чіпає. Локальний `npm run deploy -w apps/<назва>` лишається лише власнику для аварійних випадків (`npx wrangler login`). Кроки налаштування GitHub: розділ «CI/CD» у README.
 - Зміна поведінки → онови README або відповідний файл у `docs/` (`notes`, `agent*`, `cloudflare`) в тому ж коміті. Нова логіка → unit-тести в `test/` відповідного застосунку (без мережі й LLM; `fetch` підміняється через `vi.stubGlobal`, R2 — `test/fake-env.ts`). Зміна наскрізної поведінки → перевір `apps/notes/test/e2e.test.ts` (повний цикл на моках, без реальних сервісів).
 
+- PR, що змінює структуру (нові/видалені/перейменовані застосунки, пакети, модулі, порти чи зв'язки між ними), мусить зачіпати `apps/docs/web/src/diagrams.tsx` або `apps/docs/web/src/content.ts`, щоб сайт архітектури не застарів.
+
 ## Секрети
 
 - Значень секретів ніколи не друкуй і не вигадуй. `source .env` у shell можна, `echo $TOKEN` — ні.
