@@ -2,9 +2,9 @@ import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendM
 import { MCP_WRITES, type Agent, type ImageRef, type McpName } from "../../domain/agent";
 import type { Env } from "../../env";
 import { stamp, stopwatch } from "../../timing";
-import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
+import { MENU_BUTTON, removeMessage, sayTemporarily } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
-import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
+import { quotaText, sessionCommand, sessionMenu, updateContainer, type Say } from "./commands";
 import { askRepo, proceed, type Pending } from "./launch";
 import { routeTask, type KnownRepo } from "./repo";
 
@@ -173,6 +173,14 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const cleanups: Promise<unknown>[] = [];
 	const sayTemp: Say = (t) => sayTemporarily(env, chat, t, sleep, cleanups, threadId);
 
+	// Кнопка «⚙️ Меню сесії» внизу теми: панель керування сесією цієї теми; саме повідомлення з кнопки прибираємо.
+	if (!voiced && !image && text === MENU_BUTTON) {
+		if (threadSession) await sessionMenu(env, chat, threadId, agent, threadSession);
+		else await sayTemp("Меню працює в темі сесії.");
+		await removeMessage(env, chat, msg.message_id);
+		await Promise.all(cleanups);
+		return;
+	}
 	if (!voiced && !image && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
 		console.log(`telegram ${chat}/${msg.message_id}: command=${command ?? "(empty)"} reply-to-session=${replied?.[1] ?? "-"}`);

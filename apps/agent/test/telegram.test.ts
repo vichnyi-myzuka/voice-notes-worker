@@ -648,6 +648,20 @@ describe("вебхук Telegram", () => {
 			expect(t.calls.filter((c) => c.method === "sendMessage").map((c) => c.body)).toEqual([expect.objectContaining({ message_thread_id: THREAD, text: expect.stringContaining("Працює") })]);
 		});
 
+		it("кнопка «⚙️ Меню сесії» в темі відкриває панель керування цією сесією й прибирає своє повідомлення", async () => {
+			const t = setup();
+			t.topics.id = THREAD;
+			await t.send(msg({ text: "Поправ README" }));
+			t.calls.length = 0;
+			await t.send(msg({ text: "⚙️ Меню сесії", message_thread_id: THREAD }, 8));
+			expect(t.sessions.get(SID)?.messages).toEqual(["Поправ README"]); // це не уточнення
+			const panel = t.calls.find((c) => c.method === "sendMessage")!.body;
+			expect(panel).toMatchObject({ message_thread_id: THREAD, text: expect.stringContaining("Меню сесії") });
+			expect(JSON.stringify(panel.reply_markup)).toContain(`stop:${SID}`);
+			expect(JSON.stringify(panel.reply_markup)).toContain(`del:${SID}`);
+			expect(t.calls.filter((c) => c.method === "deleteMessage").map((c) => c.body)).toEqual([{ chat_id: OWNER, message_id: 8 }]);
+		});
+
 		it("повідомлення в темі, що не належить сесії, стартує сесію в ній без нової теми", async () => {
 			const t = setup();
 			t.topics.id = THREAD;

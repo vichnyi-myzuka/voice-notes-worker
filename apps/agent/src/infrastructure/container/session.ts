@@ -3,7 +3,7 @@ import type { OAuthLogin } from "@voice-notes/oauth";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import { MCP_LABELS, folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { removeTopic, renameTopic, sendChat, sendMcpQuestion, setTopicIcon, type Answers, type TopicState } from "../chat";
+import { removeTopic, renameTopic, sendChat, sendMcpQuestion, sendMenuKeyboard, setTopicIcon, threadMessages, type Answers, type TopicState } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
@@ -284,9 +284,12 @@ export class AgentSession extends DurableObject<Env> {
 		const mergeable = check.ok;
 		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
 		if (limit) await this.waitForLimits(watchId(key), w);
-		const shown = await this.posts.show(w, text, true, undefined, mergeable, limit);
+		// Режим THREAD_UI=messages: у темі пост лишається коротким станом, а підсумок іде окремим повідомленням (з «Змерджити» чи «Повторити», якщо треба).
+		const separate = threadMessages(this.env) && !!w.threadId;
+		const status = !separate ? text : limit ? "⏳ Ліміти Claude вичерпано" : text.startsWith("✅") ? "✅ Готово" : text.startsWith("⏹") ? "⏹ Зупинено" : "❌ Збій";
+		const shown = await this.posts.show(w, status, true, undefined, mergeable, limit);
 		await this.retitle(watchId(key), w, text);
-		if (!shown) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, limit ? "retry" : mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
+		if (!shown || separate) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, limit ? "retry" : mergeable ? "mergeable" : separate ? "none" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
 	}
 
@@ -400,6 +403,8 @@ export class AgentSession extends DurableObject<Env> {
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
 	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
 		if (await this.link(id)) return;
+		// Нова тема, створена ботом: показуємо внизу кнопку «⚙️ Меню сесії» (повтор begin сюди не доходить: сесія вже є).
+		if (threadMessages(this.env) && target.threadId && target.title && this.env.BOT_TOKEN) await sendMenuKeyboard({ BOT_TOKEN: this.env.BOT_TOKEN }, target.chatId, target.threadId);
 		await this.enqueue({ id, input, target, attempts: 0 });
 	}
 

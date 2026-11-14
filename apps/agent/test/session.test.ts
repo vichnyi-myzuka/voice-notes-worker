@@ -1059,6 +1059,29 @@ describe("AgentSession", () => {
 				expect(edit.text).toBe(`🗣 ${"я".repeat(397)}…\n\n✅ Готово\n\nГотово: <b>ok</b>\n\n${link}`);
 			});
 
+			it("THREAD_UI=messages: у темі пост без кнопок керування лишається станом, а підсумок іде окремим повідомленням; без прапорця — як раніше", async () => {
+				const finish = async (extra: Record<string, string>) => {
+					sent.length = 0;
+					const t = setup({ BOT_TOKEN: "bot", ...extra });
+					await t.session.start(ID, { prompt: "Задача" });
+					await t.session.watch(ID, { ...POST, threadId: 9 });
+					t.opencode.lastText = "Готово: **ok**";
+					await t.session.alarm();
+					t.opencode.busy.clear();
+					t.opencode.info[ocId] = { outcome: "succeeded" };
+					await t.session.alarm();
+				};
+				await finish({});
+				expect(sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c))).toEqual([]); // classic: нових повідомлень немає
+				await finish({ THREAD_UI: "messages" });
+				expect(edits().at(-1)!.text).toContain("✅ Готово");
+				expect(edits().at(-1)!.text).not.toContain("Готово: ok");
+				expect(JSON.stringify((edits().at(-1) as { reply_markup?: unknown }).reply_markup ?? null)).not.toContain("del:");
+				const summary = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c)) as unknown as { message_thread_id: number; text: string }[];
+				expect(summary).toHaveLength(1);
+				expect(summary[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Готово: <b>ok</b>") });
+			});
+
 			it("деплой PR сесії дописується в її пост: запит на схвалення з кнопками, потім результат лише з «Видалити»", async () => {
 				const t = setup({ BOT_TOKEN: "bot" });
 				const SID = "tg-1-1";

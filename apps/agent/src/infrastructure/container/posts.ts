@@ -1,7 +1,7 @@
 import { tg } from "@voice-notes/core";
 import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../domain/agent";
 import type { Env } from "../../env";
-import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, type Answers, type Buttons, type TopicState } from "../chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, threadMessages, type Answers, type Buttons, type TopicState } from "../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "./config";
 import { SESSION_PREFIX, deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
 
@@ -42,7 +42,7 @@ export class Posts {
 		// щоб вебхук GitHub міг перемалювати пост (див. applyDeploy).
 		const deploy = await this.storage.get<DeployInfo>(deployKey(w.postId));
 		await this.storage.put(lastKey(w.postId), { status, final, mergeable } satisfies LastShown);
-		const buttons: Buttons = deploy?.done ? "dismiss" : final ? (retry ? "retry" : mergeable && !deploy ? "mergeable" : "done") : "working";
+		const buttons: Buttons = threadMessages(this.env) && w.threadId ? "none" : deploy?.done ? "dismiss" : final ? (retry ? "retry" : mergeable && !deploy ? "mergeable" : "done") : "working";
 		const review = deploy?.runId && deploy.repo ? { repo: deploy.repo, runId: deploy.runId } : undefined;
 		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
 		const text = deploy?.done ? this.text(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.text(w, deploy ? `${status}\n\n${deploy.text}` : status, final);

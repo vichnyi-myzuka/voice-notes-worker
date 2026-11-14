@@ -13,7 +13,13 @@ export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, 
 // "mergeable": сесія завершена, а в її гілки є відкритий PR: додається «Змерджити» (`merge:<id>`).
 // "dismiss": деплой завершено, сесію прибрано: лишається лише «Видалити» (просте видалення повідомлення, `dismiss`).
 // "retry": сесія впала на лімітах Claude: додається «Повторити» (`retry:<id>`), що просить агента продовжити.
-export type Buttons = "working" | "done" | "mergeable" | "dismiss" | "retry";
+// "none": без кнопок керування (режим THREAD_UI=messages: ними керує «Меню сесії»), лишаються лише відповіді на питання й схвалення.
+export type Buttons = "working" | "done" | "mergeable" | "dismiss" | "retry" | "none";
+
+// Режим теми сесії (див. THREAD_UI у env.ts).
+export const threadMessages = (env: { THREAD_UI?: string }): boolean => env.THREAD_UI === "messages";
+// Текст кнопки постійної клавіатури внизу теми: її натискання надходить як звичайний текст.
+export const MENU_BUTTON = "⚙️ Меню сесії";
 // Запит на схвалення деплою в пості сесії: кнопки «Схвалити/Відхилити» (`appr|rej:<repo>:<id запуску>`, обробляє interface/github/review).
 export type Review = { repo: string; runId: number };
 // Кнопки-відповіді на питання агента: підписи (для множинного вибору з позначками) й режим: одразу відповісти чи перемикати + «Підтвердити».
@@ -22,7 +28,7 @@ const SESSION_ID = /\/s\/(tg-[\w-]+)/;
 function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, answers?: Answers, review?: Review): TgInlineKeyboard | undefined {
 	const id = sessionUrl && buttons ? SESSION_ID.exec(sessionUrl)?.[1] : undefined;
 	if (!id) return undefined;
-	const row = [
+	const row = buttons === "none" ? [] : [
 		...(buttons === "working" ? [{ text: "⏹ Стоп", callback_data: callback.stop(id) }] : []),
 		...(buttons === "retry" ? [{ text: "🔄 Повторити", callback_data: callback.retry(id) }] : []),
 		...(buttons === "mergeable" ? [{ text: "🔀 Змерджити", callback_data: callback.merge(id) }] : []),
@@ -32,7 +38,14 @@ function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, 
 	// Варіанти відповіді на питання агента: по кнопці в рядку над службовими (callback_data `ans:<id>:<номер варіанта>`)
 	const choices = (answers?.labels ?? []).map((label, i) => [{ text: label.length > 32 ? `${label.slice(0, 31)}…` : label, callback_data: answers?.multiple ? callback.toggle(id, i) : callback.answer(id, i) }]);
 	const confirm = answers?.multiple ? [[{ text: "✅ Підтвердити", callback_data: callback.confirm(id) }]] : [];
-	return { inline_keyboard: [...choices, ...confirm, ...approval, row] };
+	const rows = [...choices, ...confirm, ...approval, ...(row.length > 0 ? [row] : [])];
+	return rows.length > 0 ? { inline_keyboard: rows } : undefined;
+}
+
+// Постійна клавіатура внизу теми з однією кнопкою «⚙️ Меню сесії» (як «Головне меню» в інших ботів). Повідомлення потрібне Telegram,
+// щоб показати клавіатуру; воно коротке й лишається в темі.
+export async function sendMenuKeyboard(env: BotEnv, chatId: number, threadId: number): Promise<void> {
+	await tg(env, "sendMessage", { chat_id: chatId, message_thread_id: threadId, text: `Керування сесією: кнопка «${MENU_BUTTON}» внизу.`, reply_markup: { keyboard: [[{ text: MENU_BUTTON }]], resize_keyboard: true, is_persistent: true } } as never).catch((err) => console.error("menu keyboard failed:", err));
 }
 
 // Текст повідомлення в двох видах: HTML і простий (запасний, якщо Telegram відхилить розмітку). Внизу, за потреби,
