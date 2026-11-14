@@ -1227,10 +1227,20 @@ describe("AgentSession", () => {
 
 					it("вже підключений сервіс не перепитується", async () => {
 						const t = setup({ BOT_TOKEN: "bot" });
+						t.store.set("cloudflare", login);
 						await t.session.start(SID, { prompt: "Задача", cloudflare: true });
 						await t.session.watch(SID, POST_TG);
 						await request(t, "request-mcp cloudflare");
 						expect(asks()).toEqual([]);
+					});
+
+					it("сервіс просили на старті, але входу не було: прапорець не ставиться, тож запит агента шле кнопки", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача", cloudflare: true });
+						expect(t.store.get(`session:${SID}`)).not.toHaveProperty("cloudflare");
+						await t.session.watch(SID, POST_TG);
+						await request(t, "request-mcp cloudflare");
+						expect(asks()).toHaveLength(1);
 					});
 
 					it("підтвердження дописує сервер у конфіг теки, запам'ятовує його й повідомляє агента (з інструкціями сервісу)", async () => {
