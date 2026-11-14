@@ -1,4 +1,4 @@
-import { DOWNLOAD_MAX_BYTES, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
+import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import { folderFor, type Agent, type ImageRef } from "../../domain/agent";
 import type { Env } from "../../env";
 import { QUOTE_CLOSE, QUOTE_OPEN, createTopic, removeMessage, sayTemporarily, sendChat } from "../../infrastructure/chat";
@@ -259,8 +259,6 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 // Голосове → текст через Whisper; текст як є. Порожній рядок — не розібрали.
 async function transcribe(env: BotEnv, llm: Llm, file: { file_id: string; mime_type?: string } | undefined, text: string | undefined): Promise<string> {
 	if (!file) return text ?? "";
-	const info = await tg(env, "getFile", { file_id: file.file_id });
-	const res = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${info.file_path}`);
-	if (!res.ok) throw new Error(`download ${res.status}`);
-	return llm.transcribe(await res.arrayBuffer(), file.mime_type ?? "audio/ogg");
+	const { data } = await downloadTelegramFile(env, file.file_id);
+	return llm.transcribe(data, file.mime_type ?? "audio/ogg");
 }

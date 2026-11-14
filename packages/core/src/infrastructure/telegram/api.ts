@@ -43,7 +43,15 @@ export async function tgSendNote(
 	return sent.message_id;
 }
 
-export const NO_PREVIEW = { is_disabled: true };
+// Завантажує файл за file_id (getFile, до 20 МБ): вміст і шлях у Telegram (за ним визначають розширення).
+export async function downloadTelegramFile(env: BotEnv, fileId: string): Promise<{ data: ArrayBuffer; path: string }> {
+	const info = await tg(env, "getFile", { file_id: fileId });
+	const res = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${info.file_path}`);
+	if (!res.ok) throw new Error(`download ${res.status}`);
+	return { data: await res.arrayBuffer(), path: info.file_path };
+}
+
+export const NO_PREVIEW = { is_disabled: true }; // без карток сторінок (вони за Access)
 
 // Текстова нотатка: звичайне повідомлення (без аудіо). Повертає message_id.
 export async function tgSendText(env: TelegramEnv, text: string, entities: TgEntity[]): Promise<number> {

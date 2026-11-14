@@ -1,12 +1,10 @@
-import { tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes/core";
+import { NO_PREVIEW, tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes/core";
 import { chatHtml, escapeHtml, stripQuote, tablesToCards } from "@voice-notes/telegram-format";
 import { callback } from "./callback";
 
 export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
 export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
 export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
-
-const NO_PREVIEW = { is_disabled: true }; // без карток сторінок (вони за Access)
 
 // Кнопки під постом сесії: поки агент працює — «Стоп» і «Видалити», після завершення — лише «Видалити». Id сесії береться з її
 // посилання (…/s/<id>), у callback_data лежить `<дія>:<id>` (обробляє interface/telegram). Редагування без reply_markup кнопки
