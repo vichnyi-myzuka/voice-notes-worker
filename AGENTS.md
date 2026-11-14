@@ -26,7 +26,7 @@
 
 Структура: `apps/*` (воркери) залежать від `packages/*`, але не один від одного. Де що лежить — дивись `ls`, README і `docs/`; тут лише правила.
 
-- **Шари** (`apps/notes/src`): `interface → application → domain`, `infrastructure` реалізує порти з `domain`. Складання адаптерів — у `src/index.ts`.
+- **Шари** (`apps/notes/src`): `interface → application → domain`, `infrastructure` реалізує порти з `domain`. Складання адаптерів — у `src/index.ts`. Напрямок шарів перевіряє `.oxlintrc.json` (`domain` не імпортує інші шари; в агента `application` не імпортує `infrastructure`/`interface`, а `interface` не імпортує `infrastructure/container`).
 - **Ядро нічого не знає про Telegram і Todoist.** Воно працює з портами `Channel`, `Llm` (`packages/core`), `TaskTracker`, `NoteRepository`, `TaskLedger`, `RecordingStore` (`domain`). Службові дані каналу (`fileId`, `deleteChatId`…) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
 - **Модуль — папка з `index.ts`.** Зовні імпортуй лише з `index.ts` (`../tasks`, а не `../tasks/apply`), пакет core — лише `@voice-notes/core`. Це перевіряє `.oxlintrc.json` (`npm run lint`); тести можуть імпортувати глибше. У тестах мок внутрішнього модуля core робиться за шляхом файлу в `packages/core/src`.
 - **Стан обробки** складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `application/pipeline/types.ts`.
