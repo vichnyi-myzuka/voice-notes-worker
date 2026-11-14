@@ -14,6 +14,6 @@ export type JsonRequest = {
 export type Llm = {
 	// Розібраний результат або null, якщо не впоралась жодна модель.
 	askJson<T>(req: JsonRequest, parse: (text: string) => T): Promise<T | null>;
-	// Аудіо (m4a з шорткату, ogg/opus з каналу) → текст українською.
-	transcribe(audio: ArrayBuffer, contentType: string): Promise<string>;
+	// Аудіо (m4a з шорткату, ogg/opus з каналу) → текст українською. hint — слова, які модель має писати саме так (імена, терміни).
+	transcribe(audio: ArrayBuffer, contentType: string, hint?: string): Promise<string>;
 };
