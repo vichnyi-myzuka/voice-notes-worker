@@ -214,6 +214,27 @@ describe("вебхук GitHub", () => {
 			expect(s.tgCalls("editMessageReplyMarkup")).toEqual([]);
 		});
 
+		it("відмова з конфліктом і провалленим CI: причини в підказці та окремим повідомленням у чаті", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			withPulls(s, [{ number: 5 }], 405);
+			const merging = globalThis.fetch;
+			vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+				if (input.endsWith("/pulls/5")) return Response.json({ draft: false, mergeable: false, mergeable_state: "dirty", head: { sha: "abc" } });
+				if (input.includes("/commits/abc/check-runs")) return Response.json({ check_runs: [{ name: "check", status: "completed", conclusion: "failure" }, { name: "lint", status: "in_progress", conclusion: null }, { name: "ok", status: "completed", conclusion: "success" }] });
+				return merging(input, init);
+			}));
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			await press(s);
+			expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("Не вдалося змерджити PR #5: Є конфлікти з основною гілкою; CI не пройшов: check; CI ще виконується: lint");
+			const sent = s.tgCalls("sendMessage")[0];
+			expect(sent).toMatchObject({ chat_id: -1001 });
+			expect(sent.text).toContain("• Є конфлікти з основною гілкою");
+			expect(sent.text).toContain("• CI не пройшов: check");
+			expect(sent.text).toContain("GitHub: Required status check is expected");
+			expect(s.tgCalls("editMessageReplyMarkup")).toEqual([]);
+		});
+
 		it("без відкритого PR і від чужого нічого не мерджить", async () => {
 			const s = setup();
 			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
