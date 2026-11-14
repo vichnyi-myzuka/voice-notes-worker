@@ -1,4 +1,4 @@
-import type { Agent, DeployInfo, ImageRef, PostRef, AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import type { Agent, DeployInfo, McpAnswer, McpName, ImageRef, PostRef, AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 
 // Що має вміти Durable Object, щоб за ним працював порт Agent: він володіє єдиним контейнером і всіма сесіями в ньому.
 export type SessionObject = {
@@ -15,6 +15,7 @@ export type SessionObject = {
 	remove(id: string): Promise<void>;
 	removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined>;
 	link(id: string): Promise<string | undefined>;
+	answerMcp(id: string, name: McpName, allow: boolean): Promise<McpAnswer>;
 	byThread(chatId: number, threadId: number): Promise<string | undefined>;
 	setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean>;
 	setDeployByPost(postId: number, deploy: DeployInfo, force?: boolean): Promise<boolean>;
@@ -62,6 +63,7 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		removeByBranch: (repo, folder) => computer().removeByBranch(repo, folder),
 		serve: (req) => computer().fetch(req),
 		link: (id) => computer().link(id),
+		answerMcp: (id, name, allow) => computer().answerMcp(id, name, allow),
 		byThread: (chatId, threadId) => computer().byThread(chatId, threadId),
 		pullTarget: (id) => computer().pullTarget(id),
 		setDeploy: (repo, folder, deploy) => computer().setDeploy(repo, folder, deploy),

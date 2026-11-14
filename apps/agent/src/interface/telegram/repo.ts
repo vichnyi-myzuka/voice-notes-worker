@@ -1,4 +1,5 @@
 import type { Llm } from "@voice-notes/core";
+import { MCP_NAMES, type McpName } from "../../domain/agent";
 
 // Відомі репозиторії: `repo` (owner/name) і `about` — як власник про нього говорить (для вибору з вільної мови).
 // `site` (необов'язково) — назва публічного сайту, який агент оновлює після мержу PR (репозиторії-сайти, напр. гра).
@@ -27,6 +28,8 @@ const SYSTEM = `You route tasks for a coding agent. The owner dictates a task (u
 - "finance": true only if doing the task requires reading or changing the owner's own personal finance data kept in their finance tracker (Sure): their spending, income, transactions, accounts, balances, budgets, net worth, subscriptions, or the finance app itself by name (Sure, Shure, "шур"). false for everything else, including building a finance-related page, app or script, or tasks about money in general that need none of the owner's data.
 - "groceries": true only if doing the task requires the owner's own purchase history from the Silpo supermarket (what products they bought, receipts, orders, grocery prices they paid, bonuses), or Silpo by name ("Сільпо", "silpo"). false for everything else, including generic questions about food, recipes or shops.
 - "calendar": true only if doing the task requires reading or changing the owner's own Google Calendar: their schedule, meetings, appointments, events, free time, adding, moving or cancelling an event, or the calendar by name ("календар", "calendar"). false for everything else, including building a calendar page or app, or date arithmetic that needs none of the owner's events.
+- "cloudflare": true only if doing the task requires looking at the owner's own Cloudflare account: their Workers, containers, usage and costs, billing, DNS, R2, KV, D1, analytics, logs, or Cloudflare account by name ("Cloudflare", "клаудфлер") as the thing to inspect. false for everything else, including writing code for Cloudflare Workers, or changing this agent's own repository without needing live account data.
+- "maybe": the services among "sure", "silpo", "calendar", "cloudflare" whose flag above is false but whose owner data the task MIGHT need: the wording is ambiguous or the task could be about the owner's own data as well as a general question. Empty list if there is no such doubt. Do not list a service that is clearly not needed, and do not list one whose flag is true.
 - "model": the Claude model the owner asks for anywhere in the task ("use Opus", "на опусі", "модель опус"), one of opus, sonnet, haiku. The task is dictated by voice and the speech recognizer garbles names, so treat close sounds as the same model ("опис", "опус", "Opus" -> opus; "сонет" -> sonnet; "хайку" -> haiku). "none" if the owner names no model; do not guess a model from the difficulty of the task.
 - "evidence" (only if asked): an exact quote copied from the task where the owner explicitly refers to one of the known repositories (its name, or a phrase from its description such as "our bot" or "yourself", or a loose nickname, transliteration, misspelling or description of what the project is, such as "the bird game", or a named file or feature of that project). Empty string if there is no such quote.
 - "unsure" (only if asked): true if the task may be about one of the known repositories but you cannot tell whether it is, or which one (vague words like "the project", "our thing", "the bot" when two repositories could fit, or a mention that is too loose to quote). false when the task clearly is about one repository (then give it), and false when it clearly is about none (a new standalone thing, a general question).
@@ -34,7 +37,7 @@ const SYSTEM = `You route tasks for a coding agent. The owner dictates a task (u
 
 export const MODELS = ["opus", "sonnet", "haiku"] as const;
 
-export type Route = { repo?: string; unsure?: boolean; model?: string; name?: string; title?: string; sure?: boolean; silpo?: boolean; calendar?: boolean };
+export type Route = { repo?: string; unsure?: boolean; model?: string; name?: string; title?: string; sure?: boolean; silpo?: boolean; calendar?: boolean; cloudflare?: boolean; maybe?: McpName[] };
 
 const NAME = /^[a-z0-9][a-z0-9-]{1,39}$/;
 export const TYPES = ["feat", "fix", "docs", "refactor", "test", "chore"] as const;
@@ -52,7 +55,7 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 	const names = repos.map((r) => r.repo);
 	const list = repos.length ? `Known repositories:\n${repos.map((r) => `- ${r.repo}: ${r.about}`).join("\n")}\n\n` : "";
 	// evidence перед repo: модель спершу наводить цитату, а потім вирішує; порядок властивостей зберігається.
-	const properties = { type: { type: "string", enum: [...TYPES] }, name: { type: "string" }, title: { type: "string" }, finance: { type: "boolean" }, groceries: { type: "boolean" }, calendar: { type: "boolean" }, model: { type: "string", enum: [...MODELS, "none"] }, ...(repos.length && { evidence: { type: "string" }, unsure: { type: "boolean" }, repo: { type: "string", enum: [...names, "none"] } }) };
+	const properties = { type: { type: "string", enum: [...TYPES] }, name: { type: "string" }, title: { type: "string" }, finance: { type: "boolean" }, groceries: { type: "boolean" }, calendar: { type: "boolean" }, cloudflare: { type: "boolean" }, maybe: { type: "array", items: { type: "string", enum: [...MCP_NAMES] } }, model: { type: "string", enum: [...MODELS, "none"] }, ...(repos.length && { evidence: { type: "string" }, unsure: { type: "boolean" }, repo: { type: "string", enum: [...names, "none"] } }) };
 	const picked = await llm.askJson(
 		{
 			name: "agent_route",
@@ -61,7 +64,7 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 			schema: { type: "object", properties, required: Object.keys(properties), additionalProperties: false },
 			reasoning: "none",
 		},
-		(text) => JSON.parse(text) as { repo?: string; unsure?: boolean; evidence?: string; type?: string; name?: string; title?: string; finance?: boolean; groceries?: boolean; calendar?: boolean; model?: string },
+		(text) => JSON.parse(text) as { repo?: string; unsure?: boolean; evidence?: string; type?: string; name?: string; title?: string; finance?: boolean; groceries?: boolean; calendar?: boolean; cloudflare?: boolean; maybe?: unknown; model?: string },
 	);
 	if (!picked) return {};
 	// Тип іде префіксом (feat-…, fix-…): з гілки одразу видно, що це за робота; без придатного типу — лише назва.
@@ -72,7 +75,11 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 	const quote = picked.evidence?.trim().toLowerCase() ?? "";
 	const grounded = quote.length >= 3 && task.toLowerCase().includes(quote);
 	const model = MODELS.find((m) => m === picked.model);
+	// Сумнів роутера: лише відомі сервіси, яких він сам не визнав потрібними.
+	const flagged = { sure: picked.finance, silpo: picked.groceries, calendar: picked.calendar, cloudflare: picked.cloudflare };
+	const doubts: unknown[] = Array.isArray(picked.maybe) ? picked.maybe : [];
+	const maybe = MCP_NAMES.filter((n) => doubts.includes(n) && flagged[n] !== true);
 	if (picked.repo && picked.repo !== "none" && !grounded) console.log(`route: repo ${picked.repo} відкинуто, цитата ${JSON.stringify(picked.evidence ?? "")} не знайдена у фразі`);
 	const repo = grounded && picked.repo && names.includes(picked.repo) ? picked.repo : undefined;
-	return { ...(!repo && picked.unsure === true && { unsure: true }), ...(model && { model }), ...(picked.finance === true && { sure: true }), ...(picked.groceries === true && { silpo: true }), ...(picked.calendar === true && { calendar: true }), ...(repo && { repo }), ...(name && { name }), ...(title && { title }) };
+	return { ...(!repo && picked.unsure === true && { unsure: true }), ...(model && { model }), ...(picked.finance === true && { sure: true }), ...(picked.groceries === true && { silpo: true }), ...(picked.calendar === true && { calendar: true }), ...(picked.cloudflare === true && { cloudflare: true }), ...(maybe.length > 0 && { maybe }), ...(repo && { repo }), ...(name && { name }), ...(title && { title }) };
 }

@@ -4,11 +4,13 @@ import calendarAgent from "../../../payload/calendar-agent.md";
 import prePush from "../../../payload/pre-push.sh";
 import newReportSite from "../../../payload/new-report-site.sh";
 import publish from "../../../payload/publish.sh";
+import requestMcp from "../../../payload/request-mcp.sh";
 import reportSiteSkill from "../../../payload/report-site-skill.md";
 import sessionPrep from "../../../payload/session-prep.sh";
 import silpoAgent from "../../../payload/silpo-agent.md";
 import cloudflareAgent from "../../../payload/cloudflare-agent.md";
 import sureAgent from "../../../payload/sure-agent.md";
+import type { McpName } from "../../domain/agent";
 import type { OAuthToken } from "@voice-notes/oauth";
 import { CLOUDFLARE_MCP_URL, SILPO_MCP_URL } from "./logins";
 
@@ -42,6 +44,8 @@ export const PAYLOAD: PayloadFile[] = [
 	{ path: "/root/.claude/CLAUDE.md", mode: "644", content: agents },
 	{ path: "/usr/local/bin/publish", mode: "755", content: publish },
 	{ path: "/usr/local/bin/new-report-site", mode: "755", content: newReportSite },
+	// Запит агента на підключення MCP посеред сесії (див. request-mcp.sh і requestedMcp у mcp.ts)
+	{ path: "/usr/local/bin/request-mcp", mode: "755", content: requestMcp },
 	// Скіл для сайтів-звітів: агент підхоплює його сам за description. OpenCode читає ~/.config/opencode/skills, claude — ~/.claude/skills.
 	{ path: "/root/.config/opencode/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
 	{ path: "/root/.claude/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
@@ -88,6 +92,9 @@ function calendarFiles(dir: string, token: OAuthToken): { server: unknown; files
 		],
 	};
 }
+
+// Інструкції агента для кожного MCP: їх отримує сесія, до якої сервіс підключили посеред роботи (агент сесії вже вибраний і не міняється).
+export const MCP_PROMPTS: Record<McpName, string> = { sure: sureAgent, silpo: silpoAgent, calendar: calendarAgent, cloudflare: cloudflareAgent };
 
 // Конфіг OpenCode з MCP-серверами для теки однієї сесії: лише для запитаних серверів і лише якщо вони налаштовані (Sure: адреса й токен).
 // Секрети Sure не потрапляють у файл: там посилання `{env:…}`, самі змінні передає containerEnv; заголовки Cloudflare Access (Service Token)

@@ -1,5 +1,5 @@
 import { tg, tgSendMessage, type BotEnv } from "@voice-notes/core";
-import { folderFor, type Agent, type ImageRef } from "../../domain/agent";
+import { MCP_LABELS, folderFor, type Agent, type ImageRef, type McpName } from "../../domain/agent";
 import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, removeMessage, sendChat } from "../../infrastructure/chat";
 import { type Stopwatch } from "../../timing";
 import type { KnownRepo, Route } from "./repo";
@@ -23,6 +23,8 @@ export type Pending = {
 	silpo: boolean;
 	calendar: boolean;
 	cloudflare: boolean;
+	// MCP, які роутер вважає потрібними чи припускає, але вмикати без підтвердження не можна (див. askMcp)
+	ask: McpName[];
 	images?: ImageRef[];
 };
 
@@ -65,6 +67,7 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 }
 
 const pickKey = (id: string) => `pick:${id}`;
+const mcpKey = (id: string) => `mcp:${id}`;
 type Saved = Pending & { choices: string[] };
 
 // Роутер не впевнений, чи задача про відомий репозиторій (і про який): сесію не стартуємо, а питаємо кнопками. Задача
@@ -86,6 +89,35 @@ export async function resolveRepo(env: BotEnv, agent: Agent, id: string, choice:
 	const repo = choice === "none" ? undefined : choices[choice];
 	if (choice !== "none" && !repo) return false;
 	await removeMessage(env, p.chat, pickerId);
-	await launchSession(env, agent, p, repo);
+	await proceed(env, agent, p, repo);
+	return true;
+}
+
+// Далі після вибору репозиторію: якщо є MCP, що потребують підтвердження, питаємо кнопками, інакше одразу запускаємо сесію.
+export async function proceed(env: BotEnv, agent: Agent, p: Pending, repo: string | undefined, sw?: Stopwatch): Promise<void> {
+	if (p.ask.length > 0) return askMcp(env, agent, p, repo);
+	await launchSession(env, agent, p, repo, sw);
+}
+
+// MCP із даними власника підключаються без підтвердження, лише коли він назвав їх явно (префікс) чи вони тільки читають (Сільпо, Cloudflare)
+// і роутер упевнений. Sure і Календар (вміють змінювати дані) та будь-який сумнів роутера: одне питання на всі такі сервіси.
+// Задача чекає у сховищі агента до натискання (як у askRepo).
+async function askMcp(env: BotEnv, agent: Agent, p: Pending, repo: string | undefined): Promise<void> {
+	const rows = [[{ text: "✅ Підключити", callback_data: callback.mcpStart(p.id, true) }, { text: "🚫 Без цього", callback_data: callback.mcpStart(p.id, false) }]];
+	const brief = p.prompt.replace(/\s+/g, " ").slice(0, 200);
+	const sent = await tg(env, "sendMessage", { chat_id: p.chat, ...(p.threadId && { message_thread_id: p.threadId }), text: `🔌 Підключити до задачі: ${p.ask.map((n) => MCP_LABELS[n]).join(", ")}?\n\n«${brief}»`, reply_markup: { inline_keyboard: rows } });
+	await agent.saveRef(mcpKey(p.id), { chatId: p.chat, messageId: sent.message_id, text: JSON.stringify({ p, repo } satisfies SavedMcp) });
+}
+
+type SavedMcp = { p: Pending; repo: string | undefined };
+
+// Кнопка відповіді: забирає збережену задачу й запускає сесію з підтвердженими сервісами (або без них). false — відповідь неактуальна.
+export async function resolveMcp(env: BotEnv, agent: Agent, id: string, allow: boolean, askerId: number): Promise<boolean> {
+	const ref = await agent.takeRef(mcpKey(id));
+	if (!ref) return false;
+	const { p, repo } = JSON.parse(ref.text) as SavedMcp;
+	await removeMessage(env, p.chat, askerId);
+	const on = allow ? Object.fromEntries(p.ask.map((n) => [n, true])) : {};
+	await launchSession(env, agent, { ...p, ...on, ask: [] }, repo);
 	return true;
 }

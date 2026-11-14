@@ -1,3 +1,5 @@
+import type { McpAnswer, McpName } from "./mcp";
+
 // Порт агента: сесія з автономним агентом, якій можна поставити задачу, дописати уточнення, спитати статус і яку можна зупинити.
 // Реалізація — infrastructure/container (Durable Object + контейнер з OpenCode).
 
@@ -111,6 +113,9 @@ export type Sessions = {
 	link(id: string): Promise<string | undefined>;
 	// Сесія, пост якої живе в темі threadId чату chatId (повідомлення в темі без reply — уточнення в неї); undefined, якщо такої немає.
 	byThread(chatId: number, threadId: number): Promise<string | undefined>;
+	// Відповідь власника на запит агента підключити MCP посеред сесії (кнопки «Підключити / Ні»): підключає сервіс до сесії
+	// (конфіг теки підхоплюється наживо) і повідомляє про це агента, чи повідомляє про відмову. Див. McpAnswer.
+	answerMcp(id: string, name: McpName, allow: boolean): Promise<McpAnswer>;
 };
 
 // Спільний комп'ютер агента: веб-інтерфейс, діагностика, знімки диска й скидання контейнера.

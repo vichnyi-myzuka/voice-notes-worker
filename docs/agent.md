@@ -51,7 +51,7 @@ GET  /s/<id>                                           → редірект на
 
 Усі рядки затримок містять слово `latency` (Workers Logs → пошук `latency`, чи `wrangler tail` у `apps/agent`) і мітки часу UTC. Тексту повідомлень там немає.
 
-- `latency telegram <чат>/<повідомлення>: …`: шлях вебхука. Поля: `flow` (`new-session` / `follow-up` / `ask-repo`), `kind` (voice/text/image), `sent` (коли повідомлення відправлено в Telegram), `lag-s` (скільки секунд минуло до початку обробки: доставка вебхука й черга), етапи `react`, `link`, `transcribe` (Whisper), `route` (LLM-роутер), `topic`, `post` (пост «⏳ Запускаю»), `begin` (передача в Durable Object), `start`/`end`/`total`.
+- `latency telegram <чат>/<повідомлення>: …`: шлях вебхука. Поля: `flow` (`new-session` / `follow-up` / `ask-repo`; питання про MCP теж пишеться як `new-session`), `kind` (voice/text/image), `sent` (коли повідомлення відправлено в Telegram), `lag-s` (скільки секунд минуло до початку обробки: доставка вебхука й черга), етапи `react`, `link`, `transcribe` (Whisper), `route` (LLM-роутер), `topic`, `post` (пост «⏳ Запускаю»), `begin` (передача в Durable Object), `start`/`end`/`total`.
 - `latency job <id>: queued=…`: скільки завдання чекало на alarm у Durable Object від прийняття (`accepted`) до виконання; `cold=true`, якщо контейнер спав.
 - `latency container: …`: лише холодний старт контейнера: `source` (snapshot/image), етапи `launch`, `ready` (OpenCode відповідає, модель доступна), `payload`.
 - `latency session <id> start: …`: `container` (очікування контейнера), `queue` (черга серійних завдань), `prepare` (тека й клон), `create` (сесія OpenCode), `prompt` (відправка промпта).

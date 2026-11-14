@@ -1,15 +1,17 @@
-import { tg, type BotEnv, type TgUpdate } from "@voice-notes/core";
-import type { Agent, Deploys, Sessions } from "../../domain/agent";
+import { tg, tgSendMessage, type BotEnv, type TgUpdate } from "@voice-notes/core";
+import { MCP_LABELS, type Agent, type Deploys, type McpAnswer, type Sessions } from "../../domain/agent";
 import type { Env } from "../../env";
 import { parseCallback, removeMessage, removeOriginal, type SessionAction } from "../../infrastructure/chat";
 // Єдиний дозволений імпорт між interface-модулями: ADR 0004.
 // oxlint-disable-next-line no-restricted-imports
 import { handleMergeButton, handleReviewButton } from "../github/review";
-import { resolveRepo } from "./launch";
+import { resolveMcp, resolveRepo } from "./launch";
 import { parseRepos } from "./repo";
 
 type Query = NonNullable<TgUpdate["callback_query"]>;
 type Handler = (ctx: { bot: BotEnv; query: Query; env: Env; agent: Sessions & Deploys; id: string; chatId: number; messageId: number; answer: (text: string) => Promise<unknown> }) => Promise<void>;
+
+const MCP_ANSWERS: Record<McpAnswer, string> = { connected: "Підключено, агент продовжує.", declined: "Відхилено.", login: "Потрібен вхід у сервіс.", unavailable: "Сервіс не налаштований." };
 
 // Дії над сесією: кожна отримує вже перевірені чат, повідомлення й id сесії та сама відповідає спливаючою підказкою.
 const sessionActions: Record<Exclude<SessionAction, "ok">, Handler> = {
@@ -44,7 +46,16 @@ export async function handleButton(bot: BotEnv, query: Query, env: Env, agent: A
 		return void (await answer("Видалено."));
 	}
 	if (action.kind === "pick") return void (await answer((await resolveRepo(bot, agent, action.id, action.choice, messageId)) ? "Запускаю." : "Вибір уже неактуальний."));
+	if (action.kind === "mcp-start") return void (await answer((await resolveMcp(bot, agent, action.id, action.allow, messageId)) ? (action.allow ? "Підключаю й запускаю." : "Запускаю без них.") : "Вибір уже неактуальний."));
 	if (!(await agent.link(action.id))) return void (await answer("Сесію не знайдено."));
+	if (action.kind === "mcp-live") {
+		const result = await agent.answerMcp(action.id, action.name, action.allow).catch((err) => (console.error("mcp answer failed:", err), null));
+		if (result === null) return void (await answer("Не вдалося підключити."));
+		await removeMessage(bot, chatId, messageId);
+		// Без входу в сервіс агент отримав примітку, а власнику одразу даємо посилання на вхід (у тій самій темі).
+		if (result === "login") await tgSendMessage(bot, chatId, `${MCP_LABELS[action.name]} ще не підключено. Увійди тут і повтори запит агенту: ${new URL(agent.url(action.id)).origin}/${action.name}/login`, query.message.message_thread_id);
+		return void (await answer(MCP_ANSWERS[result]));
+	}
 	if (action.kind === "choice" || action.action === "ok") {
 		const choice = action.kind === "choice" ? action.choice : "ok";
 		const note = await agent.answer(action.id, choice).catch((err) => (console.error("answer failed:", err), null));
