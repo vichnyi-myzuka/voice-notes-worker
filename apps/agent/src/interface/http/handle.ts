@@ -1,4 +1,4 @@
-import type { CalendarLogin, Computer, Sessions, SilpoLogin } from "../../domain/agent";
+import type { CalendarLogin, CloudflareLogin, Computer, Sessions, SilpoLogin } from "../../domain/agent";
 import type { Env } from "../../env";
 import { verifyAccess } from "@voice-notes/core";
 
@@ -19,13 +19,14 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   POST /api/sessions/<id>/abort             → зупиняє поточну роботу агента
 //   GET  /silpo/login, /silpo/callback        → вхід у Сільпо (OAuth для MCP): редірект на Сільпо і завершення входу
 //   GET  /calendar/login, /calendar/callback  → вхід у Google Calendar (OAuth для MCP Google Workspace): те саме
+//   GET  /cloudflare/login, /cloudflare/callback → вхід у Cloudflare (OAuth для MCP Cloudflare): те саме
 //   GET  /api/computer                        → стан контейнера для діагностики (чому не засинає, відкриті SSE-потоки)
 //   GET  /api/computer/connections            → running; з ?detail=1 ще й SSH-з'єднання (exec продовжує життя контейнера)
 //   POST /api/computer/snapshot                      → примусово зберігає диск контейнера (після змін поза сесіями, наприклад через SSH)
 //   DELETE /api/computer/snapshot             → видаляє знімок і зупиняє контейнер: наступний старт з чистого образу (сесії зникають)
 //   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
 //   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)
-export async function handleFetch(req: Request, env: Env, agent: Sessions & Computer & SilpoLogin & CalendarLogin): Promise<Response> {
+export async function handleFetch(req: Request, env: Env, agent: Sessions & Computer & SilpoLogin & CalendarLogin & CloudflareLogin): Promise<Response> {
 	if (!env.LOCAL_DEV) {
 		if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return new Response("Access is not configured", { status: 503 });
 		if (!(await verifyAccess(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD }))) return new Response("Forbidden", { status: 403 });
@@ -78,6 +79,18 @@ export async function handleFetch(req: Request, env: Env, agent: Sessions & Comp
 		const ok = code && state ? await agent.calendarCallback(code, state).catch(() => false) : false;
 		const page = (text: string, status: number) => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Календар</title><p style="font:18px system-ui;margin:2em">${text}</p>`, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 		return ok ? page("✅ Календар підключено. Можна повертатись у чат.", 200) : page("⚠️ Не вдалося підключити Календар. Відкрий /calendar/login ще раз.", 400);
+	}
+
+	// Вхід у Cloudflare: так само, як у Сільпо.
+	if (req.method === "GET" && url.pathname === "/cloudflare/login") {
+		return new Response(null, { status: 302, headers: { location: await agent.cloudflareLoginUrl(url.origin), "cache-control": "no-store" } });
+	}
+	if (req.method === "GET" && url.pathname === "/cloudflare/callback") {
+		const code = url.searchParams.get("code");
+		const state = url.searchParams.get("state");
+		const ok = code && state ? await agent.cloudflareCallback(code, state).catch(() => false) : false;
+		const page = (text: string, status: number) => new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Cloudflare</title><p style="font:18px system-ui;margin:2em">${text}</p>`, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+		return ok ? page("✅ Cloudflare підключено. Можна повертатись у чат.", 200) : page("⚠️ Не вдалося підключити Cloudflare. Відкрий /cloudflare/login ще раз.", 400);
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/computer/connections") return json(await agent.connections(url.searchParams.get("detail") === "1"));

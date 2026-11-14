@@ -52,6 +52,8 @@ export interface Env {
 	// для входу в Google Calendar (/calendar/login). Без них Календар не підключається. У контейнер не йдуть: туди потрапляє лише короткий access-токен.
 	GOOGLE_CLIENT_ID?: string;
 	GOOGLE_CLIENT_SECRET?: string;
+	// Права OAuth для входу в Cloudflare MCP (/cloudflare/login), через пробіл. Без них — лише читання (offline_access user:read account:read).
+	CLOUDFLARE_MCP_SCOPE?: string;
 	// JSON-масив [{repo: "owner/name", about: "як власник його називає"}]: з нього бот вибирає репозиторій за вільною фразою (не секрет, див. wrangler.toml)
 	AGENT_REPOS?: string;
 	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access

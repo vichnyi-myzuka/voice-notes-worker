@@ -21,13 +21,14 @@ export type Pending = {
 	sure: boolean;
 	silpo: boolean;
 	calendar: boolean;
+	cloudflare: boolean;
 	images?: ImageRef[];
 };
 
 // Створює пост і сесію (тему в приватному чаті, пост із ⏳, begin в агента). repo — вибраний чи розпізнаний репозиторій.
 export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo: string | undefined): Promise<void> {
-	const { id, chat, messageId, inChannel, threadId, voice: file, image: hasImage, prompt, route, model, sure, silpo, calendar, images } = p;
-	console.log(`telegram ${chat}/${messageId}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo} calendar=${calendar}`);
+	const { id, chat, messageId, inChannel, threadId, voice: file, image: hasImage, prompt, route, model, sure, silpo, calendar, cloudflare, images } = p;
+	console.log(`telegram ${chat}/${messageId}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo} calendar=${calendar} cloudflare=${cloudflare}`);
 	const url = agent.url(id);
 	// Приватний чат: кожна нова сесія отримує свою тему, і далі розмова йде в ній. Теми не ввімкнено (чи збій) — усе в самому чаті.
 	// Повідомлення з уже наявної, не прив'язаної до сесії теми лишається в ній.
@@ -43,19 +44,20 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
-	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : "", calendar ? "📅 Календар" : ""].filter(Boolean).join("\n");
+	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : "", calendar ? "📅 Календар" : "", cloudflare ? "☁️ Cloudflare" : ""].filter(Boolean).join("\n");
 	const header = (
 		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
 		: `${moved ? `${clipped}\n\n` : ""}${where}`
 	).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(cloudflare && { cloudflare }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
 	if (moved || file) await removeMessage(env, chat, messageId);
 	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
 	if (silpo && !(await agent.silpoConnected().catch(() => true))) await tgSendMessage(env, chat, `🛒 Сільпо ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/silpo/login`, thread);
 	if (calendar && !(await agent.calendarConnected().catch(() => true))) await tgSendMessage(env, chat, `📅 Календар ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/calendar/login`, thread);
+	if (cloudflare && !(await agent.cloudflareConnected().catch(() => true))) await tgSendMessage(env, chat, `☁️ Cloudflare ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/cloudflare/login`, thread);
 }
 
 const pickKey = (id: string) => `pick:${id}`;

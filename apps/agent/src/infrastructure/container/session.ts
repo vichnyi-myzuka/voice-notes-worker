@@ -14,7 +14,7 @@ import { extractImages, loadImages, sendImages, type OutImage } from "./images";
 import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./posts";
-import { calendarLogin, silpoLogin } from "./logins";
+import { calendarLogin, cloudflareLogin, silpoLogin } from "./logins";
 import { retitle } from "./title";
 import { WebProxy } from "./proxy";
 import { WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
@@ -32,6 +32,7 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly proxy: WebProxy;
 	private readonly silpo: OAuthLogin;
 	private readonly calendar: OAuthLogin;
+	private readonly cloudflare: OAuthLogin;
 	// Підписка на події OpenCode, поки за якоюсь сесією стежать (див. listen).
 	private events: AbortController | undefined;
 	// Назви інструментів за id виклику й час останнього оновлення поста сесії.
@@ -51,6 +52,7 @@ export class AgentSession extends DurableObject<Env> {
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.silpo = silpoLogin(ctx.storage);
 		this.calendar = calendarLogin(ctx.storage, { id: env.GOOGLE_CLIENT_ID, secret: env.GOOGLE_CLIENT_SECRET });
+		this.cloudflare = cloudflareLogin(ctx.storage, env.CLOUDFLARE_MCP_SCOPE);
 		this.computer.applyInactivityTimeout();
 	}
 
@@ -172,6 +174,18 @@ export class AgentSession extends DurableObject<Env> {
 		return this.calendar.connected();
 	}
 
+	cloudflareLoginUrl(origin: string): Promise<string> {
+		return this.cloudflare.loginUrl(origin);
+	}
+
+	cloudflareCallback(code: string, state: string): Promise<boolean> {
+		return this.cloudflare.callback(code, state);
+	}
+
+	cloudflareConnected(): Promise<boolean> {
+		return this.cloudflare.connected();
+	}
+
 	snapshot(): Promise<SnapshotInfo> {
 		return this.computer.snapshot();
 	}
@@ -271,13 +285,15 @@ export class AgentSession extends DurableObject<Env> {
 			const folder = folderFor(id, input.name);
 			const silpo = input.silpo ? (await this.silpo.accessToken())?.access : undefined;
 			const calendar = input.calendar ? await this.calendar.accessToken() : undefined;
-			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar });
+			const cloudflare = input.cloudflare ? (await this.cloudflare.accessToken())?.access : undefined;
+			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar, cloudflare });
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }), ...(input.calendar && { calendar: true }) } satisfies Tracked);
+			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }), ...(input.calendar && { calendar: true }), ...(input.cloudflare && { cloudflare: true }) } satisfies Tracked);
 			// Сільпо просили, а входу немає (чи токен не оновився): агент скаже про це власнику замість мовчазної відсутності інструментів.
 			const notes = [
 				input.silpo && !silpo && "MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.",
 				input.calendar && !calendar && "MCP Google Calendar не підключено, бо власник ще не ввійшов у Google. Скажи йому відкрити сторінку /calendar/login на адресі агента (де веб-інтерфейс), увійти й повторити задачу. Не вигадуй подій.",
+				input.cloudflare && !cloudflare && "MCP Cloudflare не підключено, бо власник ще не ввійшов у Cloudflare. Скажи йому відкрити сторінку /cloudflare/login на адресі агента (де веб-інтерфейс), увійти й повторити задачу. Не вигадуй стану акаунта.",
 			].filter(Boolean);
 			await prompt(this.opencode(), ocId, notes.length ? `${input.prompt}\n\n(Системна примітка: ${notes.join(" ")})` : input.prompt, await this.images(input.images));
 			await this.computer.markActive();
@@ -295,7 +311,8 @@ export class AgentSession extends DurableObject<Env> {
 			ocId = await this.computer.serial(async () => {
 				const silpo = tracked.silpo ? (await this.silpo.accessToken())?.access : undefined;
 				const calendar = tracked.calendar ? await this.calendar.accessToken() : undefined;
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo, calendar });
+				const cloudflare = tracked.cloudflare ? (await this.cloudflare.accessToken())?.access : undefined;
+				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo, calendar, cloudflare });
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);

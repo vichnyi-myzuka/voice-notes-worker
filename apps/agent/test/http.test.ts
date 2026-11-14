@@ -191,6 +191,23 @@ describe("вхід у Сільпо", () => {
 	});
 });
 
+describe("вхід у Cloudflare", () => {
+	it("/cloudflare/login редіректить на Cloudflare з адресою повернення на цей воркер", async () => {
+		const { agent } = fakeAgent();
+		const res = await handleFetch(call("/cloudflare/login"), env, agent);
+		expect(res.status).toBe(302);
+		expect(res.headers.get("location")).toContain("redirect_uri=https://agent.example/cloudflare/callback");
+	});
+
+	it("/cloudflare/callback з правильним state підключає Cloudflare, з хибним чи без коду — 400", async () => {
+		const { agent } = fakeAgent();
+		expect((await handleFetch(call("/cloudflare/callback?code=c1&state=good"), env, agent)).status).toBe(200);
+		expect(await agent.cloudflareConnected()).toBe(true);
+		expect((await handleFetch(call("/cloudflare/callback?code=c2&state=bad"), env, agent)).status).toBe(400);
+		expect((await handleFetch(call("/cloudflare/callback"), env, agent)).status).toBe(400);
+	});
+});
+
 describe("вхід у Google Calendar", () => {
 	it("/calendar/login редіректить на Google з адресою повернення на цей воркер", async () => {
 		const { agent } = fakeAgent();

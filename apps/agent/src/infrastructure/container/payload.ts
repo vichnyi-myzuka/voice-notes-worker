@@ -7,9 +7,10 @@ import publish from "../../../payload/publish.sh";
 import reportSiteSkill from "../../../payload/report-site-skill.md";
 import sessionPrep from "../../../payload/session-prep.sh";
 import silpoAgent from "../../../payload/silpo-agent.md";
+import cloudflareAgent from "../../../payload/cloudflare-agent.md";
 import sureAgent from "../../../payload/sure-agent.md";
 import type { OAuthToken } from "@voice-notes/oauth";
-import { SILPO_MCP_URL } from "./logins";
+import { CLOUDFLARE_MCP_URL, SILPO_MCP_URL } from "./logins";
 
 // Файли, які воркер розкладає в контейнер сам (а не кладе в образ): вони змінюються часто, і від цього не мають скидатися знімки
 // та історія сесій. Нові сесії одразу працюють з актуальними версіями; старі сесії зберігають своє.
@@ -59,9 +60,9 @@ export const PAYLOAD_HASH = (() => {
 // Скрипт для `node -e` у контейнері: пише файли з PAYLOAD (JSON у змінній середовища) і ставить права. Node є в образі.
 export const WRITER = `const fs=require("fs"),path=require("path");for(const f of JSON.parse(process.env.PAYLOAD)){fs.mkdirSync(path.dirname(f.path),{recursive:true});fs.writeFileSync(f.path,f.content);fs.chmodSync(f.path,parseInt(f.mode,8))}`;
 
-// MCP-сервери, які сесії підключає власник (див. prepare у computer.ts): sure — фінанси, silpo — покупки в Сільпо, calendar — Google Calendar.
-// silpo і calendar — короткі access-токени (їх видають OAuthLogin.accessToken); без токена сервер не підключається.
-export type McpWanted = { sure?: boolean; silpo?: string; calendar?: OAuthToken };
+// MCP-сервери, які сесії підключає власник (див. prepare у computer.ts): sure — фінанси, silpo — покупки в Сільпо, calendar — Google Calendar, cloudflare — акаунт Cloudflare.
+// silpo, calendar і cloudflare — короткі access-токени (їх видають OAuthLogin.accessToken); без токена сервер не підключається.
+export type McpWanted = { sure?: boolean; silpo?: string; calendar?: OAuthToken; cloudflare?: string };
 
 // Google Calendar: готовий відкритий MCP-сервер (nspady/google-calendar-mcp, MIT), який OpenCode запускає в контейнері по stdio.
 // Версія збігається з ARG CALENDAR_MCP_VERSION в container/Dockerfile; у образі пакет уже встановлено, а в старому (знімок до оновлення
@@ -91,8 +92,8 @@ function calendarFiles(dir: string, token: OAuthToken): { server: unknown; files
 // Конфіг OpenCode з MCP-серверами для теки однієї сесії: лише для запитаних серверів і лише якщо вони налаштовані (Sure: адреса й токен).
 // Секрети Sure не потрапляють у файл: там посилання `{env:…}`, самі змінні передає containerEnv; заголовки Cloudflare Access (Service Token)
 // потрібні, коли сервер за тунелем з Access. Токен Сільпо короткий і змінюється, тому лежить у файлі (права 600, з git виключений).
-// Основним стає агент під задачу: `sure`, `silpo`, `calendar` або `finance` (Sure і Сільпо разом: зіставляти чеки з платежами);
-// будь-яке інше поєднання (напр. календар разом із Sure) — `assistant` з усіма інструкціями.
+// Основним стає агент під задачу: `sure`, `silpo`, `calendar`, `cloudflare` або `finance` (Sure і Сільпо разом: зіставляти чеки з платежами);
+// будь-яке інше поєднання (напр. календар разом із Sure чи Cloudflare) — `assistant` з усіма інструкціями.
 export function mcpConfig(env: Env, dir: string, want: McpWanted): PayloadFile[] | undefined {
 	const servers: Record<string, unknown> = {};
 	if (want.sure && env.SURE_MCP_URL && env.SURE_MCP_TOKEN) {
@@ -106,21 +107,23 @@ export function mcpConfig(env: Env, dir: string, want: McpWanted): PayloadFile[]
 	if (want.silpo) servers.silpo = { type: "remote", url: SILPO_MCP_URL, oauth: false, headers: { Authorization: `Bearer ${want.silpo}` } };
 	const cal = want.calendar && calendarFiles(dir, want.calendar);
 	if (cal) servers.calendar = cal.server;
-	const sure = "sure" in servers;
-	const silpo = "silpo" in servers;
-	const calendar = "calendar" in servers;
-	if (!sure && !silpo && !calendar) return undefined;
+	if (want.cloudflare) servers.cloudflare = { type: "remote", url: CLOUDFLARE_MCP_URL, oauth: false, headers: { Authorization: `Bearer ${want.cloudflare}` } };
+	const prompts: [string, string][] = [["sure", sureAgent], ["silpo", silpoAgent], ["calendar", calendarAgent], ["cloudflare", cloudflareAgent]];
+	const on = prompts.filter(([name]) => name in servers);
+	if (!on.length) return undefined;
+	const names = on.map(([name]) => name).join("+");
 	const agent =
-		sure && silpo && !calendar ? { name: "finance", description: "Аналітик витрат: Sure і чеки Сільпо", system: `${sureAgent}\n\n${silpoAgent}` }
-		: sure && !silpo && !calendar ? { name: "sure", description: "Фінансовий аналітик: працює з даними власника в Sure", system: sureAgent }
-		: silpo && !sure && !calendar ? { name: "silpo", description: "Аналітик покупок у Сільпо", system: silpoAgent }
-		: calendar && !sure && !silpo ? { name: "calendar", description: "Помічник з Google Calendar власника", system: calendarAgent }
-		: { name: "assistant", description: "Помічник власника: його дані з підключених сервісів", system: [sure && sureAgent, silpo && silpoAgent, calendar && calendarAgent].filter(Boolean).join("\n\n") };
+		names === "sure+silpo" ? { name: "finance", description: "Аналітик витрат: Sure і чеки Сільпо", system: `${sureAgent}\n\n${silpoAgent}` }
+		: names === "sure" ? { name: "sure", description: "Фінансовий аналітик: працює з даними власника в Sure", system: sureAgent }
+		: names === "silpo" ? { name: "silpo", description: "Аналітик покупок у Сільпо", system: silpoAgent }
+		: names === "calendar" ? { name: "calendar", description: "Помічник з Google Calendar власника", system: calendarAgent }
+		: names === "cloudflare" ? { name: "cloudflare", description: "Помічник з акаунтом Cloudflare власника", system: cloudflareAgent }
+		: { name: "assistant", description: "Помічник власника: його дані з підключених сервісів", system: on.map(([, system]) => system).join("\n\n") };
 	const config = {
 		$schema: "https://opencode.ai/config.json",
 		default_agent: agent.name,
 		agents: { [agent.name]: { description: agent.description, mode: "primary", system: agent.system } },
 		mcp: { servers },
 	};
-	return [{ path: `${dir}/.opencode/opencode.json`, mode: silpo ? "600" : "644", content: JSON.stringify(config, null, 2) }, ...(cal ? cal.files : [])];
+	return [{ path: `${dir}/.opencode/opencode.json`, mode: want.silpo || want.cloudflare ? "600" : "644", content: JSON.stringify(config, null, 2) }, ...(cal ? cal.files : [])];
 }

@@ -16,6 +16,23 @@ export const silpoLogin = (storage: ConstructorParameters<typeof OAuthLogin>[0])
 		register: { url: `${SILPO_ISSUER}/register`, clientName: "Agent" },
 	});
 
+export const CLOUDFLARE_MCP_URL = "https://mcp.cloudflare.com/mcp";
+const CLOUDFLARE_ISSUER = "https://mcp.cloudflare.com";
+// Права за замовчуванням лише на читання (`offline_access` потрібен для refresh-токена); для запису власник задає CLOUDFLARE_MCP_SCOPE.
+export const CLOUDFLARE_DEFAULT_SCOPE = "offline_access user:read account:read";
+
+// Офіційний MCP Cloudflare: OAuth 2.1 з PKCE і динамічною реєстрацією клієнта (/cloudflare/login).
+export const cloudflareLogin = (storage: ConstructorParameters<typeof OAuthLogin>[0], scope?: string) =>
+	new OAuthLogin(storage, {
+		name: "cloudflare",
+		key: "cloudflare",
+		authUrl: `${CLOUDFLARE_ISSUER}/authorize`,
+		tokenUrl: `${CLOUDFLARE_ISSUER}/token`,
+		callbackPath: "/cloudflare/callback",
+		scope: scope?.trim() || CLOUDFLARE_DEFAULT_SCOPE,
+		register: { url: `${CLOUDFLARE_ISSUER}/register`, clientName: "Agent" },
+	});
+
 export type GoogleClient = { id?: string; secret?: string };
 
 // MCP-сервер nspady/google-calendar-mcp: звичайний OAuth 2.0 для веб-застосунку (/calendar/login).

@@ -76,3 +76,7 @@ Before the final message, go through this checklist, do not skip steps:
 2. Committed and pushed to your branch `agent/<name>`; the pull request exists.
 3. Preview: run `ls` in the repository root and in its build output. If there is an `index.html` (the repository is a static site or browser game) and a pull request exists, you MUST publish a PRIVATE preview with plain `publish <dir> <repo-name>-<session-name>` (see "Previews of a static site project"; re-publish after further changes, also in follow-up turns that change the code). Never finish such a task without it.
 4. The final message contains the pull request link AND, for a static site, the preview URL.
+
+## Cloudflare account
+
+If an MCP server named `cloudflare` is connected (its tools start with `cloudflare_`), it gives access to the owner's Cloudflare account through the official Cloudflare MCP (OAuth, with the permissions the owner approved). It is connected only when the owner asked for it. Read before you change, change resources only when the task explicitly asks, never delete production resources without being told to, and never print or store the access token or secret values. Account data is private: never in commits, pull requests, issues or public sites.

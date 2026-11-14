@@ -29,6 +29,9 @@ export type SessionObject = {
 	calendarLoginUrl(origin: string): Promise<string>;
 	calendarCallback(code: string, state: string): Promise<boolean>;
 	calendarConnected(): Promise<boolean>;
+	cloudflareLoginUrl(origin: string): Promise<string>;
+	cloudflareCallback(code: string, state: string): Promise<boolean>;
+	cloudflareConnected(): Promise<boolean>;
 	info(): Promise<ComputerInfo>;
 	connections(detail: boolean): Promise<ConnectionsInfo>;
 	fetch(req: Request): Promise<Response>;
@@ -73,6 +76,9 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		calendarLoginUrl: (origin) => computer().calendarLoginUrl(origin),
 		calendarCallback: (code, state) => computer().calendarCallback(code, state),
 		calendarConnected: () => computer().calendarConnected(),
+		cloudflareLoginUrl: (origin) => computer().cloudflareLoginUrl(origin),
+		cloudflareCallback: (code, state) => computer().cloudflareCallback(code, state),
+		cloudflareConnected: () => computer().cloudflareConnected(),
 		info: () => computer().info(),
 		connections: (detail) => computer().connections(detail),
 	};
