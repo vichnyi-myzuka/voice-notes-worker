@@ -562,9 +562,9 @@ export class AgentSession extends DurableObject<Env> {
 		if (ocId && event.type === "session.tool.called" && event.data?.id) {
 			const tool = this.toolNames.get(event.data.id) ?? "";
 			if (tool) this.recent.set(ocId, remember(this.recent.get(ocId) ?? [], describeCall(tool, event.data.input)));
-			const wanted = tool === "bash" ? requestedMcp(event.data.input) : undefined;
+			const wanted = (tool === "bash" || tool === "shell") ? requestedMcp(event.data.input) : undefined;
 			if (wanted) await this.requestMcp(ocId, wanted).catch((err) => console.error("mcp request failed:", err));
-			const repo = tool === "bash" ? settedRepo(event.data.input) : undefined;
+			const repo = (tool === "bash" || tool === "shell") ? settedRepo(event.data.input) : undefined;
 			if (repo) await this.adoptRepo(ocId, repo).catch((err) => console.error("set-repo failed:", err));
 			return this.progress(ocId, tool, event.data.input);
 		}

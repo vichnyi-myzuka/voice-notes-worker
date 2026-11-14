@@ -1218,6 +1218,13 @@ describe("AgentSession", () => {
 						expect(asks()).toHaveLength(1);
 					});
 
+					it("інструмент називається shell (а не bash): запит теж працює", async () => {
+						const t = await started();
+						tool(t.opencode, "s1", "shell", { command: "request-mcp cloudflare" });
+						await flush();
+						expect(asks()).toHaveLength(1);
+					});
+
 					it("вже підключений сервіс не перепитується", async () => {
 						const t = setup({ BOT_TOKEN: "bot" });
 						await t.session.start(SID, { prompt: "Задача", cloudflare: true });
