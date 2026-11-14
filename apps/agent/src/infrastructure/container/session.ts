@@ -2,11 +2,13 @@ import { workersLlm } from "@voice-notes/core";
 import type { OAuthLogin } from "@voice-notes/oauth";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { folderFor, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { removeTopic, renameTopic, sendChat, setTopicIcon, type Answers, type TopicState } from "../chat";
+import { MCP_LABELS, folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { removeTopic, renameTopic, sendChat, sendMcpQuestion, setTopicIcon, type Answers, type TopicState } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
+import { requestedMcp } from "./mcp";
+import { MCP_PROMPTS, type McpWanted } from "./payload";
 import { stamp, stopwatch } from "../../timing";
 import { JOB_ATTEMPTS, JOB_RETRY_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
@@ -44,6 +46,8 @@ export class AgentSession extends DurableObject<Env> {
 	private narration = new Map<string, string>();
 	// Останнє уточнення власника за id сесії: з ним модель вирішує, чи змінився напрям розмови (назва теми).
 	private asks = new Map<string, string>();
+	// Запити MCP, на які власник ще не відповів («<id сесії>:<сервіс>»): повторний запит агента не дублює кнопки.
+	private mcpAsked = new Set<string>();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -276,6 +280,16 @@ export class AgentSession extends DurableObject<Env> {
 		}
 	}
 
+	// Токени запитаних сервісів для конфігу теки (без входу токена немає: сервер не підключається). Короткі, тож беремо свіжі щоразу.
+	private async mcpWanted(flags: Partial<Record<McpName, boolean>>): Promise<McpWanted> {
+		return {
+			sure: flags.sure,
+			silpo: flags.silpo ? (await this.silpo.accessToken())?.access : undefined,
+			calendar: flags.calendar ? await this.calendar.accessToken() : undefined,
+			cloudflare: flags.cloudflare ? (await this.cloudflare.accessToken())?.access : undefined,
+		};
+	}
+
 	// Ідемпотентно за id: повторний виклик не створює другу сесію OpenCode й не готує теку вдруге.
 	async start(id: string, input: StartInput): Promise<{ sessionId: string }> {
 		const sw = stopwatch(`session ${id} start`);
@@ -287,9 +301,7 @@ export class AgentSession extends DurableObject<Env> {
 			const again = await this.ctx.storage.get<Tracked>(sessionKey(id));
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
-			const silpo = input.silpo ? (await this.silpo.accessToken())?.access : undefined;
-			const calendar = input.calendar ? await this.calendar.accessToken() : undefined;
-			const cloudflare = input.cloudflare ? (await this.cloudflare.accessToken())?.access : undefined;
+			const { silpo, calendar, cloudflare } = await this.mcpWanted(input);
 			sw.mark("queue");
 			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar, cloudflare });
 			sw.mark("prepare");
@@ -318,10 +330,7 @@ export class AgentSession extends DurableObject<Env> {
 		let ocId = tracked.ocId;
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
-				const silpo = tracked.silpo ? (await this.silpo.accessToken())?.access : undefined;
-				const calendar = tracked.calendar ? await this.calendar.accessToken() : undefined;
-				const cloudflare = tracked.cloudflare ? (await this.cloudflare.accessToken())?.access : undefined;
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo, calendar, cloudflare });
+				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, await this.mcpWanted(tracked));
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
@@ -473,6 +482,8 @@ export class AgentSession extends DurableObject<Env> {
 		if (ocId && event.type === "session.tool.called" && event.data?.id) {
 			const tool = this.toolNames.get(event.data.id) ?? "";
 			if (tool) this.recent.set(ocId, remember(this.recent.get(ocId) ?? [], describeCall(tool, event.data.input)));
+			const wanted = tool === "bash" ? requestedMcp(event.data.input) : undefined;
+			if (wanted) await this.requestMcp(ocId, wanted).catch((err) => console.error("mcp request failed:", err));
 			return this.progress(ocId, tool, event.data.input);
 		}
 		const kind = event.type.startsWith("session.execution.") ? event.type.slice("session.execution.".length) : "";
@@ -493,6 +504,52 @@ export class AgentSession extends DurableObject<Env> {
 		}
 		const done = await this.summary(this.opencode(), w);
 		await this.finishWatch(key, w, done.text, done.images);
+	}
+
+	// Агент просить підключити MCP (команда request-mcp): власнику йдуть кнопки в тему сесії. Підключене вже, невідоме чи без поста в чаті — ігноруємо.
+	private async requestMcp(ocId: string, name: McpName): Promise<void> {
+		if (!this.env.BOT_TOKEN) return;
+		const found = [...(await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX }))].find(([, t]) => t.ocId === ocId);
+		const post = found?.[1].post;
+		if (!found || !post?.chatId || found[1][name]) return;
+		const id = sessionId(found[0]);
+		if (this.mcpAsked.has(`${id}:${name}`)) return;
+		this.mcpAsked.add(`${id}:${name}`);
+		await sendMcpQuestion({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, id, name, `🔌 Агентові потрібен доступ до ${MCP_LABELS[name]}. Підключити до цієї сесії?`);
+	}
+
+	// Відповідь власника на запит MCP. Підключення — це запис сервера в конфіг теки сесії: OpenCode підхоплює його наживо (перевірено:
+	// сервер з'являється в /api/mcp за кілька секунд без перезапуску), тож сесія й її історія лишаються. Агента про результат
+	// повідомляє нове повідомлення в сесію (як уточнення; для підключеного — разом з інструкціями сервісу).
+	async answerMcp(id: string, name: McpName, allow: boolean): Promise<McpAnswer> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		if (!tracked) throw new Error(`unknown session ${id}`);
+		this.mcpAsked.delete(`${id}:${name}`);
+		if (!allow) {
+			await this.tell(id, tracked, `The owner declined to connect the ${name} MCP. Continue without it and do not invent data from it.`);
+			return "declined";
+		}
+		if (name === "sure" && !(this.env.SURE_MCP_URL && this.env.SURE_MCP_TOKEN)) {
+			await this.tell(id, tracked, "The sure MCP is not configured on the worker, so it cannot be connected. Continue without it and do not invent data from it.");
+			return "unavailable";
+		}
+		const wanted = await this.mcpWanted({ ...tracked, [name]: true });
+		if (name !== "sure" && !wanted[name]) {
+			await this.tell(id, tracked, `The ${name} MCP is not connected because the owner has not logged in to it yet. Tell them to open /${name}/login on the agent address, log in, and repeat the request. Do not invent data.`);
+			return "login";
+		}
+		await this.computer.ensureRunning();
+		await this.computer.serial(() => this.computer.prepare(tracked.folder ?? id, tracked.repo, wanted));
+		await this.ctx.storage.put(sessionKey(id), { ...tracked, [name]: true } satisfies Tracked);
+		await this.tell(id, tracked, `The owner connected the ${name} MCP: its tools (names start with \`${name}_\`) are available from this step on. Continue the task. Instructions for this service:\n\n${MCP_PROMPTS[name]}`);
+		return "connected";
+	}
+
+	// Повідомлення агентові від воркера: як уточнення від власника (job: сесія прокидається, а пост знову показує «Працює»).
+	private async tell(id: string, tracked: Tracked, text: string): Promise<void> {
+		const post = tracked.post;
+		if (post?.chatId && post.url) await this.enqueue({ id, text, target: { chatId: post.chatId, url: post.url, ...(post.threadId && { threadId: post.threadId }) }, attempts: 0 });
+		else await this.followUp(id, text);
 	}
 
 	// Питання агента: текст у пост, а для простих (один вибір, так/ні) ще й кнопки-відповіді.

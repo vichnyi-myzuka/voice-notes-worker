@@ -318,7 +318,7 @@ describe("AgentSession", () => {
 			await session.start(ID, { prompt: "Задача" });
 			expect(opencode.syncs).toHaveLength(1);
 			const byPath = Object.fromEntries(opencode.syncs[0].map((f) => [f.path, f]));
-			expect(Object.keys(byPath).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/session-prep", "/usr/local/lib/git-hooks/pre-push"]);
+			expect(Object.keys(byPath).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/lib/git-hooks/pre-push"]);
 			expect(byPath["/usr/local/bin/publish"].mode).toBe("755");
 			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("Publishing small static sites");
 			expect(byPath["/root/.claude/CLAUDE.md"].content).toBe(byPath["/root/.config/opencode/AGENTS.md"].content);
@@ -1018,6 +1018,77 @@ describe("AgentSession", () => {
 					await flush();
 					expect(edits()).toHaveLength(2); // дія й питання, без пропуску
 					expect(edits().at(-1)!.text).toContain("❓ Який стиль?\nСтиль\n• Мінімалізм");
+				});
+
+				describe("запит MCP посеред сесії (request-mcp)", () => {
+					const SID = "tg-1-1";
+					const POST_TG = { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 };
+					const login = { client: { id: "cid", redirect: "r" }, tokens: { access: "cf-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };
+					const asks = () => sent.filter((c) => "reply_markup" in c && String(c.text ?? "").startsWith("🔌")) as unknown as { chat_id: number; message_thread_id?: number; text: string; reply_markup: { inline_keyboard: { text: string; callback_data: string }[][] } }[];
+					const started = async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						t.store.set("cloudflare", login);
+						await t.session.start(SID, { prompt: "Задача" });
+						await t.session.watch(SID, POST_TG);
+						return t;
+					};
+					const request = async (t: Awaited<ReturnType<typeof started>>, command: string, id = "r1") => {
+						tool(t.opencode, id, "bash", { command });
+						await flush();
+					};
+
+					it("команда `request-mcp <сервіс>` у bash шле власнику кнопки в темі сесії, повторний запит їх не дублює", async () => {
+						const t = await started();
+						await request(t, "request-mcp cloudflare");
+						expect(asks()).toHaveLength(1);
+						expect(asks()[0]).toMatchObject({ chat_id: 5, message_thread_id: 9 });
+						expect(asks()[0].text).toContain("☁️ Cloudflare");
+						expect(asks()[0].reply_markup.inline_keyboard.flat().map((b) => b.callback_data)).toEqual([`mcpl:${SID}:cloudflare:y`, `mcpl:${SID}:cloudflare:n`]);
+						await request(t, "cd x && request-mcp cloudflare", "r2");
+						expect(asks()).toHaveLength(1);
+						await request(t, "npm test", "r3"); // інша команда
+						await request(t, "request-mcp bank", "r4"); // невідомий сервіс
+						expect(asks()).toHaveLength(1);
+					});
+
+					it("вже підключений сервіс не перепитується", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача", cloudflare: true });
+						await t.session.watch(SID, POST_TG);
+						await request(t, "request-mcp cloudflare");
+						expect(asks()).toEqual([]);
+					});
+
+					it("підтвердження дописує сервер у конфіг теки, запам'ятовує його й повідомляє агента (з інструкціями сервісу)", async () => {
+						const t = await started();
+						await request(t, "request-mcp cloudflare");
+						t.opencode.execs.length = 0;
+						expect(await t.session.answerMcp(SID, "cloudflare", true)).toBe("connected");
+						const [exec] = t.opencode.execs.filter((e) => e.cmd[0] === "sh");
+						const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
+						expect(file.mode).toBe("600");
+						expect(Object.keys(JSON.parse(file.content).mcp.servers)).toEqual(["cloudflare"]);
+						expect(t.store.get(`session:${SID}`)).toMatchObject({ cloudflare: true });
+						await t.session.alarm(); // повідомлення йде як уточнення
+						expect(t.opencode.prompts.at(-1)!.text).toMatch(/connected the cloudflare MCP[\s\S]*strictly read-only/);
+						await request(t, "request-mcp cloudflare", "r2");
+						expect(asks()).toHaveLength(1); // підключено: нового запиту немає
+					});
+
+					it("відмова, не налаштований Sure й відсутній вхід лише повідомляють агента й нічого не пишуть у конфіг", async () => {
+						const t = await started();
+						t.opencode.execs.length = 0;
+						expect(await t.session.answerMcp(SID, "calendar", false)).toBe("declined");
+						await t.session.alarm();
+						expect(t.opencode.prompts.at(-1)!.text).toContain("declined to connect the calendar MCP");
+						expect(await t.session.answerMcp(SID, "sure", true)).toBe("unavailable");
+						expect(await t.session.answerMcp(SID, "silpo", true)).toBe("login");
+						await t.session.alarm();
+						expect(t.opencode.prompts.at(-1)!.text).toContain("/silpo/login");
+						expect(t.opencode.execs.filter((e) => e.cmd[0] === "sh")).toEqual([]);
+						expect(t.store.get(`session:${SID}`)).not.toHaveProperty("silpo");
+						await expect(t.session.answerMcp("tg-9-9", "silpo", true)).rejects.toThrow("unknown session");
+					});
 				});
 
 				describe("відповідь кнопкою на питання агента", () => {

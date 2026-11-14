@@ -1,5 +1,6 @@
 import { NO_PREVIEW, tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes/core";
 import { chatHtml, escapeHtml, stripQuote, tablesToCards } from "@voice-notes/telegram-format";
+import type { McpName } from "../../domain/agent";
 import { callback } from "./callback";
 
 export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
@@ -73,4 +74,11 @@ export async function editChat(env: BotEnv, chatId: number | string, messageId: 
 		console.error("html edit rejected, editing plain:", err);
 		return edit(plain).catch((e) => (console.error("edit failed:", e), false));
 	}
+}
+
+// Запит агента на MCP посеред сесії: окреме повідомлення в темі сесії з кнопками «Підключити / Ні» (`mcpl:<id>:<сервіс>:<y|n>`,
+// обробляє interface/telegram; після відповіді повідомлення прибирається). Повертає message_id.
+export async function sendMcpQuestion(env: BotEnv, chatId: number, threadId: number | undefined, id: string, name: McpName, text: string): Promise<number> {
+	const rows = [[{ text: "✅ Підключити", callback_data: callback.mcpLive(id, name, true) }, { text: "❌ Ні", callback_data: callback.mcpLive(id, name, false) }]];
+	return (await tg(env, "sendMessage", { chat_id: chatId, ...(threadId && { message_thread_id: threadId }), text, reply_markup: { inline_keyboard: rows } })).message_id;
 }

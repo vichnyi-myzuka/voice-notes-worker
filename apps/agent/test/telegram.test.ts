@@ -338,10 +338,13 @@ describe("вебхук Telegram", () => {
 			expect(c.sessions.get(SID)?.input.sure).toBeUndefined();
 		});
 
-		it("Sure вмикає й висновок моделі про фінанси власника без жодного ключового слова; інакше MCP не підключається", async () => {
+		it("висновок моделі про фінанси власника без ключового слова: Sure (вміє змінювати дані) вмикається лише після кнопки; інакше MCP не підключається", async () => {
 			const yes = setup("", (user) => (user.includes("мої фінанси") ? { repo: "none", type: "feat", name: "finance-check", finance: true } : null));
 			await yes.send(msg({ text: "Хочу перевірити мої фінанси за жовтень" }));
-			expect(yes.sessions.get(SID)?.input).toMatchObject({ prompt: "Хочу перевірити мої фінанси за жовтень", sure: true });
+			expect(yes.sessions.size).toBe(0);
+			expect(yes.replies()[0]).toContain("🔌 Підключити до задачі: 💰 Sure?");
+			await yes.press(`mcps:${SID}:y`);
+			expect(yes.sessions.get(SID)?.input).toMatchObject({ prompt: "Хочу перевірити мої фінанси за жовтень", sure: true, model: "haiku" });
 			const no = setup("", () => ({ repo: "none", type: "feat", name: "finance-page", finance: false }));
 			await no.send(msg({ text: "Зроби сторінку калькулятора фінансів" }));
 			expect(no.sessions.get(SID)?.input.sure).toBeUndefined();
@@ -364,6 +367,79 @@ describe("вебхук Telegram", () => {
 			expect(sessions.has(SID)).toBe(false);
 			await send(msg({ text: "/status", reply_to_message: botPost() }, 9));
 			expect(replies()).toEqual(["⚠️ Сесію не знайдено."]); // про саме видалення бот мовчить
+		});
+
+		describe("підтвердження MCP кнопками при старті", () => {
+			const keyboard = (calls: { method: string; body: Record<string, unknown> }[]) => (calls.find((c) => c.method === "sendMessage")!.body.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat();
+
+			it("Сільпо й Cloudflare (лише читання) із впевненого висновку роутера вмикаються без питань; Календар питає", async () => {
+				const a = setup("", () => ({ repo: "none", type: "feat", name: "x", groceries: true, cloudflare: true }));
+				await a.send(msg({ text: "що я купував і скільки коштують контейнери" }));
+				expect(a.sessions.get(SID)?.input).toMatchObject({ silpo: true, cloudflare: true });
+				const b = setup("", () => ({ repo: "none", type: "feat", name: "x", calendar: true }));
+				await b.send(msg({ text: "що в мене завтра" }));
+				expect(b.sessions.size).toBe(0);
+				expect(keyboard(b.calls).map((k) => k.callback_data)).toEqual([`mcps:${SID}:y`, `mcps:${SID}:n`]);
+			});
+
+			it("сумнів роутера (maybe) теж питає, одне питання на кілька сервісів; відмова запускає сесію без них", async () => {
+				const t = setup("", () => ({ repo: "none", type: "feat", name: "x", maybe: ["cloudflare", "silpo", "nope"] }));
+				await t.send(msg({ text: "перевір, чи не переплачую" }));
+				expect(t.sessions.size).toBe(0);
+				expect(t.replies()[0]).toContain("🔌 Підключити до задачі: 🛒 Сільпо, ☁️ Cloudflare?");
+				await t.press(`mcps:${SID}:n`);
+				expect(t.sessions.get(SID)?.input.silpo).toBeUndefined();
+				expect(t.sessions.get(SID)?.input.cloudflare).toBeUndefined();
+				expect(t.answers()).toEqual(["Запускаю без них."]);
+				await t.press(`mcps:${SID}:y`);
+				expect(t.answers().at(-1)).toBe("Вибір уже неактуальний.");
+			});
+
+			it("«Підключити» вмикає всі запитані сервіси", async () => {
+				const t = setup("", () => ({ repo: "none", type: "feat", name: "x", maybe: ["cloudflare", "silpo"] }));
+				await t.send(msg({ text: "перевір, чи не переплачую" }));
+				await t.press(`mcps:${SID}:y`);
+				expect(t.sessions.get(SID)?.input).toMatchObject({ silpo: true, cloudflare: true });
+			});
+
+			it("явний префікс вмикає без питань; питання йде після вибору репозиторію", async () => {
+				const a = setup("", () => ({ repo: "none", type: "feat", name: "x", calendar: true }));
+				await a.send(msg({ text: "календар, що в мене завтра" }));
+				expect(a.sessions.get(SID)?.input.calendar).toBe(true);
+				const b = setup("", () => ({ unsure: true, type: "feat", name: "x", maybe: ["sure"] }));
+				await b.send(msg({ text: "перевір проєкт і мої витрати" }));
+				await b.press(`pick:${SID}:0`);
+				expect(b.sessions.size).toBe(0); // репозиторій вибрано, але MCP ще не підтверджено
+				expect(b.replies().at(-1)).toContain("🔌 Підключити до задачі: 💰 Sure?");
+				await b.press(`mcps:${SID}:y`);
+				expect(b.sessions.get(SID)?.input).toMatchObject({ repo: "me/bot", sure: true });
+			});
+		});
+
+		describe("запит MCP посеред сесії (кнопки від агента)", () => {
+			it("«Підключити» й «Ні» відповідають агентові; вхід у сервіс — посилання; чужа людина нічого не підключає", async () => {
+				const t = setup();
+				await t.send(msg({ text: "Поправ README" }));
+				await t.press(`mcpl:${SID}:cloudflare:y`);
+				expect(t.mcpAnswers).toEqual([{ id: SID, name: "cloudflare", allow: true }]);
+				expect(t.sessions.get(SID)?.input.cloudflare).toBe(true);
+				expect(t.answers()).toEqual(["Підключено, агент продовжує."]);
+				await t.press(`mcpl:${SID}:sure:n`);
+				expect(t.answers().at(-1)).toBe("Відхилено.");
+				await t.press(`mcpl:${SID}:silpo:y`);
+				expect(t.answers().at(-1)).toBe("Потрібен вхід у сервіс.");
+				expect(JSON.stringify(t.calls.map((c) => c.body))).toContain("https://agent.example/silpo/login");
+				await t.press(`mcpl:${SID}:calendar:y`, 999);
+				expect(t.answers().at(-1)).toBe("Недоступно.");
+				expect(t.mcpAnswers).toHaveLength(3);
+			});
+
+			it("невідома сесія й невідомий сервіс", async () => {
+				const t = setup();
+				await t.press(`mcpl:tg-1-1:cloudflare:y`);
+				await t.press(`mcpl:${SID}:bank:y`);
+				expect(t.answers()).toEqual(["Сесію не знайдено.", "Невідома дія."]);
+			});
 		});
 
 		describe("вибір репозиторію кнопками", () => {

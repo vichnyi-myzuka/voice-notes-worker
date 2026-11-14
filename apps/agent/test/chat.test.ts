@@ -45,3 +45,14 @@ describe("кнопки під постом", () => {
 		expect(await markup((env) => sendChat(env, 5, "x", undefined, "working"))).toBeUndefined();
 	});
 });
+
+describe("callback_data MCP", () => {
+	it("запит MCP до створення сесії й посеред неї розбирається й вкладається в 64 байти", async () => {
+		const { callback, parseCallback } = await import("../src/infrastructure/chat");
+		const id = "tg--1001234567890-1234567";
+		expect(parseCallback(callback.mcpStart(id, true))).toEqual({ kind: "mcp-start", id, allow: true });
+		expect(parseCallback(callback.mcpLive(id, "cloudflare", false))).toEqual({ kind: "mcp-live", id, name: "cloudflare", allow: false });
+		expect(callback.mcpLive(id, "cloudflare", true).length).toBeLessThanOrEqual(64);
+		expect(parseCallback(`mcpl:${id}:bank:y`)).toBeUndefined();
+	});
+});

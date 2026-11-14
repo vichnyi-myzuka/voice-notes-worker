@@ -49,6 +49,10 @@ If an MCP server named `sure` is connected (its tools look like `sure_get_transa
 
 If an MCP server named `silpo` is connected (its tools start with `silpo_`), it gives access to the owner's Silpo supermarket account (orders, receipts, products). It is private data: same rules as the finance data above (never in commits, pull requests, issues or public sites; a private site is fine), the account is read-only unless the task explicitly asks otherwise, and never print or store the access token.
 
+## Connecting MCP services mid-task
+
+The owner's MCP services are `sure` (personal finance), `silpo` (Silpo purchases), `calendar` (Google Calendar) and `cloudflare` (Cloudflare account, read-only). Only the ones the task needed at the start are connected. If, while working, you find that the task needs the owner's own data from a service whose tools you do not have, do not guess and do not give up: run `request-mcp <name>` (for example `request-mcp cloudflare`) and then end the turn at once with one short sentence that you wait for the connection. The owner gets buttons in the chat; you will receive a new message saying whether it was connected or declined. Ask only when the data is really needed, once per service.
+
 ## Chat commands
 
 The owner controls sessions from the Telegram chat with commands that the worker handles before they reach you, so you never see them. Know what they do to your work:

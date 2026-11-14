@@ -1,11 +1,11 @@
 import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
-import type { Agent, ImageRef } from "../../domain/agent";
+import { MCP_WRITES, type Agent, type ImageRef, type McpName } from "../../domain/agent";
 import type { Env } from "../../env";
 import { stamp, stopwatch } from "../../timing";
 import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
 import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
-import { askRepo, launchSession, type Pending } from "./launch";
+import { askRepo, proceed, type Pending } from "./launch";
 import { routeTask, type KnownRepo } from "./repo";
 
 export const TELEGRAM_PATH = "/telegram";
@@ -106,8 +106,8 @@ function modelPrefix(transcript: string): { model: string; task: string } | unde
 	return spoken && model ? { model, task: spoken[2] } : undefined;
 }
 
-// Явне ввімкнення MCP Sure (фінанси власника): «@sure задача» чи голосом «шур, задача» на початку. Без префікса Sure вмикає висновок
-// моделі (routeTask: задача потребує особистих фінансів власника), тож слово «шур» не обов'язкове.
+// Явне ввімкнення MCP Sure (фінанси власника): «@sure задача» чи голосом «шур, задача» на початку. Без префікса Sure пропонує висновок
+// моделі (routeTask: задача потребує особистих фінансів власника) і вмикає його після підтвердження кнопкою, тож слово «шур» не обов'язкове.
 const SURE_PREFIX = /^(?:@sure|shure|шур|шюр|шуре)[\s,.:;!—–-]+([\s\S]+)$/iu;
 
 // Те саме для MCP Сільпо (покупки в магазині): «@silpo задача» чи голосом «сільпо, задача».
@@ -239,24 +239,31 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	sw.mark("route");
 	const repo = withRepo ? withRepo[1] : route.repo;
 	// Sure підключається, коли власник назвав його явно («шур, …», «@sure») або модель побачила, що задача про його фінанси.
-	const sure = forcedSure || route.sure === true;
-	// Сільпо так само: явно («сільпо, …», «@silpo») або модель побачила, що треба дивитись, що власник купував у магазині.
-	const silpo = forcedSilpo || route.silpo === true;
-	// Календар так само: явно («календар, …», «@calendar») або модель побачила, що треба дивитись чи міняти події власника.
-	const calendar = forcedCalendar || route.calendar === true;
-	// Cloudflare так само: явно («клаудфлер, …», «@cloudflare») або модель побачила, що треба дивитись акаунт власника (доступ лише для читання).
-	const cloudflare = forcedCloudflare || route.cloudflare === true;
+	// Сільпо — явно («сільпо, …», «@silpo») або коли модель побачила, що треба дивитись, що власник купував. Календар, Cloudflare — так само.
+	// Явний префікс вмикає сервіс одразу. Висновок моделі вмикає одразу лише сервіси для читання (Сільпо, Cloudflare); Sure і Календар
+	// (вміють змінювати дані), а також будь-який сумнів моделі, чекають підтвердження кнопкою (ask, див. launch.ts).
+	const ask: McpName[] = [];
+	const decide = (name: McpName, forced: boolean, routed: boolean | undefined): boolean => {
+		if (forced) return true;
+		if (routed && !MCP_WRITES.includes(name)) return true;
+		if (routed || route.maybe?.includes(name)) ask.push(name);
+		return false;
+	};
+	const sure = decide("sure", forcedSure, route.sure);
+	const silpo = decide("silpo", forcedSilpo, route.silpo);
+	const calendar = decide("calendar", forcedCalendar, route.calendar);
+	const cloudflare = decide("cloudflare", forcedCloudflare, route.cloudflare);
 	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
 	// Cloudflare сюди не входить: аналіз витрат і неефективностей потребує міркувань, модель лишається за замовчуванням.
-	const model = requestedModel ?? route.model ?? (sure || silpo || calendar ? "haiku" : undefined);
-	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: !!file, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ...(images && { images }) };
+	const model = requestedModel ?? route.model ?? (sure || silpo || calendar || ask.some((n) => n !== "cloudflare") ? "haiku" : undefined);
+	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: !!file, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ask, ...(images && { images }) };
 	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.
 	if (!repo && route.unsure) {
 		await askRepo(env, agent, repos, pending);
 		sw.mark("ask");
 		return void sw.log({ flow: "ask-repo", kind, "lag-s": lag, sent: stamp(msg.date * 1000) });
 	}
-	await launchSession(env, agent, pending, repo, sw);
+	await proceed(env, agent, pending, repo, sw);
 	sw.log({ flow: "new-session", kind, "lag-s": lag, session: id });
 }
 

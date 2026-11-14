@@ -19,6 +19,7 @@ export function fakeAgent(origin = "https://agent.example") {
 	const silpoCodes: string[] = [];
 	const calendarCodes: string[] = [];
 	const cloudflareCodes: string[] = [];
+	const mcpAnswers: { id: string; name: string; allow: boolean }[] = [];
 	let snapshotError = "";
 	const get = (id: string) => {
 		const s = sessions.get(id);
@@ -91,6 +92,13 @@ export function fakeAgent(origin = "https://agent.example") {
 		},
 		async link(id) {
 			return sessions.has(id) ? `ses_${id}` : undefined;
+		},
+		async answerMcp(id, name, allow) {
+			const s = get(id);
+			mcpAnswers.push({ id, name, allow });
+			if (!allow) return "declined";
+			s.input = { ...s.input, [name]: true };
+			return name === "silpo" && silpoCodes.length === 0 ? "login" : "connected";
 		},
 		async byThread(chatId, threadId) {
 			return watches.find((w) => w.target.chatId === chatId && w.target.threadId === threadId)?.id;
@@ -170,5 +178,5 @@ export function fakeAgent(origin = "https://agent.example") {
 			return { id: `snap${snapshots.length}`, bytes: 1, ms: 2 };
 		},
 	};
-	return { agent, deploys, choices, sessions, served, snapshots, resets, watches, failSnapshot: (message: string) => void (snapshotError = message) };
+	return { agent, mcpAnswers, deploys, choices, sessions, served, snapshots, resets, watches, failSnapshot: (message: string) => void (snapshotError = message) };
 }
