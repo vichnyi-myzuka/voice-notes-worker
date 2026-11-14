@@ -750,6 +750,16 @@ describe("AgentSession", () => {
 			expect(sent).toHaveLength(1);
 		});
 
+		it("сесія зникла, але ще в списку активних: alarm не падає в 404, спостереження знімається", async () => {
+			const { session, opencode, store } = await watched();
+			await session.alarm(); // бачимо, що працює
+			opencode.sessions.delete(ocId); // busy лишається
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			await expect(session.alarm()).resolves.toBeUndefined();
+			expect(store.has(`watch:${ID}`)).toBe(false);
+			expect(sent.at(-1)?.text).toContain("Сесії OpenCode вже немає");
+		});
+
 		describe("події OpenCode (SSE)", () => {
 			const flush = async () => {
 				for (let i = 0; i < 20; i++) await Promise.resolve();
