@@ -29,7 +29,7 @@ const SYSTEM = `You route tasks for a coding agent. The owner dictates a task (u
 - "calendar": true only if doing the task requires reading or changing the owner's own Google Calendar: their schedule, meetings, appointments, events, free time, adding, moving or cancelling an event, or the calendar by name ("календар", "calendar"). false for everything else, including building a calendar page or app, or date arithmetic that needs none of the owner's events.
 - "model": the Claude model the owner asks for anywhere in the task ("use Opus", "на опусі", "модель опус"), one of opus, sonnet, haiku. The task is dictated by voice and the speech recognizer garbles names, so treat close sounds as the same model ("опис", "опус", "Opus" -> opus; "сонет" -> sonnet; "хайку" -> haiku). "none" if the owner names no model; do not guess a model from the difficulty of the task.
 - "evidence" (only if asked): an exact quote copied from the task where the owner explicitly refers to one of the known repositories (its name, or a phrase from its description such as "our bot" or "yourself", or a loose nickname, transliteration, misspelling or description of what the project is, such as "the bird game", or a named file or feature of that project). Empty string if there is no such quote.
-- "repo" (only if asked): the repository the evidence refers to, otherwise "none". Default to "none". Creating something new and standalone (a page, a site, a script, a prototype, a report) is NEVER about a known repository, even if the topic sounds related; neither is a generic or ambiguous task.`;
+- "repo" (only if asked): the repository the evidence refers to, otherwise "none". Ukrainian is inflected, so "нашому боті", "нашого бота", "в нашому репозиторії", "у вас" (about the agent itself) count as the same phrases as "our bot", "our repository". Questions, ideas and research about a known project ("how can we improve X in our bot?", "що думаєш про наш бот") are about that project too, not only requests to change it. Default to "none" only when no known project is referred to. Creating something new and standalone (a page, a site, a script, a prototype, a report) is NEVER about a known repository, even if the topic sounds related; neither is a generic or ambiguous task.`;
 
 export const MODELS = ["opus", "sonnet", "haiku"] as const;
 
@@ -71,5 +71,6 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 	const quote = picked.evidence?.trim().toLowerCase() ?? "";
 	const grounded = quote.length >= 3 && task.toLowerCase().includes(quote);
 	const model = MODELS.find((m) => m === picked.model);
+	if (picked.repo && picked.repo !== "none" && !grounded) console.log(`route: repo ${picked.repo} відкинуто, цитата ${JSON.stringify(picked.evidence ?? "")} не знайдена у фразі`);
 	return { ...(model && { model }), ...(picked.finance === true && { sure: true }), ...(picked.groceries === true && { silpo: true }), ...(picked.calendar === true && { calendar: true }), ...(grounded && picked.repo && names.includes(picked.repo) && { repo: picked.repo }), ...(name && { name }), ...(title && { title }) };
 }
