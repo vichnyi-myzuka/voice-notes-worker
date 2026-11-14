@@ -8,14 +8,17 @@ import { Badge } from "./components/ui/badge";
 import { AgentFlow, AgentModules, Cicd, NotesLayers, NotesPipeline, Overview, SitesFlow } from "./diagrams";
 import { how } from "./content";
 import { formatNumber } from "./lib/utils";
-import data from "./generated.json";
+import raw from "./generated.json";
+import type { Generated } from "../../scripts/lib";
 
+// generated.json пише scripts/generate.ts; явний тип потрібен, бо порожні масиви (напр. merges без історії git) JSON виводить як never[]
+const data = raw as Generated;
 const blob = (path: string) => `${data.repoUrl}/blob/main/${path}`;
 
 export default function App() {
   const apps = data.apps.filter((a) => a.kind === "app");
   const packages = data.apps.filter((a) => a.kind === "package");
-  const count = (a: (typeof data.apps)[number]) => a.modules.reduce((s, m) => s + m.files.length, 0);
+  const count = (a: Generated["apps"][number]) => a.modules.reduce((s, m) => s + m.files.length, 0);
   const sizes = data.apps.map((a) => ({ name: a.name.split("/")[1], files: count(a) }));
   return (
     <Page title="Архітектура бота й агента" subtitle={`Знімок main · коміт ${data.sha.slice(0, 7)} · ${data.date}`}>
