@@ -73,11 +73,19 @@ export async function setTopicIcon(env: BotEnv, chat: number, threadId: number, 
 }
 
 // Закріплює повідомлення (табло сесії) без сповіщення; збій (немає прав, чат без закріплень) не критичний.
-export const pinMessage = (env: BotEnv, chat: number, messageId: number) =>
-	tg(env, "pinChatMessage", { chat_id: chat, message_id: messageId, disable_notification: true }).then(
-		() => true,
-		(err) => (console.error("pin failed:", err), false),
-	);
+// Одразу після створення теми й поста Telegram інколи відмовляє (гонка, ліміти), тож пробуємо ще кілька разів із паузою.
+export async function pinMessage(env: BotEnv, chat: number, messageId: number, retryMs = 700): Promise<boolean> {
+	for (let attempt = 1; attempt <= 3; attempt++) {
+		try {
+			await tg(env, "pinChatMessage", { chat_id: chat, message_id: messageId, disable_notification: true });
+			return true;
+		} catch (err) {
+			console.error(`pin failed (attempt ${attempt}/3):`, err);
+			if (attempt < 3) await new Promise((done) => setTimeout(done, retryMs * attempt));
+		}
+	}
+	return false;
+}
 
 // Видаляє тему разом з усіма повідомленнями в ній.
 export const removeTopic = (env: BotEnv, chat: number, threadId: number) =>
