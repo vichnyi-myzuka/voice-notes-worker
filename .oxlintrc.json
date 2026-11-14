@@ -1,0 +1,34 @@
+{
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": [
+              "../[!.]*/*",
+              "**/{domain,application,infrastructure,interface}/*/*"
+            ],
+            "message": "Імпортуй модуль через його index.ts (../tasks, а не ../tasks/apply): див. AGENTS.md, «Код»."
+          },
+          {
+            "group": [
+              "@voice-notes/core/*"
+            ],
+            "message": "Пакет core імпортується лише через @voice-notes/core."
+          }
+        ]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/test/**"
+      ],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    }
+  ]
+}

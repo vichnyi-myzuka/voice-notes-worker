@@ -43,6 +43,7 @@ apps/notes/src/<шар>/<модуль>/    шари: interface → application �
     r2/                адаптери RecordingStore, NoteRepository і TaskLedger (записи, нотатки та задачі нотаток у R2)
     todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
 AGENTS.md              правила роботи з репозиторієм для агентів
+docs/agents/           довідники для агентів: нюанси API (api-notes.md), локальний e2e (local-e2e.md), трекер задач, домен
 .dev.vars.example      (в apps/notes) шаблон секретів для локального запуску
 ```
 
@@ -112,7 +113,7 @@ npx wrangler deploy
 
 ## Тести, lint і git-хуки
 
-- `npm run lint` — oxlint (`src`, `test` кожного застосунку й пакета).
+- `npm run lint` — oxlint (`src`, `test` кожного застосунку й пакета) з конфігом `.oxlintrc.json` у корені: у `src` заборонено імпорт у внутрішні файли чужого модуля (лише через `index.ts`) і `@voice-notes/core/*`; тести винятку не мають.
 - `npm run typecheck` — `tsc --noEmit`.
 - `npm test` — vitest: наскрізний e2e через `worker.fetch` і `worker.queue` з підміненими OpenAI, Telegram і Todoist (`apps/notes/test/e2e.test.ts`: вебхук → нотатка → задача → «Видали нотатку»), unit-тести кроків обробки (`apps/notes/test/steps.test.ts`), маршрутизація `handleFetch` із каналом-заглушкою (`apps/notes/test/inbox.test.ts`), наскрізні `processNote` і `processEdit` з підміненими OpenAI і Telegram (`apps/notes/test/process-note.test.ts`: публікація, правка й повтор після збою без повторного LLM), чистої логіки (підпис і хештеги, розбір відповідей моделі й ключі задач при редагуванні, валідація полів задач Todoist, `planOps` (create/update/delete), `buildCommands`, `applyOps` і `syncTasks` з підміненим `fetch`, перехід на літній час, фільтр вхідних повідомлень Telegram). Тести Todoist — у `apps/notes/test/todoist.test.ts` і `apps/notes/test/sync-tasks.test.ts`. Без мережі й без LLM — у `apps/notes/test/fake-env.ts` R2 у пам'яті.
 - `npm run check` — усе разом (lint + typecheck + test).
