@@ -21,6 +21,9 @@ export type ThreadUi = {
 	statusPerTurn: boolean;
 	// Чи лишати в темі повідомлення-уточнення власника (історія розмови), а не видаляти їх після прийняття.
 	keepFollowUps: boolean;
+	// Чи сесії створюються лише в темах: у головному чаті текст сесії не починає, а кнопка «➕ Нова сесія» відкриває порожню тему,
+	// де перше повідомлення стартує сесію й перейменовує тему (запис із Shortcut створює тему й сесію сам).
+	topicOnlyStart: boolean;
 	// Чи схвалення деплою живе в клавішах внизу теми (тоді під постом його кнопок немає).
 	approvalKeys: boolean;
 	// Клавіші внизу теми за станом сесії (undefined — режим їх не використовує).
@@ -33,6 +36,7 @@ export const classicUi: ThreadUi = {
 	summary: ({ text, limit, mergeable }) => ({ post: text, separate: false, buttons: limit ? "retry" : mergeable ? "mergeable" : "done" }),
 	statusPerTurn: false,
 	keepFollowUps: false,
+	topicOnlyStart: false,
 	approvalKeys: false,
 	keys: () => undefined,
 };
@@ -52,6 +56,7 @@ export const messagesUi: ThreadUi = {
 	summary: ({ text, limit, mergeable }) => ({ post: STATUS(text, limit), separate: true, buttons: limit ? "retry" : mergeable ? "mergeable" : "none" }),
 	statusPerTurn: true,
 	keepFollowUps: true,
+	topicOnlyStart: true,
 	approvalKeys: true,
 	keys: (state) => KEYSETS[state],
 };
@@ -64,6 +69,12 @@ export async function threadUi(env: FlagEnv, inThread: boolean): Promise<ThreadU
 	const fallback = env.THREAD_UI ?? "classic";
 	const mode = env.FLAGS ? await env.FLAGS.getStringValue("thread-ui", fallback).catch((err) => (console.error("flagship failed:", err), fallback)) : fallback;
 	return mode === "messages" ? messagesUi : classicUi;
+}
+
+// Кнопка постійної клавіатури головного чату: відкриває нову порожню тему під сесію.
+export const NEW_SESSION = "➕ Нова сесія";
+export async function sendNewSessionKeyboard(env: BotEnv, chat: number, text: string): Promise<void> {
+	await tg(env, "sendMessage", { chat_id: chat, text, reply_markup: { keyboard: [[{ text: NEW_SESSION }]], resize_keyboard: true, is_persistent: true } } as never).catch((err) => console.error("new session keyboard failed:", err));
 }
 
 // Показує клавіші внизу теми: Telegram міняє reply-клавіатуру лише новим повідомленням, тож шлемо коротке (з підписом стану), а

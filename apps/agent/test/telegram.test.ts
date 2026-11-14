@@ -667,12 +667,42 @@ describe("вебхук Telegram", () => {
 				const t = setup();
 				t.mode.ui = ui;
 				t.topics.id = THREAD;
-				await t.send(msg({ text: "Поправ README" }));
+				await t.send(msg({ text: "Поправ README", ...(ui === "messages" && { message_thread_id: THREAD }) })); // у messages сесію починає перше повідомлення в темі
 				t.calls.length = 0;
 				await t.send(msg({ text: "Ще й CHANGELOG", message_thread_id: THREAD }, 8));
 				expect(t.sessions.get(`tg-${OWNER}-7`)?.messages).toEqual(["Поправ README", "Ще й CHANGELOG"]);
 				expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 8)).toBe(ui !== "messages");
 			}
+		});
+
+		it("THREAD_UI=messages: текст у головному чаті сесії не створює (підказка з кнопкою), «➕ Нова сесія» створює порожню тему, перше повідомлення в ній стартує сесію й перейменовує тему", async () => {
+			const t = setup("Поправ README", () => ({ repo: "none", type: "docs", name: "readme", title: "Виправлення README" }));
+			t.mode.ui = "messages";
+			t.topics.id = THREAD;
+			await t.send(msg({ text: "Поправ README" }));
+			expect(t.sessions.size).toBe(0);
+			expect(t.calls.some((c) => c.method === "createForumTopic")).toBe(false);
+			const hint = t.calls.find((c) => c.method === "sendMessage")!.body;
+			expect(JSON.stringify(hint.reply_markup)).toContain("➕ Нова сесія");
+			t.calls.length = 0;
+			await t.send(msg({ text: "➕ Нова сесія" }, 8));
+			expect(t.calls.find((c) => c.method === "createForumTopic")!.body).toMatchObject({ chat_id: OWNER, name: "Нова сесія" });
+			expect(t.calls.find((c) => c.method === "sendMessage")!.body).toMatchObject({ message_thread_id: THREAD });
+			expect(t.sessions.size).toBe(0);
+			t.calls.length = 0;
+			await t.send(msg({ text: "Поправ README", message_thread_id: THREAD }, 9));
+			expect(t.sessions.size).toBe(1);
+			expect(t.calls.some((c) => c.method === "createForumTopic")).toBe(false); // нової теми немає: стартуємо в цій
+			expect(t.calls.find((c) => c.method === "editForumTopic")!.body).toMatchObject({ message_thread_id: THREAD, name: "Виправлення README" });
+			expect(t.watches[0].target).toMatchObject({ threadId: THREAD, title: "Виправлення README" });
+			expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 9)).toBe(false); // повідомлення лишається історією
+		});
+
+		it("THREAD_UI=messages: у classic текст у головному чаті, як і раніше, створює сесію", async () => {
+			const t = setup();
+			t.topics.id = THREAD;
+			await t.send(msg({ text: "Поправ README" }));
+			expect(t.sessions.size).toBe(1);
 		});
 
 		it("повідомлення в темі, що не належить сесії, стартує сесію в ній без нової теми", async () => {

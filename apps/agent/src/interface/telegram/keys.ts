@@ -1,7 +1,7 @@
 import { tgSendMessage, type BotEnv, type TgMessage } from "@voice-notes/core";
 import type { Agent } from "../../domain/agent";
 import type { Env } from "../../env";
-import { KEYS, removeMessage, removeOriginal, sayTemporarily, type SessionKey } from "../../infrastructure/chat";
+import { KEYS, createTopic, removeMessage, removeOriginal, sayTemporarily, type SessionKey } from "../../infrastructure/chat";
 // Єдиний дозволений імпорт між interface-модулями: ADR 0004.
 // oxlint-disable-next-line no-restricted-imports
 import { mergeSession } from "../github/review";
@@ -58,4 +58,13 @@ async function review(env: Env, agent: Agent, id: string, approve: boolean, say:
 	const line = done === 0 ? "ℹ️ Деплой уже оброблено (або немає права)" : approve ? "✅ Деплой схвалено, виконується" : "❌ Деплой відхилено";
 	await agent.setDeployByPost(pending.postId, { text: line, ...(done !== 0 && { stage: approve ? "deploying" : "failed" }) }).catch(() => false);
 	await say(done === 0 ? "ℹ️ Уже оброблено" : approve ? "✅ Схвалено" : "❌ Відхилено");
+}
+
+// «➕ Нова сесія» у головному чаті (режим messages): порожня тема; перше повідомлення в ній стартує сесію (handleMessage) і дає темі назву задачі.
+export async function handleNewSession(bot: BotEnv, msg: TgMessage): Promise<void> {
+	const chat = msg.chat.id;
+	const topic = await createTopic(bot, chat, "Нова сесія");
+	await removeMessage(bot, chat, msg.message_id);
+	if (!topic) return void (await tgSendMessage(bot, chat, "⚠️ Не вдалося створити тему: перевір, що в чаті з ботом увімкнено режим тем.").catch(() => {}));
+	await tgSendMessage(bot, chat, "✍️ Опиши задачу текстом чи голосом: тут почнеться сесія.", topic).catch(() => {});
 }
