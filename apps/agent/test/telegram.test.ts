@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Llm } from "@voice-notes/core";
 import type { Env } from "../src/env";
 import { handleShortcut, handleTelegram, parseRepos } from "../src/interface/telegram";
+import { TRANSCRIBE_DEADLINE_MS } from "../src/interface/telegram/handle";
 import { describe as describeReport } from "../src/interface/telegram/commands";
 import { EPHEMERAL_MS } from "../src/infrastructure/chat";
 import { fakeAgent } from "./fake-agent";
@@ -756,6 +757,22 @@ describe("вебхук Telegram", () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		expect((await send(msg({ text: "задача" }))).status).toBe(200);
 		expect(replies().at(-1)).toContain("Не вдалося створити сесію");
+	});
+
+	it("Whisper довше дедлайну — у чаті пояснення, сесія не створюється", async () => {
+		vi.useFakeTimers();
+		try {
+			const { send, sessions, replies, llm } = setup();
+			vi.mocked(llm.transcribe).mockImplementation(() => new Promise(() => {}));
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			const sent = send(msg({ voice: { file_id: "f1", file_size: 1000, mime_type: "audio/ogg" } }));
+			await vi.advanceTimersByTimeAsync(TRANSCRIBE_DEADLINE_MS + 1);
+			expect((await sent).status).toBe(200);
+			expect(replies().at(-1)).toContain("Розпізнавання голосу тривало задовго");
+			expect(sessions.size).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

@@ -80,7 +80,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 		deps.defer(
 			handleMessage(bot, msg, inChannel, deps, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
 				console.error("telegram message failed:", err);
-				await tgSendMessage(bot, msg.chat.id, "⚠️ Не вдалося створити сесію, спробуй ще раз.", msg.message_thread_id).catch(() => {});
+				await tgSendMessage(bot, msg.chat.id, err instanceof TranscribeTimeout ? TIMEOUT_TEXT : "⚠️ Не вдалося створити сесію, спробуй ще раз.", msg.message_thread_id).catch(() => {});
 			}),
 		);
 	}
@@ -290,8 +290,23 @@ const VOICE_HINT = "Opus, Sonnet, Haiku, Sure, Сільпо, Google Calendar, Cl
 async function transcribe(env: BotEnv, llm: Llm, file: { file_id: string; mime_type?: string } | undefined, text: string | undefined): Promise<string> {
 	if (!file) return text ?? "";
 	const { data } = await downloadTelegramFile(env, file.file_id);
-	return llm.transcribe(data, file.mime_type ?? "audio/ogg", VOICE_HINT);
+	return withDeadline(llm.transcribe(data, file.mime_type ?? "audio/ogg", VOICE_HINT), TRANSCRIBE_DEADLINE_MS);
 }
+
+// Фонова робота живе в waitUntil, а Cloudflare обриває її за ~30 с після відповіді вебхуку без жодного catch: у чаті тиша.
+// Тому розпізнавання має власний дедлайн трохи нижче цього ліміту: за ним кидаємо помилку, і обробник встигає написати в чат.
+export const TRANSCRIBE_DEADLINE_MS = 22_000;
+export class TranscribeTimeout extends Error {}
+
+function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+	let timer: ReturnType<typeof setTimeout>;
+	const deadline = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new TranscribeTimeout(`розпізнавання триває довше ${ms / 1000} с`)), ms);
+	});
+	return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
+const TIMEOUT_TEXT = "⚠️ Розпізнавання голосу тривало задовго (ліміт ~30 с), запис не оброблено. Надішли коротший запис чи напиши текстом.";
 
 // Шорткат: один запис на iPhone, а куди його надіслати (нотатки чи агент), обирається в самому шорткаті. Агентові запис
 // приходить сюди (повз Access, захист — секрет `x-secret`, як у воркері нотаток): Whisper розшифровує, а далі шлях той самий,
@@ -320,14 +335,14 @@ export async function handleShortcut(req: Request, env: Env, deps: TelegramDeps)
 	// Whisper і холодний старт контейнера йдуть у фоні: шорткат одразу отримує ok.
 	deps.defer(
 		(async () => {
-			const spoken = (await deps.llm.transcribe(body, "audio/mp4", VOICE_HINT)).trim();
+			const spoken = (await withDeadline(deps.llm.transcribe(body, "audio/mp4", VOICE_HINT), TRANSCRIBE_DEADLINE_MS)).trim();
 			if (!spoken) return void (await tgSendMessage(bot, chat, "⚠️ Не розібрав голос із шортката, запиши ще раз."));
 			const sent = await tg(bot, "sendMessage", { chat_id: chat, text: "🎙 Розпізнаю…" });
 			const msg: TgMessage = { message_id: sent.message_id, date: Math.floor(Date.now() / 1000), chat: { id: chat, type: "private" }, from: { id: chat } };
 			await handleMessage(bot, msg, false, deps, env.CLAUDE_CODE_OAUTH_TOKEN, spoken);
 		})().catch(async (err) => {
 			console.error("shortcut failed:", err);
-			await tgSendMessage(bot, chat, "⚠️ Не вдалося створити сесію із шортката, спробуй ще раз.").catch(() => {});
+			await tgSendMessage(bot, chat, err instanceof TranscribeTimeout ? TIMEOUT_TEXT : "⚠️ Не вдалося створити сесію із шортката, спробуй ще раз.").catch(() => {});
 		}),
 	);
 	return new Response("ok");
