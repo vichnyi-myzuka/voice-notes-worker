@@ -1059,6 +1059,20 @@ describe("AgentSession", () => {
 				expect(edit.text).toBe(`🗣 ${"я".repeat(397)}…\n\n✅ Готово\n\nГотово: <b>ok</b>\n\n${link}`);
 			});
 
+			it("THREAD_UI=messages: схвалення деплою — клавіші внизу теми, а не кнопки під постом; pendingReview віддає запит", async () => {
+				const t = setup({ BOT_TOKEN: "bot", THREAD_UI: "messages" });
+				const SID = "tg-1-1";
+				await t.session.start(SID, { prompt: "Задача", repo: "me/app", name: "card" });
+				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 });
+				expect(await t.session.pendingReview(SID)).toBeUndefined();
+				sent.length = 0;
+				await t.session.setDeploy("me/app", "card-1", { text: "🚀 Деплой чекає схвалення", repo: "me/app", runId: 9, stage: "approval" });
+				expect(JSON.stringify(edits().at(-1))).not.toContain("appr:");
+				const keyboard = sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup) as unknown as { reply_markup: { keyboard: { text: string }[][] } }[];
+				expect(keyboard.at(-1)!.reply_markup.keyboard[0].map((b) => b.text)).toEqual(["✅ Схвалити", "❌ Відхилити", "🗑 Видалити"]);
+				expect(await t.session.pendingReview(SID)).toEqual({ postId: 77, repo: "me/app", runId: 9 });
+			});
+
 			it("THREAD_UI=messages: у темі пост без кнопок керування лишається станом, а підсумок іде окремим повідомленням; без прапорця — як раніше", async () => {
 				const finish = async (extra: Record<string, string>) => {
 					sent.length = 0;

@@ -175,6 +175,10 @@ export class AgentSession extends DurableObject<Env> {
 		return this.posts.setDeployByPost(postId, deploy, force);
 	}
 
+	async pendingReview(id: string): Promise<{ postId: number; repo: string; runId: number } | undefined> {
+		return this.posts.pendingReview(await this.ctx.storage.get<Tracked>(sessionKey(id)));
+	}
+
 	saveRef(key: string, ref: PostRef): Promise<void> {
 		return this.posts.saveRef(key, ref);
 	}

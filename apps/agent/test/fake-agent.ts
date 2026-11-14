@@ -122,6 +122,9 @@ export function fakeAgent(origin = "https://agent.example") {
 			deploys.push({ postId, deploy });
 			return postId === 77;
 		},
+		async pendingReview() {
+			return undefined;
+		},
 		async saveRef(key, ref) {
 			refs.set(key, ref);
 		},

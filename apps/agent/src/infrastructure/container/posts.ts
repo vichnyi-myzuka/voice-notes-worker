@@ -42,8 +42,9 @@ export class Posts {
 		// щоб вебхук GitHub міг перемалювати пост (див. applyDeploy).
 		const deploy = await this.storage.get<DeployInfo>(deployKey(w.postId));
 		await this.storage.put(lastKey(w.postId), { status, final, mergeable } satisfies LastShown);
-		const buttons: Buttons = (await threadUi(this.env, !!w.threadId)).postButtons({ final, retry, mergeable: mergeable && !deploy, deployDone: !!deploy?.done });
-		const review = deploy?.runId && deploy.repo ? { repo: deploy.repo, runId: deploy.runId } : undefined;
+		const ui = await threadUi(this.env, !!w.threadId);
+		const buttons: Buttons = ui.postButtons({ final, retry, mergeable: mergeable && !deploy, deployDone: !!deploy?.done });
+		const review = deploy?.runId && deploy.repo && !ui.approvalKeys ? { repo: deploy.repo, runId: deploy.runId } : undefined;
 		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
 		const text = deploy?.done ? this.text(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.text(w, deploy ? `${status}\n\n${deploy.text}` : status, final);
 		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.url, buttons, answers, review);
@@ -76,10 +77,10 @@ export class Posts {
 	private async applyDeploy(post: NonNullable<Tracked["post"]>, deploy: DeployInfo): Promise<boolean> {
 		if (!post.chatId || !post.url) return false;
 		await this.storage.put(deployKey(post.postId), deploy);
-		if (post.threadId) await this.keys({ chatId: post.chatId, threadId: post.threadId }, "done").catch((err) => console.error("keys failed:", err));
+		if (post.threadId) await this.keys({ chatId: post.chatId, threadId: post.threadId }, deploy.stage === "approval" ? "approval" : "done").catch((err) => console.error("keys failed:", err));
 		if (post.threadId && deploy.stage && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, DEPLOY_ICON[deploy.stage]);
 		const last = (await this.storage.get<LastShown>(lastKey(post.postId))) ?? { status: "✅ Готово", final: true, mergeable: false };
-		return this.show({ chatId: post.chatId, url: post.url, postId: post.postId, header: post.header }, last.status, last.final);
+		return this.show({ chatId: post.chatId, url: post.url, postId: post.postId, header: post.header, ...(post.threadId && { threadId: post.threadId }) }, last.status, last.final);
 	}
 
 	// Деплой PR з гілки agent/<folder> у репозиторії repo: показує його в пості цієї сесії. false — сесії з постом немає (тоді вебхук шле окреме повідомлення).
@@ -102,6 +103,13 @@ export class Posts {
 			if (tracked.post?.postId === postId) return this.applyDeploy(tracked.post, deploy);
 		}
 		return false;
+	}
+
+	// Деплой, що чекає схвалення, у пості цієї сесії.
+	async pendingReview(tracked: Tracked | undefined): Promise<{ postId: number; repo: string; runId: number } | undefined> {
+		if (!tracked?.post) return undefined;
+		const deploy = await this.storage.get<DeployInfo>(deployKey(tracked.post.postId));
+		return deploy?.stage === "approval" && deploy.repo && deploy.runId ? { postId: tracked.post.postId, repo: deploy.repo, runId: deploy.runId } : undefined;
 	}
 
 	// Пости, які пізніше оновлює вебхук GitHub (ключ → пост); забирається один раз.
