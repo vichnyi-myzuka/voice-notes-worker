@@ -49,7 +49,14 @@ export class Posts {
 		const review = deploy?.runId && deploy.repo && !ui.approvalKeys ? { repo: deploy.repo, runId: deploy.runId } : undefined;
 		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
 		const text = deploy?.done ? this.text(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.text(w, deploy ? `${status}\n\n${deploy.text}` : status, final);
-		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.url, buttons, answers, review);
+		const shown = await editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.url, buttons, answers, review);
+		// Табло й іконка теми завжди збігаються: фінальний стан у пості (✅ / ❌ чи стадія деплою) тут же виставляє й іконку
+		// (повтор того ж стану в setTopicIcon пропускається); проміжні стани й питання іконку ставлять самі.
+		if (final && w.threadId) {
+			const state: TopicState | undefined = deploy?.stage ? DEPLOY_ICON[deploy.stage] : status.startsWith("✅") ? "done" : status.startsWith("❌") ? "failed" : undefined;
+			if (state) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, state);
+		}
+		return shown;
 	}
 
 	// Клавіші внизу теми за станом сесії (лише режим messages; повтор того ж стану нічого не шле, але з екрана команд повертає до дій сесії).

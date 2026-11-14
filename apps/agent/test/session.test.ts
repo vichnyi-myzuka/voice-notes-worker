@@ -664,6 +664,8 @@ describe("AgentSession", () => {
 			["/api/experimental/mcp/cloudflare", `?location[directory]=/workspace/sessions/${ID}`, { config: { type: "remote", url: "https://mcp.cloudflare.com/mcp", oauth: false, headers: { Authorization: "Bearer cf-2" } } }],
 		]);
 		expect(t.opencode.prompts.at(-1)?.text).toBe("Ще");
+		await t.session.followUp(ID, "І ще"); // токен не змінився: повторного PUT немає
+		expect(t.opencode.mcpPuts).toHaveLength(2);
 
 		// Сесія без Сільпо/Cloudflare нічого не надсилає
 		const plain = setup(base);

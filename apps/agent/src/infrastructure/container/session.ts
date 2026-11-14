@@ -352,12 +352,21 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Свіжі токени Сільпо й Cloudflare — у запущений OpenCode (PUT замінює сервер і одразу перепідключає його): файл конфігу він
 	// після старту не перечитує, тож без цього прострочений токен давав 401 до нової сесії. Збій не фатальний: лише лог.
+	private readonly pushedMcp = new Map<string, string>(); // що вже передано в OpenCode: тека:сервер → конфіг (у пам'яті; після вивантаження один зайвий PUT нешкідливий)
+
 	private async refreshMcp(id: string, tracked: Tracked, directory?: string): Promise<void> {
 		if (!tracked.silpo && !tracked.cloudflare) return;
 		try {
 			const dir = directory ?? sessionDir(tracked.folder ?? id);
 			const servers = refreshableMcp(await this.mcpWanted({ silpo: tracked.silpo, cloudflare: tracked.cloudflare }));
-			for (const [name, config] of Object.entries(servers)) await putMcp(this.opencode(), name, dir, config);
+			for (const [name, config] of Object.entries(servers)) {
+				// Токен живе близько години, а оновлюється за 5 хвилин до кінця: більшість повідомлень лишаються з тим самим, тоді PUT не потрібен.
+				const key = `${dir}:${name}`;
+				const body = JSON.stringify(config);
+				if (this.pushedMcp.get(key) === body) continue;
+				await putMcp(this.opencode(), name, dir, config);
+				this.pushedMcp.set(key, body);
+			}
 		} catch (err) {
 			console.error(`mcp refresh ${id} failed:`, err);
 		}
