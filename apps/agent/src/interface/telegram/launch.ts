@@ -61,8 +61,9 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 		: file ? [where, task].filter(Boolean).join("\n\n")
 		: `${moved ? `${clipped}\n\n` : ""}${where}`
 	).trim();
-	// Режим messages: клавіші внизу теми («Стоп» тощо) йдуть разом із цим постом, а не окремим повідомленням, що повторює статус.
-	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread, thread ? p.keys : undefined);
+	// Пост без клавіатури внизу: Telegram не дає редагувати повідомлення, надіслане з нею (message can't be edited), а пост агент
+	// оновлює на місці. Клавіші внизу теми (режим messages) ставить begin окремим повідомленням-носієм.
+	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
 	if (board && thread) {
 		await pinMessage(env, chat, postId);
 		if (moved || file) await sendChat(env, chat, task, undefined, "none", undefined, undefined, thread).catch((err) => console.error("task message failed:", err));

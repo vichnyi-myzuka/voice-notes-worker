@@ -34,7 +34,7 @@ export function parseQuota(headers: Headers): Quota {
 
 // Чи схожа помилка моделі на вичерпані ліміти підписки (а не на збій завдання).
 export function isLimitError(error: string): boolean {
-	return /usage limit|hit your limit|limit reached|rate[ _-]?limit|\b429\b|exceeded.*(quota|limit)/i.test(error);
+	return /usage limit|hit your (?:[\w-]+ )*limit|limit reached|rate[ _-]?limit|\b429\b|exceeded.*(quota|limit)/i.test(error);
 }
 
 // Ліміти вичерпано зараз: статус «rejected» або одне з вікон заповнене.
