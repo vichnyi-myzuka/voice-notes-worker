@@ -11,6 +11,12 @@ dir=/workspace/sessions/$id
 
 . /usr/local/lib/git-auth.sh
 
+# Адреса воркера й секрет сесії для команди `schedule` (див. payload/schedule.sh); файл лише для root.
+if [ -n "${AGENT_API_TOKEN:-}" ] && [ -n "${AGENT_API_URL:-}" ]; then
+	mkdir -p /root/.agent/schedule
+	(umask 077; printf '{"url":"%s","token":"%s"}\n' "$AGENT_API_URL" "$AGENT_API_TOKEN" > "/root/.agent/schedule/$id.json")
+fi
+
 if [ -z "$repo" ]; then
 	mkdir -p "$dir"
 	echo "$dir"

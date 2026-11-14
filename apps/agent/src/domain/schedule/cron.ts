@@ -65,9 +65,9 @@ export function nextCron(cron: Cron, tz: string, after: number): number | undefi
 		const p = local(t, tz);
 		const dayOk = cron.dom.any && cron.dow.any ? true : cron.dom.any ? cron.dow.values.has(p.weekday) : cron.dow.any ? cron.dom.values.has(p.day) : cron.dom.values.has(p.day) || cron.dow.values.has(p.weekday);
 		if (!cron.month.values.has(p.month) || !dayOk) {
-			// До кінця доби, із запасом на перехід на літній час (останню годину-дві проходимо по хвилині).
+			// До кінця доби, із запасом на перехід на літній час (останні дві години проходимо кроками по 30 хв).
 			const left = 1440 - p.hour * 60 - p.minute;
-			t += (left > 120 ? left - 60 : 1) * 60_000;
+			t += (left > 120 ? left - 60 : Math.min(left, 30)) * 60_000;
 		} else if (!cron.hour.values.has(p.hour)) t += (60 - p.minute) * 60_000;
 		else if (!cron.minute.values.has(p.minute)) t += 60_000;
 		else return t;

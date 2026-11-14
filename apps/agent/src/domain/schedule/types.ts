@@ -37,8 +37,8 @@ export type Schedules = {
 	list(): Promise<Schedule[]>;
 	get(id: string): Promise<Schedule | undefined>;
 	create(input: NewSchedule, createdBy: Schedule["createdBy"], origin: string): Promise<Outcome<Schedule>>;
-	// Змінює поля розкладу; зміна часу перераховує наступний запуск.
-	update(id: string, patch: SchedulePatch): Promise<Outcome<Schedule>>;
+	// Змінює поля розкладу; зміна часу перераховує наступний запуск. Зміна від агента повертає розклад на підтвердження (pending).
+	update(id: string, patch: SchedulePatch, by?: Schedule["createdBy"]): Promise<Outcome<Schedule>>;
 	// pause: active → paused; resume: paused → active, а також pending → active (підтвердження власником).
 	pause(id: string): Promise<Outcome<Schedule>>;
 	resume(id: string): Promise<Outcome<Schedule>>;

@@ -23,4 +23,5 @@ if [ -e "$dir/.git" ]; then
 		;;
 	esac
 fi
+rm -f /root/.agent/schedule/"$1".json
 rm -rf "$dir"`;

@@ -12,6 +12,8 @@ export type Launcher = {
 	// Запускає сесію агента з id sessionId (ідемпотентно за id).
 	launch(schedule: Schedule, sessionId: string): Promise<void>;
 	running(sessionId: string): Promise<boolean>;
+	// Показує власнику розклад, який запропонував агент, з кнопками «Активувати/Відхилити».
+	propose(schedule: Schedule): Promise<void>;
 	notify(text: string): Promise<void>;
 };
 
@@ -52,10 +54,11 @@ export class ScheduleBook implements Schedules {
 		const schedule: Schedule = { id: crypto.randomUUID().replaceAll("-", "").slice(0, 8), ...valid.value, status, createdBy, createdAt: now, origin, runs: [] };
 		schedule.nextRun = nextRun(schedule.when, now);
 		await this.save(schedule);
+		if (status === "pending") await this.propose(schedule);
 		return { ok: true, value: schedule };
 	}
 
-	async update(id: string, patch: SchedulePatch): Promise<Outcome<Schedule>> {
+	async update(id: string, patch: SchedulePatch, by: Schedule["createdBy"] = "owner"): Promise<Outcome<Schedule>> {
 		const current = await this.get(id);
 		if (!current) return gone;
 		const now = this.now();
@@ -72,7 +75,11 @@ export class ScheduleBook implements Schedules {
 		const updated: Schedule = { ...current, ...rest, when: timing ? when : current.when, repo, model, expiresAt: expires };
 		if (updated.status === "done" && timing) updated.status = "paused"; // новий час: власник сам вирішує, чи вмикати
 		updated.nextRun = nextRun(updated.when, now);
+		// Агент лише пропонує зміни: розклад чекає, поки власник їх підтвердить.
+		const proposed = by === "agent" && (updated.status === "active" || updated.status === "paused" || updated.status === "done");
+		if (proposed) updated.status = "pending";
 		await this.save(updated);
+		if (proposed) await this.propose(updated);
 		return { ok: true, value: updated };
 	}
 
@@ -146,6 +153,11 @@ export class ScheduleBook implements Schedules {
 
 	private record(s: Schedule, run: Run): Schedule {
 		return { ...s, runs: [...s.runs, run].slice(-MAX_RUNS) };
+	}
+
+	// Збій показу не скасовує розклад: він лишається pending, власник побачить його в /api/schedules.
+	private propose(s: Schedule): Promise<void> {
+		return this.launcher.propose(s).catch((err) => console.error(`schedule ${s.id}: propose failed:`, err));
 	}
 
 	// Скільки місць займають розклади, що рахуються в ліміті (активні й ті, що чекають підтвердження).

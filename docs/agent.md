@@ -42,7 +42,9 @@ GET  /s/<id>                                           → редірект на
 
 Розклад: одноразовий (`at`, ISO з зсувом) або cron із 5 полів у часовому поясі (`tz`, за замовчуванням `Europe/Kyiv`; кроки, діапазони, списки; день місяця й день тижня діють як «або»). Правила: не більше 10 активних (разом з тими, що чекають підтвердження), інтервал між запусками не менший за годину, `expiresAt` завершує розклад. Якщо попередній запуск цього розкладу ще працює, новий пропускається (`skipped` в історії й повідомлення власнику); збій запуску — `failed` й повідомлення. Статуси: `pending` (створив агент, чекає підтвердження: `resume`), `active`, `paused`, `done`. Історія зберігає 50 останніх запусків.
 
-API (за Access): `GET|POST /api/schedules`, `GET|PATCH|DELETE /api/schedules/<id>`, `POST /api/schedules/<id>/pause|resume|run`, `GET /api/schedules/<id>/runs`. Створення через цей API вважається створеним власником (`active`); розклади від агента з підтвердженням з'являться з командою `schedule`.
+API (за Access): `GET|POST /api/schedules`, `GET|PATCH|DELETE /api/schedules/<id>`, `POST /api/schedules/<id>/pause|resume|run`, `GET /api/schedules/<id>/runs`. Створення через цей API вважається створеним власником (`active`).
+
+**Команда `schedule` для агента** (`payload/schedule.sh` → `/usr/local/bin/schedule`; `list`, `add`, `edit`, `delete`; правила для агента — розділ «Automations» у `payload/AGENTS.md`). Контейнер не проходить Access, тому команда викликає `/agent-api/schedules` (ADR 0003): секрет сесії — HMAC від назви теки на `OPENCODE_PASSWORD`; `session-prep` кладе адресу воркера й секрет у `/root/.agent/schedule/<тека>.json` (адресу воркер запам'ятовує з посилання на сесію при `begin`; без неї команда в сесії недоступна). Агент лише пропонує: новий розклад і будь-яка його зміна переходять у `pending`, власнику приходить повідомлення з кнопками `✅ Активувати / ❌ Відхилити` (`sch:ok|no:<id>`). Видалення агентом діє одразу. **Потрібна дія власника:** у Cloudflare Zero Trust додати Bypass для шляху `/agent-api/*` (як для `/telegram` і `/github`), інакше Access не пропустить контейнер.
 
 ## Інструкції агента
 

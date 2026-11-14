@@ -16,6 +16,7 @@ import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./posts";
 import { calendarLogin, silpoLogin } from "./logins";
+import { sessionToken } from "../session-token";
 import { retitle } from "./title";
 import { WebProxy } from "./proxy";
 import { WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
@@ -276,7 +277,7 @@ export class AgentSession extends DurableObject<Env> {
 			const silpo = input.silpo ? (await this.silpo.accessToken())?.access : undefined;
 			const calendar = input.calendar ? await this.calendar.accessToken() : undefined;
 			sw.mark("queue");
-			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar });
+			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar }, await this.agentApi(folder));
 			sw.mark("prepare");
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
 			sw.mark("create");
@@ -304,7 +305,7 @@ export class AgentSession extends DurableObject<Env> {
 			ocId = await this.computer.serial(async () => {
 				const silpo = tracked.silpo ? (await this.silpo.accessToken())?.access : undefined;
 				const calendar = tracked.calendar ? await this.calendar.accessToken() : undefined;
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo, calendar });
+				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo, calendar }, await this.agentApi(tracked.folder ?? id));
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
@@ -339,6 +340,12 @@ export class AgentSession extends DurableObject<Env> {
 		return (await this.ctx.storage.get<Tracked>(sessionKey(id)))?.ocId ?? ((await this.ctx.storage.get(jobKey(id))) ? "pending" : undefined);
 	}
 
+	// Адреса воркера й секрет сесії для команди `schedule` у контейнері; без відомої адреси команда в сесії не працює.
+	private async agentApi(folder: string): Promise<{ origin: string; token: string } | undefined> {
+		const origin = await this.ctx.storage.get<string>("origin");
+		return origin ? { origin, token: await sessionToken(this.env.OPENCODE_PASSWORD, folder) } : undefined;
+	}
+
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
 	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
 		if (await this.link(id)) return;
@@ -351,6 +358,9 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	private async enqueue(job: Job): Promise<void> {
+		// Адреса воркера потрібна, щоб агент у контейнері міг звернутись до його API (команда `schedule`): беремо з посилання на сесію.
+		const origin = new URL(job.target.url).origin;
+		if ((await this.ctx.storage.get<string>("origin")) !== origin) await this.ctx.storage.put("origin", origin);
 		await this.ctx.storage.put(jobKey(job.id), { ...job, queuedAt: Date.now() } satisfies Job);
 		await this.ctx.storage.setAlarm(Date.now());
 	}

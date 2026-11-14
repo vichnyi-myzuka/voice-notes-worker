@@ -70,6 +70,7 @@ function setup() {
 	const alarm = { at: null as number | null };
 	const launched: { id: string; session: string }[] = [];
 	const notes: string[] = [];
+	const proposed: string[] = [];
 	const state = { running: new Set<string>(), failLaunch: false };
 	const launcher: Launcher = {
 		async launch(s, session) {
@@ -78,6 +79,9 @@ function setup() {
 		},
 		async running(session) {
 			return state.running.has(session);
+		},
+		async propose(s) {
+			proposed.push(s.id);
 		},
 		async notify(text) {
 			notes.push(text);
@@ -95,7 +99,7 @@ function setup() {
 		if (!r.ok) throw new Error(r.error);
 		return r.value;
 	};
-	return { book, clock, alarm, launched, notes, state, make };
+	return { book, clock, alarm, launched, notes, proposed, state, make };
 }
 
 describe("ScheduleBook", () => {
@@ -108,6 +112,7 @@ describe("ScheduleBook", () => {
 		const theirs = await t.make({ ...base, name: "Від агента", cron: "0 8 * * *", tz: "UTC" }, "agent");
 		expect(theirs.status).toBe("pending");
 		expect(t.alarm.at).toBe(mine.nextRun); // pending alarm не ставить
+		expect(t.proposed).toEqual([theirs.id]); // власнику показано пропозицію з кнопками (розклад власника — ні)
 
 		const resumed = await t.book.resume(theirs.id);
 		expect(resumed).toMatchObject({ ok: true, value: { status: "active" } });
@@ -218,6 +223,28 @@ describe("ScheduleBook", () => {
 		expect(await t.book.update(s.id, { at: "2020-01-01T00:00:00Z" })).toMatchObject({ ok: false, code: "invalid" });
 		expect(await t.book.update(s.id, { cron: "* * * * *" })).toMatchObject({ ok: false, code: "invalid" });
 		expect(await t.book.update("nope0000", { name: "x" })).toMatchObject({ ok: false, code: "not_found" });
+	});
+
+	it("зміна від агента повертає розклад на підтвердження й показує пропозицію знову; зміна власника — ні", async () => {
+		const t = setup();
+		const s = await t.make({ ...base, cron: "0 9 * * *", tz: "UTC" });
+		expect(await t.book.update(s.id, { prompt: "власник" })).toMatchObject({ ok: true, value: { status: "active" } });
+		expect(t.proposed).toEqual([]);
+		const r = await t.book.update(s.id, { prompt: "агент" }, "agent");
+		expect(r).toMatchObject({ ok: true, value: { status: "pending", prompt: "агент" } });
+		expect(t.proposed).toEqual([s.id]);
+		expect(t.alarm.at).toBeNull(); // до підтвердження не запускається
+		t.clock.now = s.nextRun!;
+		await t.book.tick();
+		expect(t.launched).toHaveLength(0);
+		expect(await t.book.resume(s.id)).toMatchObject({ ok: true, value: { status: "active" } });
+	});
+
+	it("збій показу пропозиції не скасовує розклад", async () => {
+		const t = setup();
+		const book = new ScheduleBook({ get: async () => undefined, put: async () => {}, delete: async () => true, list: async () => new Map() }, { set: async () => {}, clear: async () => {} }, { launch: async () => {}, running: async () => false, notify: async () => {}, propose: async () => { throw new Error("tg down"); } }, () => NOW);
+		expect(await book.create({ ...base, cron: "0 9 * * *" }, "agent", "https://agent.example")).toMatchObject({ ok: true, value: { status: "pending" } });
+		expect(t.proposed).toEqual([]);
 	});
 
 	it("«запустити зараз» не чіпає розкладу; видалення прибирає запис і alarm", async () => {

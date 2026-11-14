@@ -1,5 +1,6 @@
 import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import type { Agent, ImageRef } from "../../domain/agent";
+import type { Schedules } from "../../domain/schedule";
 import type { Env } from "../../env";
 import { stamp, stopwatch } from "../../timing";
 import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
@@ -13,7 +14,7 @@ export const TELEGRAM_PATH = "/telegram";
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
 // repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. repo.ts); без них репозиторій задає лише префікс.
 // syncCommands: виставляти меню `/`-команд (див. syncCommands); у тестах вимкнено.
-export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean };
+export type TelegramDeps = { agent: Agent; schedules?: Schedules; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean };
 
 // Меню `/`-команд у приваті. Єдине місце, де вони перелічені: додаєш команду в обробник — додай і сюди.
 export const COMMANDS = [
@@ -55,7 +56,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	if (deps.syncCommands) deps.defer(syncCommands(bot));
 	const update = await req.json<TgUpdate>().catch(() => null);
 	if (update?.callback_query) {
-		deps.defer(handleButton(bot, update.callback_query, env, deps.agent).catch((err) => console.error("telegram button failed:", err)));
+		deps.defer(handleButton(bot, update.callback_query, env, deps.agent, deps.schedules).catch((err) => console.error("telegram button failed:", err)));
 		return new Response("ok");
 	}
 	const msg = update?.message ?? update?.channel_post;
