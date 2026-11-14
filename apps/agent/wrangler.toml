@@ -17,6 +17,11 @@ THREAD_UI = "classic"
 # Репозиторії, які бот розпізнає з вільної мови («працюй над нашим ботом»): repo = owner/name, about = як власник його називає.
 AGENT_REPOS = '''[{"repo":"vichnyi-myzuka/voice-notes-worker","about":"The owner's own project (a Cloudflare Workers monorepo): the voice-notes Telegram bot and the coding-agent platform the agent itself runs on. Pick it only when the owner explicitly refers to this project or its code: \"our bot\", \"our repository\", \"this project\", \"the notes bot\", \"the agent bot\", \"work on yourself\", \"your own code\", or names its parts (notes, session, container, AGENTS.md, README). Not for building new standalone things."},{"repo":"vichnyi-myzuka/flappy-bird-2d","site":"flappy-bird-2d","about":"The owner's Flappy Bird 2D browser game: a small 2D game about a bird flying between pipes (static HTML/JS, published as the flappy-bird-2d site). Pick it when the owner refers to this game in any way, in Ukrainian or English, by name or by description, including misspellings and transliterations: \"flappy bird\", \"flappy bird 2d\", \"флопі борд\", \"флапі бьорд\", \"флеппі\", \"гра про пташку\", \"гра з пташкою\", \"пташка\", \"пташка між трубами\", \"двовимірна гра\", \"наша гра\", or its code, levels, sprites, sounds, score. Not for the 3D version (\"3d\", \"тривимірна\") or for building other new things."}]'''
 
+# Прапорці Cloudflare Flagship: `thread-ui` ("classic" | "messages") перекриває THREAD_UI без деплою.
+[[flagship]]
+binding = "FLAGS"
+app_id = "934edb14-eec2-4caa-a7f5-8869aafa12c3"
+
 [observability]
 enabled = true
 
