@@ -17,7 +17,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execStderr: "", execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -63,7 +63,7 @@ function fakeContainer() {
 				output: async () => ({
 					exitCode: opencode.execFails ? 1 : 0,
 					stdout: new TextEncoder().encode(cmd[0] === "cat" ? opencode.procNet : `/workspace/sessions/${cmd[1]}\n`),
-					stderr: new TextEncoder().encode(opencode.execFails ? "fatal: repository not found" : ""),
+					stderr: new TextEncoder().encode(opencode.execFails ? "fatal: repository not found" : opencode.execStderr),
 				}),
 			};
 		},
@@ -247,6 +247,15 @@ describe("AgentSession", () => {
 		expect(a.sessionId).toBe(b.sessionId);
 		expect(opencode.seq).toBe(1);
 		expect(opencode.prompts).toHaveLength(1);
+	});
+
+	it("start: з виводу session-prep у лог іде лише рядок секундоміра", async () => {
+		const { session, opencode } = setup();
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
+		opencode.execStderr = "remote: Counting objects\ntiming fetch=400ms worktree=80ms deps-cached=1100ms\nщось ще";
+		await session.start(ID, { prompt: "Задача", repo: "me/app" });
+		const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("latency session-prep"));
+		expect(lines).toEqual([`latency session-prep ${ID}: fetch=400ms worktree=80ms deps-cached=1100ms`]);
 	});
 
 	it("start: помилка session-prep не лишає сесії й не ставить задачу", async () => {

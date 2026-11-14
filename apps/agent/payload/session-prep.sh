@@ -11,6 +11,12 @@ dir=/workspace/sessions/$id
 
 . /usr/local/lib/git-auth.sh
 
+# Секундомір: «timing fetch=…ms …» у stderr (воркер виносить цей рядок у логи; решта stderr — шум git/npm).
+now() { date +%s%N | cut -b1-13; }
+t0=$(now)
+timing=""
+mark() { t1=$(now); timing="$timing $1=$((t1 - t0))ms"; t0=$t1; }
+
 if [ -z "$repo" ]; then
 	mkdir -p "$dir"
 	echo "$dir"
@@ -30,6 +36,7 @@ else
 	mkdir -p "$(dirname "$base")"
 	git clone "https://github.com/$repo.git" "$base" >&2
 fi
+mark fetch
 
 default=$(git -C "$base" symbolic-ref --short refs/remotes/origin/HEAD)
 mkdir -p "$(dirname "$dir")"
@@ -39,9 +46,38 @@ else
 	git -C "$base" worktree add --no-track -b "agent/$id" "$dir" "$default" >&2
 fi
 
+mark worktree
+
 # Залежності проєкту: лише для нового worktree і лише якщо є package.json. Збій встановлення не зупиняє сесію (агент побачить і розбереться).
+# `npm ci` на моно-репо займав 30–50 с на кожну нову сесію, тож node_modules будуємо раз на версію package-lock.json
+# (/workspace/.deps-cache/<репо>/<хеш>) і кладемо в worktree жорсткими посиланнями (cp -al): секунда замість півхвилини.
+# Без lock-файлу кешу немає (результат не відтворюваний). Кеш лежить на тому ж диску, що й worktree, тож посилання можливі;
+# коли ні (чи копіювання не вдалось), ставимо як раніше.
+install_deps() {
+	if [ -f package-lock.json ]; then install="npm ci"; else install="npm install"; fi
+	$install --no-audit --no-fund >&2
+}
 if [ -f "$dir/package.json" ]; then
-	if [ -f "$dir/package-lock.json" ]; then install="npm ci"; else install="npm install"; fi
-	(cd "$dir" && $install --no-audit --no-fund >&2) || echo "не вдалося встановити залежності ($install)" >&2
+	cd "$dir"
+	if [ -f package-lock.json ]; then
+		cache=/workspace/.deps-cache/$repo/$(sha256sum package-lock.json | cut -c1-16)
+		if [ -d "$cache/node_modules" ] && cp -al "$cache/node_modules" node_modules 2>/dev/null; then
+			echo "залежності з кешу $cache" >&2
+			mark deps-cached
+		else
+			rm -rf node_modules
+			if install_deps; then
+				# Кеш оновлюємо лише після успішної установки; старі версії lock-файлу цього репо видаляємо.
+				rm -rf "/workspace/.deps-cache/$repo" && mkdir -p "$cache" && cp -al node_modules "$cache/node_modules" 2>/dev/null || rm -rf "$cache"
+			else
+				echo "не вдалося встановити залежності (npm ci)" >&2
+			fi
+			mark deps-install
+		fi
+	else
+		install_deps || echo "не вдалося встановити залежності (npm install)" >&2
+		mark deps-install
+	fi
 fi
+echo "timing$timing" >&2
 echo "$dir"

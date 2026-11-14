@@ -229,7 +229,11 @@ export class Computer {
 			env: { HOME: "/root", ...(this.env.GITHUB_TOKEN && { GITHUB_TOKEN: this.env.GITHUB_TOKEN }) },
 		});
 		const out = await proc.output();
-		if (out.exitCode !== 0) throw new Error(`session-prep failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
+		const stderr = new TextDecoder().decode(out.stderr);
+		if (out.exitCode !== 0) throw new Error(`session-prep failed (${out.exitCode}): ${stderr.trim()}`);
+		// З решти stderr (шум git і npm) беремо лише рядок секундоміра: з яких кроків складається підготовка теки.
+		const timing = stderr.split("\n").find((line) => line.startsWith("timing "));
+		if (timing) console.log(`latency session-prep ${folder}: ${timing.slice("timing ".length)}`);
 		const dir = new TextDecoder().decode(out.stdout).trim() || sessionDir(folder);
 		if (mcp.sure || mcp.silpo || mcp.calendar || mcp.cloudflare) await this.enableMcp(dir, mcp);
 		return dir;
