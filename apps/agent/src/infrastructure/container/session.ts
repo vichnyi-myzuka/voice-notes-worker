@@ -431,6 +431,15 @@ export class AgentSession extends DurableObject<Env> {
 	// Те саме для уточнення; контейнер може спати.
 	async resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
 		await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
+		// Завдання одне на сесію (ключ job:<id>): уточнення, що прийшло, поки попереднє ще не почало виконуватись, не затирає його, а
+		// додається до нього (інакше текст чи фото губиться, а в темі лишається «Працює» без відповіді).
+		const queued = await this.ctx.storage.get<Job>(jobKey(id));
+		if (queued && "text" in queued && !queued.startedAt) {
+			const merged = [...(queued.images ?? []), ...(images ?? [])];
+			await this.ctx.storage.put(jobKey(id), { ...queued, text: `${queued.text}\n\n${text}`, target, ...(merged.length && { images: merged }) } satisfies Job);
+			await this.ctx.storage.setAlarm(Date.now());
+			return;
+		}
 		await this.enqueue({ id, text, target, attempts: 0, ...(images?.length && { images }) });
 	}
 
@@ -502,6 +511,7 @@ export class AgentSession extends DurableObject<Env> {
 			}
 		} catch (err) {
 			console.error(`job ${job.id} failed (attempt ${job.attempts + 1}):`, err);
+			if (!(await this.isCurrent(key, job))) return; // за цей час у чергу став новіший запис: його не чіпаємо
 			if (job.attempts + 1 < JOB_ATTEMPTS) {
 				const { startedAt: _, ...rest } = job;
 				await this.ctx.storage.put(key, { ...rest, attempts: job.attempts + 1 } satisfies Job); // знову готове до запуску наступним alarm
@@ -511,9 +521,15 @@ export class AgentSession extends DurableObject<Env> {
 			await this.reportFailure(job);
 			return;
 		}
-		await this.ctx.storage.delete(key); // запущено: далі повтор уточнення чи старту не потрібен
+		if (await this.isCurrent(key, job)) await this.ctx.storage.delete(key); // запущено: далі повтор уточнення чи старту не потрібен
 		await this.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
 		if ("input" in job) await this.posts.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
+	}
+
+	// Чи запис черги досі той самий, що виконувався (уточнення, яке прийшло під час виконання, замінює запис новим queuedAt).
+	private async isCurrent(key: string, job: Job): Promise<boolean> {
+		const stored = await this.ctx.storage.get<Job>(key);
+		return !stored || stored.queuedAt === job.queuedAt;
 	}
 
 	private async reportFailure(job: Job): Promise<void> {

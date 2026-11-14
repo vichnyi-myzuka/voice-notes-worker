@@ -1038,6 +1038,16 @@ describe("AgentSession", () => {
 				expect(opencode.prompts.map((p) => p.text)).toEqual(["Задача", "Ще"]);
 			});
 
+			it("два уточнення поспіль до запуску завдання не затирають одне одного: йдуть одним запитом", async () => {
+				const { session, container, opencode } = setup({ BOT_TOKEN: "bot" });
+				await session.start(ID, { prompt: "Задача" });
+				container.running = false;
+				await session.resume(ID, "Перше", { chatId: 5, url: TARGET.url });
+				await session.resume(ID, "Друге", { chatId: 5, url: TARGET.url });
+				await session.alarm();
+				expect(opencode.prompts.map((p) => p.text)).toEqual(["Задача", "Перше\n\nДруге"]);
+			});
+
 			it("remove скасовує завдання, яке ще не запустилось", async () => {
 				const { session, store, container } = setup({ BOT_TOKEN: "bot" });
 				await session.begin(ID, { prompt: "Задача" }, POST);
