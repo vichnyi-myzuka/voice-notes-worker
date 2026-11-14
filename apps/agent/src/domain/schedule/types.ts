@@ -8,6 +8,7 @@ export type ScheduleStatus = "pending" | "active" | "paused" | "done";
 
 // ok — сесію запущено (як вона закінчилась, видно в самій сесії); failed — запустити не вдалося; skipped — попередній запуск ще працював.
 export type Run = { at: number; result: "ok" | "failed" | "skipped"; sessionId?: string; error?: string };
+// skipped з error: пропущено через добовий бюджет; без error — попередній запуск ще працював.
 
 export type Schedule = {
 	id: string;
@@ -16,6 +17,8 @@ export type Schedule = {
 	when: When;
 	repo?: string;
 	model?: string;
+	// Власний ліміт вартості одного запуску (USD); без нього діє загальний AGENT_MAX_COST_USD.
+	maxCostUsd?: number;
 	status: ScheduleStatus;
 	createdBy: "agent" | "owner";
 	createdAt: number;
@@ -28,7 +31,8 @@ export type Schedule = {
 };
 
 // Що приймає створення розкладу (час — ISO-рядок: так зручно агентові й формі).
-export type NewSchedule = { name: string; prompt: string; at?: string; cron?: string; tz?: string; repo?: string; model?: string; expiresAt?: string };
+export type NewSchedule = { name: string; prompt: string; at?: string; cron?: string; tz?: string; repo?: string; model?: string; maxCostUsd?: number; expiresAt?: string };
+// maxCostUsd: 0 (чи відсутнє) — без власного ліміту.
 export type SchedulePatch = Partial<NewSchedule>;
 
 export type Outcome<T> = { ok: true; value: T } | { ok: false; error: string; code: "invalid" | "limit" | "not_found" };

@@ -23,6 +23,7 @@ export function scheduleCard(s: Schedule, heading?: string): { text: string; rep
 		last ? `Останній запуск: ${time(last.at, tz)}, ${RESULT[last.result]}` : "",
 		s.repo ? `📦 ${s.repo}` : "",
 		s.model ? `🤖 ${s.model}` : "",
+		s.maxCostUsd ? `💵 ліміт запуску $${s.maxCostUsd}` : "",
 		s.createdBy === "agent" ? "Створив агент" : "",
 	].filter(Boolean);
 	const text = `${lines.join("\n")}\n\n«${prompt}»`;

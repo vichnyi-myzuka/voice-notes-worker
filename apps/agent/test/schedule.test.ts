@@ -64,14 +64,15 @@ describe("validate", () => {
 });
 
 // Книга розкладів на пам'яті з керованим часом і фейковим запуском.
-function setup() {
+function setup(budget = 0) {
 	const data = new Map<string, unknown>();
 	const clock = { now: NOW };
 	const alarm = { at: null as number | null };
 	const launched: { id: string; session: string }[] = [];
 	const notes: string[] = [];
 	const proposed: string[] = [];
-	const state = { running: new Set<string>(), failLaunch: false };
+	const spentIds: string[][] = [];
+	const state = { running: new Set<string>(), failLaunch: false, costs: {} as Record<string, number> };
 	const launcher: Launcher = {
 		async launch(s, session) {
 			if (state.failLaunch) throw new Error("boom");
@@ -83,6 +84,10 @@ function setup() {
 		async propose(s) {
 			proposed.push(s.id);
 		},
+		async spent(ids) {
+			spentIds.push(ids);
+			return ids.reduce((sum, id) => sum + (state.costs[id] ?? 0), 0);
+		},
 		async notify(text) {
 			notes.push(text);
 		},
@@ -93,16 +98,28 @@ function setup() {
 		delete: async (k: string) => data.delete(k),
 		list: async <T>({ prefix }: { prefix: string }) => new Map([...data].filter(([k]) => k.startsWith(prefix)) as [string, T][]),
 	};
-	const book = new ScheduleBook(store, { set: async (at) => void (alarm.at = at), clear: async () => void (alarm.at = null) }, launcher, () => clock.now);
+	const book = new ScheduleBook(store, { set: async (at) => void (alarm.at = at), clear: async () => void (alarm.at = null) }, launcher, () => clock.now, budget);
 	const make = async (input: Parameters<ScheduleBook["create"]>[0], by: Schedule["createdBy"] = "owner") => {
 		const r = await book.create(input, by, "https://agent.example");
 		if (!r.ok) throw new Error(r.error);
 		return r.value;
 	};
-	return { book, clock, alarm, launched, notes, proposed, state, make };
+	return { book, clock, alarm, launched, notes, proposed, spentIds, state, make };
 }
 
 describe("ScheduleBook", () => {
+	it("ліміт вартості запуску: перевіряється, зберігається, знімається нулем", async () => {
+		expect(validate({ ...base, cron: "0 9 * * *", maxCostUsd: 2.5 }, NOW)).toMatchObject({ ok: true, value: { maxCostUsd: 2.5 } });
+		expect(validate({ ...base, cron: "0 9 * * *", maxCostUsd: 0 }, NOW)).toMatchObject({ ok: true });
+		for (const bad of [-1, 101, Number.NaN]) expect(validate({ ...base, cron: "0 9 * * *", maxCostUsd: bad }, NOW).ok, String(bad)).toBe(false);
+		const t = setup();
+		const s = await t.make({ ...base, cron: "0 9 * * *", tz: "UTC", maxCostUsd: 3 });
+		expect(s.maxCostUsd).toBe(3);
+		expect((await t.book.update(s.id, { prompt: "x" }))).toMatchObject({ ok: true, value: { maxCostUsd: 3 } });
+		await t.book.update(s.id, { maxCostUsd: 0 });
+		expect((await t.book.get(s.id))!.maxCostUsd).toBeUndefined();
+	});
+
 	it("розклад від власника активний і ставить alarm на перший запуск; від агента чекає підтвердження", async () => {
 		const t = setup();
 		const mine = await t.make({ ...base, cron: "0 9 * * *", tz: "UTC" });
@@ -242,7 +259,7 @@ describe("ScheduleBook", () => {
 
 	it("збій показу пропозиції не скасовує розклад", async () => {
 		const t = setup();
-		const book = new ScheduleBook({ get: async () => undefined, put: async () => {}, delete: async () => true, list: async () => new Map() }, { set: async () => {}, clear: async () => {} }, { launch: async () => {}, running: async () => false, notify: async () => {}, propose: async () => { throw new Error("tg down"); } }, () => NOW);
+		const book = new ScheduleBook({ get: async () => undefined, put: async () => {}, delete: async () => true, list: async () => new Map() }, { set: async () => {}, clear: async () => {} }, { launch: async () => {}, running: async () => false, notify: async () => {}, propose: async () => { throw new Error("tg down"); }, spent: async () => 0 }, () => NOW);
 		expect(await book.create({ ...base, cron: "0 9 * * *" }, "agent", "https://agent.example")).toMatchObject({ ok: true, value: { status: "pending" } });
 		expect(t.proposed).toEqual([]);
 	});
@@ -257,6 +274,38 @@ describe("ScheduleBook", () => {
 		expect(saved.repo).toBeUndefined();
 		expect(saved.model).toBeUndefined();
 		expect(saved.expiresAt).toBeUndefined();
+	});
+
+	it("добовий бюджет: вичерпаний — запуск пропускається з причиною, «запустити зараз» бюджет ігнорує, за добу витрати спадають", async () => {
+		const t = setup(5);
+		const a = await t.make({ ...base, name: "a", cron: "0 9 * * *", tz: "UTC" });
+		const b = await t.make({ ...base, name: "b", cron: "0 10 * * *", tz: "UTC" });
+		t.clock.now = Date.parse("2026-11-15T09:00:00Z");
+		await t.book.tick(); // a: бюджет цілий
+		const first = runSessionId(a.id, Date.parse("2026-11-15T09:00:00Z"));
+		expect(t.launched.map((l) => l.session)).toEqual([first]);
+		t.state.costs[first] = 5.5; // перший запуск перевищив добовий бюджет
+		t.clock.now = Date.parse("2026-11-15T10:00:00Z");
+		await t.book.tick(); // b: пропущено
+		expect(t.launched).toHaveLength(1);
+		const skipped = (await t.book.get(b.id))!.runs[0];
+		expect(skipped).toMatchObject({ result: "skipped", error: expect.stringContaining("бюджет $5") });
+		expect(t.notes.at(-1)).toContain("пропущено");
+		expect(t.spentIds.at(-1)).toEqual([first]);
+		expect(await t.book.runNow(b.id)).toMatchObject({ ok: true, value: { result: "ok" } }); // ручний запуск іде
+		t.clock.now = Date.parse("2026-11-16T10:00:01Z"); // минула доба від першого запуску
+		await t.book.tick();
+		expect((await t.book.get(a.id))!.runs.at(-1)!.result).toBe("ok");
+		expect(t.spentIds.at(-1)).not.toContain(first);
+	});
+
+	it("без бюджету (0) витрати не перевіряються", async () => {
+		const t = setup(0);
+		const s = await t.make({ ...base, cron: "0 9 * * *", tz: "UTC" });
+		t.clock.now = s.nextRun!;
+		await t.book.tick();
+		expect(t.spentIds).toEqual([]);
+		expect(t.launched).toHaveLength(1);
 	});
 
 	it("«запустити зараз» не чіпає розкладу; видалення прибирає запис і alarm", async () => {

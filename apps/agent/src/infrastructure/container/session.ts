@@ -89,8 +89,11 @@ export class AgentSession extends DurableObject<Env> {
 			if (!byOc.has(ocId)) await this.watchPrompted(ocId).catch((err) => console.error("rewatch failed:", err)); // працює без стеження (страховка до подій)
 			const info = await getSession(oc, ocId);
 			const tokens = totalTokens(info);
-			const over = (info.cost ?? 0) > maxCost ? `вартість $${(info.cost ?? 0).toFixed(2)} (ліміт $${maxCost})` : tokens > tokenLimit ? `${tokens} токенів (ліміт ${tokenLimit})` : "";
 			const watched = byOc.get(ocId);
+			const own = watched ? await this.ctx.storage.get<Tracked>(sessionKey(watchId(watched[0]))) : undefined;
+			if (watched) await this.recordCost(watchId(watched[0]), info.cost);
+			const limit = own?.maxCostUsd ?? maxCost;
+			const over = (info.cost ?? 0) > limit ? `вартість $${(info.cost ?? 0).toFixed(2)} (ліміт $${limit})` : tokens > tokenLimit ? `${tokens} токенів (ліміт ${tokenLimit})` : "";
 			if (over) {
 				// Спостереження знімаємо до зупинки: інакше подія «зупинено» покаже в чаті «⏹» замість причини.
 				if (watched) await this.finishWatch(watched[0], watched[1], `⛔ Сесію зупинено: ${over}. Напиши уточнення, щоб продовжити з новим лімітом.`);
@@ -111,10 +114,29 @@ export class AgentSession extends DurableObject<Env> {
 			if (!(await this.ctx.storage.get(key))) continue; // уже оброблено вище (ліміт)
 			// Вільна: або вже відпрацювала, або ще не стартувала (дамо їй трохи часу).
 			if (!w.seenBusy && Date.now() - w.since < WATCH_INTERVAL_MS + 5000) continue;
+			await this.recordCost(watchId(key), (await getSession(oc, w.ocId).catch(() => undefined))?.cost); // остання вартість: сесія вже не працює
 			const done = await this.summary(oc, w);
 			await this.finishWatch(key, w, done.text, done.images);
 		}
 		return (await this.ctx.storage.list({ prefix: WATCH_PREFIX })).size > 0 || active.size > 0;
+	}
+
+	// Запам'ятовує вартість сесії, щоб вона не губилась, коли контейнер засне (добовий бюджет розкладів, див. spent).
+	private async recordCost(id: string, cost: number | undefined): Promise<void> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		if (tracked && cost && cost > (tracked.cost ?? 0)) await this.ctx.storage.put(sessionKey(id), { ...tracked, cost } satisfies Tracked);
+	}
+
+	// Скільки (USD) коштували ці сесії разом: поки контейнер працює, береться жива вартість, інакше запам'ятована. Невідомі сесії не рахуються.
+	async spent(ids: string[]): Promise<number> {
+		let total = 0;
+		for (const id of ids) {
+			const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+			if (!tracked) continue;
+			const live = this.computer.running ? (await getSession(this.opencode(), tracked.ocId).catch(() => undefined))?.cost : undefined;
+			total += Math.max(tracked.cost ?? 0, live ?? 0);
+		}
+		return total;
 	}
 
 	// Підсумок завершеної роботи: останнє повідомлення асистента, помилка чи нічого, якщо користувач сам зупинив.
@@ -281,7 +303,7 @@ export class AgentSession extends DurableObject<Env> {
 			sw.mark("prepare");
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
 			sw.mark("create");
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }), ...(input.calendar && { calendar: true }) } satisfies Tracked);
+			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.maxCostUsd && { maxCostUsd: input.maxCostUsd }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }), ...(input.calendar && { calendar: true }) } satisfies Tracked);
 			// Сільпо просили, а входу немає (чи токен не оновився): агент скаже про це власнику замість мовчазної відсутності інструментів.
 			const notes = [
 				input.silpo && !silpo && "MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.",

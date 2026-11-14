@@ -6,7 +6,7 @@ const fs = require("fs");
 
 const USAGE = `usage:
   schedule list
-  schedule add --name <name> --prompt <text> (--at <ISO date-time with offset> | --cron "<m h dom mon dow>" [--tz <IANA zone>]) [--repo owner/name] [--model <model>] [--expires <ISO date-time>]
+  schedule add --name <name> --prompt <text> (--at <ISO date-time with offset> | --cron "<m h dom mon dow>" [--tz <IANA zone>]) [--repo owner/name] [--model <model>] [--max-cost <USD>] [--expires <ISO date-time>]
   schedule edit <id> [--name ..] [--prompt ..] [--at .. | --cron .. [--tz ..]] [--repo ..] [--model ..] [--expires ..]
   schedule delete <id>`;
 const die = (msg, code = 1) => (console.error(msg), process.exit(code));
@@ -22,7 +22,7 @@ try {
 }
 
 const [cmd, ...rest] = process.argv.slice(2);
-const FLAGS = { name: "name", prompt: "prompt", at: "at", cron: "cron", tz: "tz", repo: "repo", model: "model", expires: "expiresAt" };
+const FLAGS = { name: "name", prompt: "prompt", at: "at", cron: "cron", tz: "tz", repo: "repo", model: "model", expires: "expiresAt", "max-cost": "maxCostUsd" };
 function parse(args) {
 	const body = {};
 	const positional = [];
@@ -34,7 +34,7 @@ function parse(args) {
 		}
 		const key = FLAGS[a.slice(2)];
 		if (!key || args[i + 1] === undefined) die(`schedule: bad option ${a}\n${USAGE}`, 2);
-		body[key] = args[++i];
+		body[key] = key === "maxCostUsd" ? Number(args[++i]) : args[++i];
 	}
 	return { body, positional };
 }

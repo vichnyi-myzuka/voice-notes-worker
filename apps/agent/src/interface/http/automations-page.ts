@@ -50,6 +50,7 @@ a { color: var(--accent); }
 <div class="cols">
 <div><label for="repo">Репозиторій (owner/name, необов'язково)</label><input id="repo" placeholder="owner/name"></div>
 <div><label for="model">Модель (необов'язково)</label><input id="model" placeholder="opus"></div>
+<div><label for="cost">Ліміт вартості запуску, $ (необов'язково)</label><input id="cost" type="number" min="0" max="100" step="0.5"></div>
 <div><label for="expires">Діє до (необов'язково)</label><input id="expires" type="datetime-local"></div>
 </div>
 <label>Найближчі запуски</label><div id="times" class="muted">—</div>
@@ -113,6 +114,7 @@ function card(s) {
 	if (last) info.push("останній: " + fmt(last.at, tz) + ", " + RESULT[last.result]);
 	if (s.repo) info.push("📦 " + s.repo);
 	if (s.model) info.push("🤖 " + s.model);
+	if (s.maxCostUsd) info.push("💵 ліміт $" + s.maxCostUsd);
 	if (s.expiresAt) info.push("діє до " + fmt(s.expiresAt, tz));
 	if (s.createdBy === "agent") info.push("створив агент");
 	var runs = el("div", { class: "runs muted", hidden: "" });
@@ -172,6 +174,7 @@ function openForm(s) {
 	$("prompt").value = s ? s.prompt : "";
 	$("repo").value = s && s.repo || "";
 	$("model").value = s && s.model || "";
+	$("cost").value = s && s.maxCostUsd || "";
 	$("expires").value = s && s.expiresAt ? toLocalInput(s.expiresAt) : "";
 	$("mode").value = s && s.when.at ? "at" : "cron";
 	$("cron").value = s && s.when.cron || "";
@@ -207,7 +210,7 @@ $("mode").addEventListener("change", modeChanged);
 $("form").addEventListener("submit", async function (ev) {
 	ev.preventDefault();
 	$("error").textContent = "";
-	var body = { name: $("name").value.trim(), prompt: $("prompt").value.trim(), repo: $("repo").value.trim(), model: $("model").value.trim() };
+	var body = { name: $("name").value.trim(), prompt: $("prompt").value.trim(), repo: $("repo").value.trim(), model: $("model").value.trim(), maxCostUsd: Number($("cost").value) || 0 };
 	body.expiresAt = $("expires").value ? new Date($("expires").value).toISOString() : ""; // порожнє знімає термін дії
 	// Зміна без чіпання часу не надсилає його: інакше минулий одноразовий розклад не вдалося б навіть перейменувати.
 	if (!editing || timingKey() !== loadedTiming) Object.assign(body, timingBody());

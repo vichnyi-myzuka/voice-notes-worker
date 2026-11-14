@@ -4,18 +4,23 @@ import type { NewSchedule, Outcome, When } from "./types";
 // Запобіжники з ADR 0005 (значення орієнтовні).
 export const MAX_ACTIVE = 10;
 export const MIN_INTERVAL_MS = 3_600_000;
+// Найбільший власний ліміт вартості одного запуску (USD) і добовий бюджет усіх запусків за розкладом за замовчуванням.
+export const MAX_RUN_COST_USD = 100;
+export const DEFAULT_DAILY_BUDGET_USD = 10;
 export const DEFAULT_TZ = "Europe/Kyiv";
 const REPO = /^[\w-][\w.-]*\/[\w-][\w.-]*$/;
 
 const bad = (error: string): Outcome<never> => ({ ok: false, error, code: "invalid" });
 
 // Перевіряє введення й повертає розклад у внутрішньому вигляді (When, expiresAt у мс). `now` — для перевірки «у майбутньому».
-export function validate(input: NewSchedule, now: number): Outcome<{ name: string; prompt: string; when: When; repo?: string; model?: string; expiresAt?: number }> {
+export function validate(input: NewSchedule, now: number): Outcome<{ name: string; prompt: string; when: When; repo?: string; model?: string; maxCostUsd?: number; expiresAt?: number }> {
 	const name = input.name?.trim();
 	const prompt = input.prompt?.trim();
 	if (!name || name.length > 80) return bad("name is required (up to 80 chars)");
 	if (!prompt) return bad("prompt is required");
 	if (input.repo && !REPO.test(input.repo)) return bad("bad repo");
+	const cost = input.maxCostUsd ?? 0;
+	if (typeof cost !== "number" || !Number.isFinite(cost) || cost < 0 || cost > MAX_RUN_COST_USD) return bad(`maxCostUsd must be between 0 and ${MAX_RUN_COST_USD}`);
 	if (!!input.at === !!input.cron) return bad("set exactly one of `at` or `cron`");
 	let when: When;
 	if (input.at) {
@@ -47,7 +52,7 @@ export function validate(input: NewSchedule, now: number): Outcome<{ name: strin
 		expiresAt = Date.parse(input.expiresAt);
 		if (!Number.isFinite(expiresAt) || expiresAt <= now) return bad("`expiresAt` must be a future ISO date-time");
 	}
-	return { ok: true, value: { name, prompt, when, ...(input.repo && { repo: input.repo }), ...(input.model && { model: input.model }), ...(expiresAt && { expiresAt }) } };
+	return { ok: true, value: { name, prompt, when, ...(input.repo && { repo: input.repo }), ...(input.model && { model: input.model }), ...(cost > 0 && { maxCostUsd: cost }), ...(expiresAt && { expiresAt }) } };
 }
 
 // Наступний запуск після `after`: для одноразового — його час, поки він попереду.

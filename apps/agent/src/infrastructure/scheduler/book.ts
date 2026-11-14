@@ -12,6 +12,8 @@ export type Launcher = {
 	// Запускає сесію агента з id sessionId (ідемпотентно за id).
 	launch(schedule: Schedule, sessionId: string): Promise<void>;
 	running(sessionId: string): Promise<boolean>;
+	// Скільки (USD) коштували ці сесії разом.
+	spent(sessionIds: string[]): Promise<number>;
 	// Показує власнику розклад, який запропонував агент, з кнопками «Активувати/Відхилити».
 	propose(schedule: Schedule): Promise<void>;
 	notify(text: string): Promise<void>;
@@ -19,6 +21,7 @@ export type Launcher = {
 
 const PREFIX = "schedule:";
 const MAX_RUNS = 50;
+const DAY_MS = 86_400_000;
 
 // Id сесії запуску: з id розкладу й запланованого часу, тож повтор alarm не створює другу сесію. Починається з `tg-`, як усі сесії чату.
 export const runSessionId = (scheduleId: string, at: number) => `tg-sch-${scheduleId}-${at.toString(36)}`;
@@ -33,6 +36,8 @@ export class ScheduleBook implements Schedules {
 		private readonly alarm: Alarm,
 		private readonly launcher: Launcher,
 		private readonly now: () => number = Date.now,
+		// Добовий бюджет усіх запусків за розкладом (USD, ковзне вікно 24 години); 0 — без бюджету.
+		private readonly dailyBudgetUsd = 0,
 	) {}
 
 	async list(): Promise<Schedule[]> {
@@ -66,13 +71,13 @@ export class ScheduleBook implements Schedules {
 		const timing = patch.at !== undefined || patch.cron !== undefined || patch.tz !== undefined;
 		const cron = "cron" in current.when ? current.when : undefined;
 		const expiresAt = patch.expiresAt ?? (current.expiresAt === undefined ? undefined : new Date(current.expiresAt).toISOString());
-		const fields = { name: patch.name ?? current.name, prompt: patch.prompt ?? current.prompt, repo: patch.repo ?? current.repo, model: patch.model ?? current.model, expiresAt };
+		const fields = { name: patch.name ?? current.name, prompt: patch.prompt ?? current.prompt, repo: patch.repo ?? current.repo, model: patch.model ?? current.model, maxCostUsd: patch.maxCostUsd ?? current.maxCostUsd, expiresAt };
 		// Без зміни часу час не перевіряємо: підставляємо завідомо майбутній `at` (минулий одноразовий розклад теж можна перейменувати).
 		const probe: NewSchedule = !timing ? { ...fields, at: new Date(now + MIN_INTERVAL_MS).toISOString() } : patch.at === undefined && patch.cron === undefined && cron ? { ...fields, cron: cron.cron, tz: patch.tz } : { ...fields, at: patch.at, cron: patch.cron, tz: patch.tz ?? (patch.cron !== undefined ? cron?.tz : undefined) };
 		const valid = validate(probe, now);
 		if (!valid.ok) return valid;
-		const { when, repo, model, expiresAt: expires, ...rest } = valid.value;
-		const updated: Schedule = { ...current, ...rest, when: timing ? when : current.when, repo, model, expiresAt: expires };
+		const { when, repo, model, maxCostUsd, expiresAt: expires, ...rest } = valid.value;
+		const updated: Schedule = { ...current, ...rest, when: timing ? when : current.when, repo, model, maxCostUsd, expiresAt: expires };
 		if (updated.status === "done" && timing) updated.status = "paused"; // новий час: власник сам вирішує, чи вмикати
 		updated.nextRun = nextRun(updated.when, now);
 		// Агент лише пропонує зміни: розклад чекає, поки власник їх підтвердить.
@@ -103,7 +108,7 @@ export class ScheduleBook implements Schedules {
 	async runNow(id: string): Promise<Outcome<Run>> {
 		const s = await this.get(id);
 		if (!s) return gone;
-		const run = await this.fire(s, this.now());
+		const run = await this.fire(s, this.now(), false); // власник просить явно: бюджет не заважає
 		await this.save(this.record(s, run));
 		return { ok: true, value: run };
 	}
@@ -133,11 +138,16 @@ export class ScheduleBook implements Schedules {
 	}
 
 	// Запуск за розкладом. Збій і пропуск не кидають: їх бачить власник (повідомлення) й історія.
-	private async fire(s: Schedule, at: number): Promise<Run> {
+	private async fire(s: Schedule, at: number, enforceBudget = true): Promise<Run> {
 		const previous = [...s.runs].reverse().find((r) => r.sessionId);
 		if (previous?.sessionId && (await this.launcher.running(previous.sessionId).catch(() => false))) {
 			await this.launcher.notify(`⏰ «${s.name}»: попередній запуск ще працює, цей пропущено.`).catch(() => {});
 			return { at, result: "skipped" };
+		}
+		const over = enforceBudget ? await this.overBudget(at) : undefined;
+		if (over) {
+			await this.launcher.notify(`⏰ «${s.name}»: запуск пропущено, ${over}.`).catch(() => {});
+			return { at, result: "skipped", error: over };
 		}
 		const sessionId = runSessionId(s.id, at);
 		try {
@@ -149,6 +159,14 @@ export class ScheduleBook implements Schedules {
 			await this.launcher.notify(`⏰ «${s.name}»: не вдалося запустити: ${error}`).catch(() => {});
 			return { at, result: "failed", error };
 		}
+	}
+
+	// Добовий бюджет: скільки вже коштували запуски за останні 24 години (за всіма розкладами). Немає вичерпання — undefined.
+	private async overBudget(at: number): Promise<string | undefined> {
+		if (this.dailyBudgetUsd <= 0) return undefined;
+		const ids = (await this.list()).flatMap((x) => x.runs.filter((r) => r.sessionId && r.at > at - DAY_MS).map((r) => r.sessionId!));
+		const spent = await this.launcher.spent(ids).catch(() => 0);
+		return spent >= this.dailyBudgetUsd ? `добовий бюджет $${this.dailyBudgetUsd} вичерпано (витрачено $${spent.toFixed(2)})` : undefined;
 	}
 
 	private record(s: Schedule, run: Run): Schedule {
@@ -170,7 +188,7 @@ export class ScheduleBook implements Schedules {
 	}
 
 	private async save(s: Schedule): Promise<void> {
-		for (const k of ["nextRun", "repo", "model", "expiresAt"] as const) if (s[k] === undefined) delete s[k];
+		for (const k of ["nextRun", "repo", "model", "maxCostUsd", "expiresAt"] as const) if (s[k] === undefined) delete s[k];
 		await this.store.put(PREFIX + s.id, s);
 		await this.rearm();
 	}

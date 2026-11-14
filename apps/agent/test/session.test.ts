@@ -711,6 +711,34 @@ describe("AgentSession", () => {
 				expect(opencode.events).toHaveLength(2);
 			});
 
+			it("власний ліміт запуску (maxCostUsd) замінює загальний: нижчий зупиняє раніше, вищий дозволяє більше", async () => {
+				const low = setup({ BOT_TOKEN: "bot", AGENT_MAX_COST_USD: "5" });
+				await low.session.start(ID, { prompt: "Задача", maxCostUsd: 1 });
+				await low.session.watch(ID, TARGET);
+				low.opencode.info[ocId] = { cost: 2 };
+				await low.session.alarm();
+				expect(sent.map((c) => String(c.text ?? "")).join("\n")).toContain("ліміт $1");
+				sent.length = 0;
+				const high = setup({ BOT_TOKEN: "bot", AGENT_MAX_COST_USD: "1" });
+				await high.session.start(ID, { prompt: "Задача", maxCostUsd: 10 });
+				await high.session.watch(ID, TARGET);
+				high.opencode.info[ocId] = { cost: 2 };
+				await high.session.alarm();
+				expect(sent.map((c) => String(c.text ?? "")).join("\n")).not.toContain("зупинено");
+			});
+
+			it("spent: сума вартості сесій; після сну контейнера лишається остання відома, невідомі id не рахуються", async () => {
+				const { session, opencode, container, store } = await watched();
+				opencode.info[ocId] = { cost: 1.25 };
+				await session.alarm(); // запам'ятовує вартість
+				expect((store.get(`session:${ID}`) as { cost?: number }).cost).toBe(1.25);
+				expect(await session.spent([ID, "nope-nope"])).toBe(1.25);
+				opencode.info[ocId] = { cost: 2 };
+				expect(await session.spent([ID])).toBe(2); // живе значення вище
+				container.running = false;
+				expect(await session.spent([ID])).toBe(1.25); // контейнер спить: запам'ятоване
+			});
+
 			it("зупинка за лімітом показує причину, а не «Зупинено» від події", async () => {
 				const { session, opencode } = await watched({ AGENT_MAX_COST_USD: "1" });
 				opencode.info[ocId] = { cost: 2 };
