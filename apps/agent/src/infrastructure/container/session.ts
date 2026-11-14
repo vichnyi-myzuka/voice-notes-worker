@@ -121,8 +121,14 @@ export class AgentSession extends DurableObject<Env> {
 			if (!(await this.ctx.storage.get(key))) continue; // уже оброблено вище (ліміт)
 			// Вільна: або вже відпрацювала, або ще не стартувала (дамо їй трохи часу).
 			if (!w.seenBusy && Date.now() - w.since < WATCH_INTERVAL_MS + 5000) continue;
-			const done = await this.summary(oc, w);
-			await this.finishWatch(key, w, done.text, done.images);
+			// Сесії OpenCode вже немає (диск не відновився, її видалили): підсумок не отримати, тож знімаємо спостереження. Інакше
+			// кожен оберт alarm знову впирався б у 404, і сесія стежила б вічно.
+			const done = await this.summary(oc, w).catch((err) => {
+				if (!String(err).includes("SessionNotFoundError")) throw err;
+				console.error(`session ${w.ocId} is gone, dropping watch ${watchId(key)}`);
+				return { text: "⚠️ Сесії OpenCode вже немає (диск контейнера не відновився). Напиши уточнення, щоб продовжити." };
+			});
+			await this.finishWatch(key, w, done.text, "images" in done ? done.images : undefined);
 		}
 		return (await this.ctx.storage.list({ prefix: WATCH_PREFIX })).size > 0 || active.size > 0;
 	}
@@ -388,33 +394,38 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ctx.storage.setAlarm(Date.now());
 	}
 
-	// Виконує прийняті завдання по одному. Повертає true, поки є що повторювати чи виконувати.
+	// Виконує прийняті завдання одночасно: нова сесія готує теку 25–50 с (git clone), і уточнення в інші сесії не мають чекати за нею
+	// (раніше вони стояли в черзі до 70 с). Паралельність безпечна: старт контейнера спільний (ensureRunning), а клони йдуть
+	// по черзі в computer.serial. Повертає true, поки є що повторювати чи виконувати.
 	private async runJobs(): Promise<boolean> {
-		for (const [key, job] of await this.ctx.storage.list<Job>({ prefix: "job:" })) {
-			// Скільки завдання чекало на alarm і попередні завдання: від прийняття (begin/resume) до початку виконання.
-			if (job.queuedAt && job.attempts === 0) console.log(`latency job ${job.id}: queued=${Date.now() - job.queuedAt}ms accepted=${stamp(job.queuedAt)} at=${stamp()} kind=${"input" in job ? "new" : "follow-up"} cold=${!this.computer.running}`);
-			try {
-				if ("input" in job) {
-					if (!this.computer.running) await this.posts.show(job.target, "⏳ Запускаю контейнер").catch(() => {});
-					await this.start(job.id, job.input);
-				} else {
-					await this.followUp(job.id, job.text, job.images);
-				}
-			} catch (err) {
-				console.error(`job ${job.id} failed (attempt ${job.attempts + 1}):`, err);
-				if (job.attempts + 1 < JOB_ATTEMPTS) {
-					await this.ctx.storage.put(key, { ...job, attempts: job.attempts + 1 } satisfies Job);
-					continue;
-				}
-				await this.ctx.storage.delete(key);
-				await this.reportFailure(job);
-				continue;
-			}
-			await this.ctx.storage.delete(key); // запущено: далі повтор уточнення чи старту не потрібен
-			await this.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
-			if ("input" in job) await this.posts.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
-		}
+		const jobs = await this.ctx.storage.list<Job>({ prefix: "job:" });
+		await Promise.all([...jobs].map(([key, job]) => this.runJob(key, job)));
 		return (await this.ctx.storage.list({ prefix: "job:" })).size > 0;
+	}
+
+	private async runJob(key: string, job: Job): Promise<void> {
+		// Скільки завдання чекало на alarm і попередні завдання: від прийняття (begin/resume) до початку виконання.
+		if (job.queuedAt && job.attempts === 0) console.log(`latency job ${job.id}: queued=${Date.now() - job.queuedAt}ms accepted=${stamp(job.queuedAt)} at=${stamp()} kind=${"input" in job ? "new" : "follow-up"} cold=${!this.computer.running}`);
+		try {
+			if ("input" in job) {
+				if (!this.computer.running) await this.posts.show(job.target, "⏳ Запускаю контейнер").catch(() => {});
+				await this.start(job.id, job.input);
+			} else {
+				await this.followUp(job.id, job.text, job.images);
+			}
+		} catch (err) {
+			console.error(`job ${job.id} failed (attempt ${job.attempts + 1}):`, err);
+			if (job.attempts + 1 < JOB_ATTEMPTS) {
+				await this.ctx.storage.put(key, { ...job, attempts: job.attempts + 1 } satisfies Job);
+				return;
+			}
+			await this.ctx.storage.delete(key);
+			await this.reportFailure(job);
+			return;
+		}
+		await this.ctx.storage.delete(key); // запущено: далі повтор уточнення чи старту не потрібен
+		await this.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
+		if ("input" in job) await this.posts.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
 	}
 
 	private async reportFailure(job: Job): Promise<void> {

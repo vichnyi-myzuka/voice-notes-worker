@@ -17,7 +17,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -57,7 +57,7 @@ function fakeContainer() {
 			}
 			opencode.execs.push({ cmd, env: options?.env });
 			opencode.execMax = Math.max(opencode.execMax, ++opencode.execActive);
-			await Promise.resolve();
+			await (opencode.execGate ?? Promise.resolve());
 			opencode.execActive--;
 			return {
 				output: async () => ({
@@ -115,7 +115,7 @@ function fakeContainer() {
 					return new Response(null, { status: 204 });
 				}
 				const m = path.match(/^\/api\/session\/([^/]+)(?:\/(prompt|interrupt))?$/);
-				if (m && !opencode.sessions.has(m[1])) return new Response("not found", { status: 404 });
+				if (m && !opencode.sessions.has(m[1])) return new Response(JSON.stringify({ _tag: "SessionNotFoundError", sessionID: m[1] }), { status: 404 });
 				if (req.method === "DELETE" && m && !m[2]) {
 					opencode.sessions.delete(m[1]);
 					opencode.deleted.push(m[1]);
@@ -721,6 +721,19 @@ describe("AgentSession", () => {
 			expect(sent).toHaveLength(1); // спостереження знято
 		});
 
+		it("сесії OpenCode вже немає: спостереження знімається з поясненням, а не падає в 404 щоразу", async () => {
+			const { session, opencode, store } = await watched();
+			await session.alarm(); // бачимо, що працює
+			opencode.sessions.delete(ocId);
+			opencode.busy.clear();
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			await session.alarm();
+			expect(store.has(`watch:${ID}`)).toBe(false);
+			expect(sent.at(-1)?.text).toContain("Сесії OpenCode вже немає");
+			await session.alarm();
+			expect(sent).toHaveLength(1);
+		});
+
 		describe("події OpenCode (SSE)", () => {
 			const flush = async () => {
 				for (let i = 0; i < 20; i++) await Promise.resolve();
@@ -886,6 +899,22 @@ describe("AgentSession", () => {
 				await session.alarm();
 				expect(store.has(`job:${ID}`)).toBe(false);
 				expect(store.has(`watch:${ID}`)).toBe(true);
+			});
+
+			it("уточнення в існуючу сесію не чекає, поки нова сесія готує теку (завдання виконуються одночасно)", async () => {
+				const { session, opencode } = setup({ BOT_TOKEN: "bot" });
+				await session.start(ID, { prompt: "Перша" });
+				let release!: () => void;
+				opencode.execGate = new Promise<void>((r) => (release = r));
+				await session.begin("session-0002", { prompt: "Нова" }, POST);
+				await session.resume(ID, "Уточнення", { chatId: 5, url: TARGET.url });
+				const run = session.alarm();
+				for (let i = 0; i < 50; i++) await Promise.resolve();
+				await new Promise((r) => setTimeout(r, 0));
+				expect(opencode.prompts.map((p) => p.text)).toEqual(["Перша", "Уточнення"]); // нова сесія ще в session-prep
+				release();
+				await run;
+				expect(opencode.prompts.map((p) => p.text)).toEqual(["Перша", "Уточнення", "Нова"]);
 			});
 
 			it("resume: уточнення в сплячий контейнер іде через alarm, не блокуючи виклик", async () => {
