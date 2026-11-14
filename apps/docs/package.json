@@ -1,0 +1,17 @@
+{
+  "name": "@voice-notes/docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node --experimental-strip-types build/index.ts",
+    "deploy": "npm run build && wrangler deploy",
+    "dev": "npm run build && wrangler dev --var LOCAL_DEV:1",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.build.json",
+    "lint": "oxlint -c ../../.oxlintrc.json --deny-warnings src build test",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@voice-notes/core": "*",
+    "marked": "^16.0.0"
+  }
+}

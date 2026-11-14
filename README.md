@@ -20,6 +20,7 @@ packages/core/        спільне ядро, імпортується як `@v
 packages/oauth/       `@voice-notes/oauth`: вхід OAuth 2.0 (code + PKCE, статичний чи динамічний клієнт, оновлення токена) з токенами в Durable Object; використовує агент (Сільпо, Google Calendar)
 packages/telegram-format/  `@voice-notes/telegram-format`: Markdown → HTML Telegram (chatHtml), таблиці → картки, згорнута цитата; чиста логіка без мережі
 apps/agent/            воркер агента (прототип): сесії OpenCode у контейнерах Cloudflare, див. [docs/agent.md](docs/agent.md)
+apps/docs/             приватний сайт документації: архітектура, діаграми, знімок коду (збирається з репозиторію), див. [docs/docs-site.md](docs/docs-site.md)
 apps/notes/            воркер нотаток (цей бот); команди wrangler запускай із цієї теки
 apps/notes/wrangler.toml  bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE
 apps/notes/test/       тести воркера нотаток
@@ -200,5 +201,7 @@ source .env && curl -X POST https://notes.example.com -H "x-secret: $SECRET" \
 - [`docs/agent.md`](docs/agent.md): агент (`apps/agent`): контейнер, API, запобіжники, налаштування, знімки диска, підписка Claude.
 - [`docs/agent-chat.md`](docs/agent-chat.md): чат з агентом у Telegram і автоматизація GitHub → Telegram.
 - [`docs/agent-integrations.md`](docs/agent-integrations.md): сайти агента (`apps/sites`, публічні сайти), MCP Sure, Сільпо, Google Calendar.
+- [`docs/architecture.md`](docs/architecture.md): огляд архітектури з діаграмами Mermaid.
+- [`docs/docs-site.md`](docs/docs-site.md): приватний сайт документації `apps/docs`, що оновлюється після кожного мержу в `main`, і його налаштування.
 - [`docs/cloudflare.md`](docs/cloudflare.md): Workers AI, ліміти й витрати Cloudflare.
 - [`docs/adr/`](docs/adr), [`GLOSSARY.md`](GLOSSARY.md): рішення й словник; [`docs/agents/`](docs/agents): довідники для агентів.
