@@ -1,17 +1,22 @@
 import type { AgentSession } from "./infrastructure/container";
 
-// Прив'язки й секрети воркера агента (див. wrangler.toml і README).
-export interface Env {
-	AGENT_SESSION: DurableObjectNamespace<AgentSession>;
-	// Cloudflare Access: team domain (`<team>.cloudflareaccess.com`) і AUD застосунку
+// Прив'язки й секрети воркера агента (див. wrangler.toml і README), розкладені на групи: кожен модуль просить лише ту, що йому
+// потрібна (`Pick`-подібні типи нижче), а повний `Env` складається лише в `index.ts` і в Durable Object.
+
+// Cloudflare Access: team domain (`<team>.cloudflareaccess.com`) і AUD застосунку
+export interface AccessEnv {
 	ACCESS_TEAM_DOMAIN?: string;
 	ACCESS_AUD?: string;
+	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access
+}
+
+// Контейнер з OpenCode: пароль, ключі моделей і доступ до git, що передаються в нього, і тривалості для коротких перевірок
+export interface ContainerEnv {
 	// Пароль OpenCode V2 (basic auth, користувач `opencode`) усередині контейнера: воркер підставляє його сам
 	OPENCODE_PASSWORD: string;
-	// Ключі моделей і доступ до git, що передаються в контейнер (усе необов'язкове)
+	// Ключі моделей, що передаються в контейнер (усе необов'язкове)
 	ANTHROPIC_API_KEY?: string;
 	OPENAI_API_KEY?: string; // також використовує мала модель, що описує дію агента в пості (gpt-6-luna)
-	GITHUB_TOKEN?: string;
 	// Підписка Claude замість API-ключа: токен з `claude setup-token`; тоді сесії йдуть через провайдер Claude Agent
 	CLAUDE_CODE_OAUTH_TOKEN?: string;
 	// Модель Claude Agent (opus, sonnet, haiku, fable); за замовчуванням sonnet
@@ -25,18 +30,31 @@ export interface Env {
 	AGENT_MAX_COST_USD?: string;
 	AGENT_MAX_TOKENS?: string;
 	AGENT_PROGRESS_MS?: string; // мінімальний інтервал оновлення поста з прогресом (мс; типово 4000)
-	// Чат з агентом у Telegram (окремий бот): токен, секрет вебхука, єдиний дозволений користувач. Whisper — через Workers AI.
+}
+
+// Чат з агентом у Telegram (окремий бот): токен, секрет вебхука, єдиний дозволений користувач. Whisper — через Workers AI.
+export interface ChatEnv {
 	BOT_TOKEN?: string;
 	TG_WEBHOOK_SECRET?: string;
 	TG_OWNER_ID?: string;
 	SHORTCUT_SECRET?: string; // секрет (заголовок x-secret) для POST /shortcut: запис з iPhone Shortcut → сесія агента
 	CHAT_ID?: string; // канал, у який публікуєш задачі (бот адмін): працює так само, як канал бота нотаток
-	// Вебхук GitHub (/github): секрет підпису і токен для схвалення деплоїв з Telegram (Actions: read/write, лише у воркері, у контейнер не йде)
+	// JSON-масив [{repo: "owner/name", about: "як власник його називає"}]: з нього бот вибирає репозиторій за вільною фразою (не секрет, див. wrangler.toml)
+	AGENT_REPOS?: string;
+	AI: Ai;
+}
+
+// GitHub: токен для git у контейнері й API воркера, вебхук (/github): секрет підпису і токен для схвалення деплоїв з Telegram
+// (Actions: read/write, лише у воркері, у контейнер не йде)
+export interface GithubEnv {
+	GITHUB_TOKEN?: string;
 	GITHUB_WEBHOOK_SECRET?: string;
 	GITHUB_APPROVE_TOKEN?: string;
-	AI: Ai;
-	// Публікація статичних сайтів (команда `publish` у контейнері): ключ R2 лише на бакет `agent-sites`, endpoint акаунта
-	// (`https://<account>.r2.cloudflarestorage.com`) і адреса воркера сайтів. Усе йде в контейнер.
+}
+
+// Публікація статичних сайтів (команда `publish` у контейнері): ключ R2 лише на бакет `agent-sites`, endpoint акаунта
+// (`https://<account>.r2.cloudflarestorage.com`) і адреса воркера сайтів. Усе йде в контейнер.
+export interface PublishEnv {
 	R2_ACCESS_KEY_ID?: string;
 	R2_SECRET_ACCESS_KEY?: string;
 	R2_ENDPOINT?: string;
@@ -45,6 +63,10 @@ export interface Env {
 	PUBLIC_R2_ACCESS_KEY_ID?: string;
 	PUBLIC_R2_SECRET_ACCESS_KEY?: string;
 	PUBLIC_SITES_BASE_URL?: string;
+}
+
+// MCP-сервіси власника (див. MCP_SERVICES у domain/agent/mcp.ts)
+export interface McpEnv {
 	// MCP-сервер Sure (`https://<host>/mcp`): адреса, Bearer-токен (MCP_API_TOKEN у Sure) і Service Token Cloudflare Access для тунелю.
 	// Без адреси й токена MCP не підключається. Токен і Service Token йдуть у контейнер.
 	SURE_MCP_URL?: string;
@@ -55,7 +77,8 @@ export interface Env {
 	// для входу в Google Calendar (/calendar/login). Без них Календар не підключається. У контейнер не йдуть: туди потрапляє лише короткий access-токен.
 	GOOGLE_CLIENT_ID?: string;
 	GOOGLE_CLIENT_SECRET?: string;
-	// JSON-масив [{repo: "owner/name", about: "як власник його називає"}]: з нього бот вибирає репозиторій за вільною фразою (не секрет, див. wrangler.toml)
-	AGENT_REPOS?: string;
-	LOCAL_DEV?: string; // лише `npm run dev`: вимикає перевірку Access
+}
+
+export interface Env extends AccessEnv, ContainerEnv, ChatEnv, GithubEnv, PublishEnv, McpEnv {
+	AGENT_SESSION: DurableObjectNamespace<AgentSession>;
 }

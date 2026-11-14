@@ -1,5 +1,5 @@
 import type { DeployInfo, WatchTarget } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv, GithubEnv } from "../../env";
 import { stamp } from "../../timing";
 import { sendChat } from "../chat";
 import { openPullNumber } from "../github";
@@ -25,7 +25,7 @@ export class Watcher {
 
 	constructor(
 		private readonly storage: DurableObjectStorage,
-		private readonly env: Env,
+		private readonly env: ChatEnv & ContainerEnv & GithubEnv,
 		private readonly store: SessionStore,
 		private readonly computer: Computer,
 		private readonly posts: Posts,

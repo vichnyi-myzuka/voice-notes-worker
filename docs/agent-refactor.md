@@ -26,7 +26,7 @@
   (`McpName`, `Tracked`, `StartInput`, `parsePrefixes`, `mcpConfig`, `start`, логіни, HTTP-маршрути).
 - [x] HTTP: одна функція для маршрутів OAuth замість трьох копій; прибрано дубль `/sw.js`; веб-запити (`POST /api/sessions`, `…/messages`) йдуть через чергу завдань (`begin`/`resume` без чату), як у чаті.
 - [x] `Computer`: підготовку тек і MCP-конфігів (`prepare`, `enableMcp`) винесено в `Workspace` (`workspace.ts`); ключі сховища контейнера — `computerKey` у `state.ts`.
-- `Env`: розділити на групи (контейнер, чат, публікація, MCP).
+- [x] `Env` розділено на групи (`AccessEnv`, `ContainerEnv`, `ChatEnv`, `GithubEnv`, `PublishEnv`, `McpEnv` у `env.ts`); модулі просять лише свою групу.
 - `chat`: id сесії в кнопках не з URL, а явно.
 - `application/` для агента: вибір репозиторію, моделі й MCP з `interface/telegram/handle.ts`.
 - Правило лінтера на напрямок шарів (`interface` не імпортує `infrastructure` напряму).

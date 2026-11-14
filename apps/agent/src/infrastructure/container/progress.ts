@@ -1,6 +1,6 @@
 import { workersLlm } from "@voice-notes/core";
 import type { WatchTarget } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv } from "../../env";
 import { renameTopic, setTopicIcon, type Answers, type TopicState } from "../chat";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { WORKING, progressMs } from "./config";
@@ -28,7 +28,7 @@ export class Progress {
 	private readonly asks = new Map<string, string>();
 
 	constructor(
-		private readonly env: Env,
+		private readonly env: ChatEnv & ContainerEnv,
 		private readonly store: SessionStore,
 		private readonly posts: Posts,
 		private readonly forms: Forms,

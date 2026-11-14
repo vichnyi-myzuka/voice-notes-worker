@@ -1,5 +1,5 @@
 import type { WatchTarget } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv } from "../../env";
 import { sendChat } from "../chat";
 import { fetchQuota, isBlocked, resetTime } from "../quota";
 import { LIMIT_POLL_MS } from "./config";
@@ -9,7 +9,7 @@ import type { SessionStore } from "./store";
 // в тему кожної такої сесії. Без токена підписки перевіряти нічим, тож тоді нічого не чекаємо.
 export class Limits {
 	constructor(
-		private readonly env: Env,
+		private readonly env: ChatEnv & ContainerEnv,
 		private readonly store: SessionStore,
 		private readonly alarmNoLater: (at: number) => Promise<void>,
 	) {}

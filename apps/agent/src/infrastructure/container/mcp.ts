@@ -1,6 +1,6 @@
 import type { OAuthLogin } from "@voice-notes/oauth";
 import { MCP_LABELS, MCP_NAMES, MCP_SERVICES, OAUTH_MCP_NAMES, type McpAnswer, type McpFlags, type McpName, type OAuthMcpName } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, McpEnv } from "../../env";
 import { sendMcpQuestion } from "../chat";
 import type { Computer } from "./computer";
 import type { Workspace } from "./workspace";
@@ -30,7 +30,7 @@ export class Mcp {
 
 	constructor(
 		storage: DurableObjectStorage,
-		private readonly env: Env,
+		private readonly env: ChatEnv & McpEnv,
 		private readonly store: SessionStore,
 		private readonly computer: Computer,
 		private readonly workspace: Workspace,

@@ -1,5 +1,5 @@
 import { tg, type BotEnv, type TgCallbackQuery } from "@voice-notes/core";
-import type { Env } from "../../env";
+import type { ChatEnv, GithubEnv } from "../../env";
 import type { Deploys, Sessions } from "../../domain/agent";
 import { callback } from "../../infrastructure/chat";
 import { MergeRefused, mergeBlockers, mergePull, openPullNumber, reviewDeployments } from "../../infrastructure/github";
@@ -18,7 +18,7 @@ export const publishPrompt = (site: string, branch: string, number: number) =>
 
 // «🔀 Змерджити» під постом сесії (власник уже перевірений): знаходить відкритий PR гілки сесії й мерджить його. Підсумок — спливаюча
 // підказка; після успіху кнопка зникає з поста (лишається «Видалити»), сесію прибере вебхук після успішного деплою.
-export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env: Env, agent: Sessions & Deploys, id: string, sites: (repo: string) => string | undefined = () => undefined): Promise<void> {
+export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env: ChatEnv & GithubEnv, agent: Sessions & Deploys, id: string, sites: (repo: string) => string | undefined = () => undefined): Promise<void> {
 	const message = query.message!;
 	const answer = (text: string) => tg(bot, "answerCallbackQuery", { callback_query_id: query.id, text: text.slice(0, 200) }).catch((err) => console.error("answer failed:", err));
 	await mergeSession(bot, env, agent, id, { chatId: message.chat.id, messageId: message.message_id, ...(message.message_thread_id && { threadId: message.message_thread_id }), answer }, sites);
@@ -27,7 +27,7 @@ export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env
 // Мердж PR сесії. Викликається і кнопкою під повідомленням (messageId — це повідомлення), і клавішею внизу теми (messageId немає:
 // стан деплою тоді показується в пості за гілкою сесії). answer — відповідь користувачу (спливаюча підказка чи коротке повідомлення).
 export type MergeCtx = { chatId: number; threadId?: number; messageId?: number; answer: (text: string) => Promise<unknown> };
-export async function mergeSession(bot: BotEnv, env: Env, agent: Sessions & Deploys, id: string, ctx: MergeCtx, sites: (repo: string) => string | undefined = () => undefined): Promise<void> {
+export async function mergeSession(bot: BotEnv, env: ChatEnv & GithubEnv, agent: Sessions & Deploys, id: string, ctx: MergeCtx, sites: (repo: string) => string | undefined = () => undefined): Promise<void> {
 	const answer = (text: string) => ctx.answer(text.slice(0, 200));
 	const token = env.GITHUB_TOKEN;
 	const target = await agent.pullTarget(id);
@@ -58,7 +58,7 @@ export async function mergeSession(bot: BotEnv, env: Env, agent: Sessions & Depl
 }
 
 // Натискання кнопки (власник уже перевірений). Результат — спливаюча підказка, а пост втрачає кнопки й показує підсумок.
-export async function handleReviewButton(bot: BotEnv, query: TgCallbackQuery, env: Env, agent: Sessions & Deploys, approve: boolean, repo: string, runId: number): Promise<void> {
+export async function handleReviewButton(bot: BotEnv, query: TgCallbackQuery, env: ChatEnv & GithubEnv, agent: Sessions & Deploys, approve: boolean, repo: string, runId: number): Promise<void> {
 	const answer = (text: string) => tg(bot, "answerCallbackQuery", { callback_query_id: query.id, text }).catch((err) => console.error("answer failed:", err));
 	if (!env.GITHUB_APPROVE_TOKEN) return void (await answer("Не налаштовано GITHUB_APPROVE_TOKEN."));
 	let failure = "";

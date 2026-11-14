@@ -1,6 +1,6 @@
 import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import { MCP_NAMES, MCP_WRITES, type Agent, type ImageRef, type McpFlags, type McpName } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv, GithubEnv } from "../../env";
 import { stamp, stopwatch } from "../../timing";
 import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
@@ -45,7 +45,7 @@ const IMAGE_ONLY = "Користувач надіслав зображення (
 // Cloudflare Access (Telegram не пройде логін), тому захист тут свій: секретний заголовок, а далі лише канал CHAT_ID
 // (дописувати в нього можуть лише адміни) і особистий чат TG_OWNER_ID. Telegram завжди отримує 200 одразу, а робота
 // (Whisper, холодний старт контейнера) йде у фоні: інакше він би повторював запит.
-export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps): Promise<Response> {
+export async function handleTelegram(req: Request, env: ChatEnv & ContainerEnv & GithubEnv, deps: TelegramDeps): Promise<Response> {
 	const token = req.headers.get("x-telegram-bot-api-secret-token") ?? "";
 	if (req.method !== "POST" || !env.TG_WEBHOOK_SECRET || !(await safeEqual(token, env.TG_WEBHOOK_SECRET))) {
 		return new Response("unauthorized", { status: 401 });
@@ -277,7 +277,7 @@ async function transcribe(env: BotEnv, llm: Llm, file: { file_id: string; mime_t
 // що й для голосового з Telegram. Службове повідомлення «🎙 Розпізнаю…» у чаті дає сесії id і прибирається разом з оригіналом.
 export const SHORTCUT_PATH = "/shortcut";
 
-export async function handleShortcut(req: Request, env: Env, deps: TelegramDeps): Promise<Response> {
+export async function handleShortcut(req: Request, env: ChatEnv & ContainerEnv & GithubEnv, deps: TelegramDeps): Promise<Response> {
 	if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 	if (!env.SHORTCUT_SECRET) return new Response("SHORTCUT_SECRET is not configured", { status: 503 });
 	if (!(await safeEqual(req.headers.get("x-secret") ?? "", env.SHORTCUT_SECRET))) return new Response("unauthorized", { status: 401 });

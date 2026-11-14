@@ -1,5 +1,5 @@
 import { MCP_SERVICES, OAUTH_MCP_NAMES, type Computer, type McpLogin, type OAuthMcpName, type Sessions } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { AccessEnv } from "../../env";
 import { verifyAccess } from "@voice-notes/core";
 
 const ID = /^[a-z0-9-]{8,64}$/;
@@ -24,7 +24,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   DELETE /api/computer/snapshot             → видаляє знімок і зупиняє контейнер: наступний старт з чистого образу (сесії зникають)
 //   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
 //   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)
-export async function handleFetch(req: Request, env: Env, agent: Sessions & Computer & McpLogin): Promise<Response> {
+export async function handleFetch(req: Request, env: AccessEnv, agent: Sessions & Computer & McpLogin): Promise<Response> {
 	if (!env.LOCAL_DEV) {
 		if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return new Response("Access is not configured", { status: 503 });
 		if (!(await verifyAccess(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD }))) return new Response("Forbidden", { status: 403 });

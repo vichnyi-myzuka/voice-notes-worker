@@ -1,5 +1,5 @@
 import type { ComputerInfo, ConnectionsInfo, SnapshotInfo } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ContainerEnv, GithubEnv, McpEnv, PublishEnv } from "../../env";
 import { stopwatch } from "../../timing";
 import { parseConnections } from "./connections";
 import { FORM_HOLD_MS, READY_ATTEMPTS, SNAPSHOT_CHECK_MS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "./config";
@@ -17,7 +17,7 @@ export class Computer {
 
 	constructor(
 		private readonly ctx: DurableObjectState,
-		private readonly env: Env,
+		private readonly env: ContainerEnv & GithubEnv & PublishEnv & McpEnv,
 	) {}
 
 	get running(): boolean {

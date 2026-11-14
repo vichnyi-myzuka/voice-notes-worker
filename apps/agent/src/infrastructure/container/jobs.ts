@@ -1,5 +1,5 @@
 import type { ImageRef, StartInput, WatchTarget } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv } from "../../env";
 import { stamp } from "../../timing";
 import { sendChat } from "../chat";
 import { JOB_ATTEMPTS, JOB_STALE_MS, WORKING } from "./config";
@@ -23,7 +23,7 @@ export class Jobs {
 
 	constructor(
 		private readonly ctx: DurableObjectState,
-		private readonly env: Env,
+		private readonly env: ChatEnv & ContainerEnv,
 		private readonly store: SessionStore,
 		private readonly posts: Posts,
 		private readonly runner: JobRunner,

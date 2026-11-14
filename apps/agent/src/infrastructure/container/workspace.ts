@@ -1,4 +1,4 @@
-import type { Env } from "../../env";
+import type { ContainerEnv, GithubEnv, McpEnv } from "../../env";
 import { WRITER, mcpConfig, type McpWanted } from "./payload";
 import { sessionDir } from "./state";
 
@@ -7,7 +7,7 @@ import { sessionDir } from "./state";
 export class Workspace {
 	constructor(
 		private readonly ctx: DurableObjectState,
-		private readonly env: Env,
+		private readonly env: ContainerEnv & GithubEnv & McpEnv,
 	) {}
 
 	// Готує теку сесії в контейнері (клон + worktree або порожня тека) і повертає її шлях. exec не успадковує env контейнера,

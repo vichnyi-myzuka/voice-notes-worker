@@ -1,4 +1,4 @@
-import type { Env } from "../../env";
+import type { McpEnv } from "../../env";
 import agents from "../../../payload/AGENTS.md";
 import calendarAgent from "../../../payload/calendar-agent.md";
 import prePush from "../../../payload/pre-push.sh";
@@ -106,7 +106,7 @@ type McpServer = {
 	// OpenCode (файл він наживо не перечитує).
 	remote?: string;
 	// Запис сервера (і файли поруч); undefined — сервіс не налаштований чи токена немає.
-	server(env: Env, dir: string, want: McpWanted): { server: unknown; files?: PayloadFile[] } | undefined;
+	server(env: McpEnv, dir: string, want: McpWanted): { server: unknown; files?: PayloadFile[] } | undefined;
 };
 
 // Запис віддаленого сервера з коротким токеном (спільний для файлу конфігу й для PUT /api/experimental/mcp/{name} у живий OpenCode).
@@ -158,7 +158,7 @@ export const refreshableMcp = (want: McpWanted): Record<string, unknown> =>
 // Конфіг OpenCode з MCP-серверами для теки однієї сесії: лише для запитаних серверів і лише якщо вони налаштовані (Sure: адреса й токен).
 // Основним стає агент під задачу: `sure`, `silpo`, `calendar`, `cloudflare` або `finance` (Sure і Сільпо разом: зіставляти чеки з платежами);
 // будь-яке інше поєднання (напр. календар разом із Sure чи Cloudflare) — `assistant` з усіма інструкціями.
-export function mcpConfig(env: Env, dir: string, want: McpWanted): PayloadFile[] | undefined {
+export function mcpConfig(env: McpEnv, dir: string, want: McpWanted): PayloadFile[] | undefined {
 	const servers: Record<string, unknown> = {};
 	const files: PayloadFile[] = [];
 	for (const name of MCP_NAMES) {

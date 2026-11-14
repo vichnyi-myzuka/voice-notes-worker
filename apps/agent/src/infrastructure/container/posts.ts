@@ -1,6 +1,6 @@
 import { tg } from "@voice-notes/core";
 import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv } from "../../env";
 import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, type Answers, type Buttons, type TopicState } from "../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "./config";
 import { deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
@@ -16,7 +16,7 @@ export class Posts {
 
 	constructor(
 		private readonly storage: DurableObjectStorage,
-		private readonly env: Env,
+		private readonly env: ChatEnv & ContainerEnv,
 		private readonly sessions: SessionStore,
 	) {}
 
