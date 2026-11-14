@@ -296,6 +296,19 @@ describe("вебхук Telegram", () => {
 			expect(JSON.stringify(a.calls.map((c) => c.body))).toContain("https://agent.example/silpo/login");
 		});
 
+		it("явне «клаудфлер, задача» / «@cloudflare задача» вмикає MCP Cloudflare (лише явно, разом із моделлю), без входу бот дає посилання", async () => {
+			const a = setup();
+			await a.send(msg({ text: "Клаудфлер, покажи список воркерів" }));
+			expect(a.sessions.get(SID)?.input).toMatchObject({ prompt: "покажи список воркерів", cloudflare: true });
+			expect(JSON.stringify(a.calls.map((c) => c.body))).toContain("https://agent.example/cloudflare/login");
+			const b = setup();
+			await b.send(msg({ text: "модель опус, @cloudflare що з DNS" }));
+			expect(b.sessions.get(SID)?.input).toMatchObject({ prompt: "що з DNS", model: "opus", cloudflare: true });
+			const c = setup();
+			await c.send(msg({ text: "покажи список воркерів у cloudflare" }));
+			expect(c.sessions.get(SID)?.input.cloudflare).toBeUndefined();
+		});
+
 		it("задачі зі Sure чи Сільпо за замовчуванням на haiku, явна модель сильніша", async () => {
 			const a = setup();
 			await a.send(msg({ text: "Шур, скільки я витратив у жовтні" }));

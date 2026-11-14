@@ -102,6 +102,13 @@ function describeCalendar(name: string, input: Record<string, unknown> | undefin
 	return cut(args ? `${verb} (${args})` : verb);
 }
 
+// Інструменти MCP Cloudflare (`cloudflare_search`, `cloudflare_execute`: пошук у API й виконання коду проти нього): без словника, як у Сільпо.
+function describeCloudflare(name: string, input: Record<string, unknown> | undefined): string {
+	const args = argSummary(input);
+	const verb = `викликає Cloudflare: ${name.replace(/^cloudflare_/, "").replace(/_/g, " ")}`;
+	return cut(args ? `${verb} (${args})` : verb);
+}
+
 export function describeActivity(tool: string, input: Record<string, unknown> | undefined): string {
 	const i = input ?? {};
 	const file = str(i.filePath) ?? str(i.path) ?? str(i.file);
@@ -132,6 +139,7 @@ export function describeActivity(tool: string, input: Record<string, unknown> | 
 		case "task":
 			return "делегує підзадачу";
 		default: {
+			if (tool.startsWith("cloudflare_")) return describeCloudflare(tool.slice("cloudflare_".length), i);
 			if (tool.startsWith("calendar_")) return describeCalendar(tool.slice("calendar_".length), i);
 			if (tool.startsWith("silpo_")) return describeSilpo(tool.slice("silpo_".length), i);
 			if (tool.startsWith("sure_")) return describeSure(tool.slice("sure_".length), i);

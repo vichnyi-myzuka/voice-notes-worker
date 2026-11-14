@@ -208,11 +208,11 @@ export class Computer {
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`session-prep failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
 		const dir = new TextDecoder().decode(out.stdout).trim() || sessionDir(folder);
-		if (mcp.sure || mcp.silpo || mcp.calendar) await this.enableMcp(dir, mcp);
+		if (mcp.sure || mcp.silpo || mcp.calendar || mcp.cloudflare) await this.enableMcp(dir, mcp);
 		return dir;
 	}
 
-	// MCP (Sure, Сільпо, Календар) лише для цієї сесії: .opencode/opencode.json (і файли токенів Календаря) у її теці (OpenCode підхоплює його сам), а з git він виключений,
+	// MCP (Sure, Сільпо, Календар, Cloudflare) лише для цієї сесії: .opencode/opencode.json (і файли токенів Календаря) у її теці (OpenCode підхоплює його сам), а з git він виключений,
 	// щоб не потрапив у коміт. Власний .opencode/opencode.json репозиторію не перезаписуємо. Без налаштованих серверів нічого не робить.
 	private async enableMcp(dir: string, mcp: McpWanted): Promise<void> {
 		const files = mcpConfig(this.env, dir, mcp);

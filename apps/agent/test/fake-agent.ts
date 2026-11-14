@@ -18,6 +18,7 @@ export function fakeAgent(origin = "https://agent.example") {
 	const deploys: { repo?: string; folder?: string; postId?: number; deploy: DeployInfo }[] = [];
 	const silpoCodes: string[] = [];
 	const calendarCodes: string[] = [];
+	const cloudflareCodes: string[] = [];
 	let snapshotError = "";
 	const get = (id: string) => {
 		const s = sessions.get(id);
@@ -146,6 +147,17 @@ export function fakeAgent(origin = "https://agent.example") {
 		},
 		async calendarConnected() {
 			return calendarCodes.length > 0;
+		},
+		async cloudflareLoginUrl(o) {
+			return `https://mcp.cloudflare.example/authorize?redirect_uri=${o}/cloudflare/callback`;
+		},
+		async cloudflareCallback(code, state) {
+			if (state !== "good") return false;
+			cloudflareCodes.push(code);
+			return true;
+		},
+		async cloudflareConnected() {
+			return cloudflareCodes.length > 0;
 		},
 		async resetComputer(unlessBusy) {
 			if (unlessBusy && [...sessions.values()].some((s) => s.status === "working")) return false;

@@ -4,7 +4,7 @@
 // name: коротка назва за змістом задачі (kebab-case); з неї складаються тека й гілка сесії, без неї — технічний id
 // model: модель сесії — «opus» (провайдер Claude Agent) або «провайдер/модель»; без неї — модель за замовчуванням воркера
 // images: фото від користувача (id файлів Telegram): агент отримує їх як зображення, а не як опис
-export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; sure?: boolean; silpo?: boolean; calendar?: boolean; images?: ImageRef[] };
+export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; sure?: boolean; silpo?: boolean; calendar?: boolean; cloudflare?: boolean; images?: ImageRef[] };
 
 // Зображення в Telegram: id файлу й тип (завантажує його Durable Object, у завданні лише посилання: сховище не тримає великих значень).
 export type ImageRef = { fileId: string; mime: string };
@@ -140,4 +140,13 @@ export type Deploys = {
 };
 
 // Усе разом: те, що реалізує адаптер (infrastructure/container). Обробники беруть лише потрібну частину.
-export type Agent = Sessions & Computer & Deploys & SilpoLogin & CalendarLogin;
+// Вхід у Cloudflare (офіційний MCP mcp.cloudflare.com, OAuth з динамічною реєстрацією клієнта): як у Сільпо, у контейнер іде лише короткий access-токен.
+export type CloudflareLogin = {
+	// Адреса входу в Cloudflare (origin — адреса воркера, куди Cloudflare поверне користувача).
+	cloudflareLoginUrl(origin: string): Promise<string>;
+	// Завершує вхід кодом з повернення; false — state не збігся.
+	cloudflareCallback(code: string, state: string): Promise<boolean>;
+	cloudflareConnected(): Promise<boolean>;
+};
+
+export type Agent = Sessions & Computer & Deploys & SilpoLogin & CalendarLogin & CloudflareLogin;

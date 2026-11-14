@@ -572,6 +572,41 @@ describe("AgentSession", () => {
 		expect(JSON.stringify(out.opencode.prompts ?? out.opencode)).toContain("/silpo/login");
 	});
 
+	it("MCP Cloudflare: токен у конфігу теки (права 600), агент `cloudflare`; з іншими — `assistant`; без входу — примітка в завданні", async () => {
+		const base = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "w", TG_OWNER_ID: "1", CHAT_ID: "-100", ACCESS_AUD: "aud", ACCESS_TEAM_DOMAIN: "t" };
+		const login = { client: { id: "cid", redirect: "r" }, tokens: { access: "cf-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };
+		const written = (o: ReturnType<typeof setup>["opencode"]) => {
+			const [exec] = o.execs.filter((e) => e.cmd[0] === "sh");
+			const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
+			return { file, config: JSON.parse(file.content) };
+		};
+
+		const only = setup(base);
+		only.store.set("cloudflare", login);
+		await only.session.start(ID, { prompt: "Покажи воркери", cloudflare: true });
+		const { file, config } = written(only.opencode);
+		expect(file.mode).toBe("600");
+		expect(config.default_agent).toBe("cloudflare");
+		expect(config.mcp.servers).toEqual({ cloudflare: { type: "remote", url: "https://mcp.cloudflare.com/mcp", oauth: false, headers: { Authorization: "Bearer cf-acc" } } });
+		expect(only.store.get(`session:${ID}`)).toMatchObject({ cloudflare: true });
+
+		const none = setup(base);
+		await none.session.start(ID, { prompt: "Покажи воркери" });
+		expect(none.opencode.execs.filter((e) => e.cmd[0] === "sh")).toEqual([]);
+
+		const both = setup({ ...base, SURE_MCP_URL: "https://sure.example/mcp", SURE_MCP_TOKEN: "tok" });
+		both.store.set("cloudflare", login);
+		await both.session.start(ID, { prompt: "Зістав", cloudflare: true, sure: true });
+		const b = written(both.opencode).config;
+		expect(b.default_agent).toBe("assistant");
+		expect(Object.keys(b.mcp.servers).sort()).toEqual(["cloudflare", "sure"]);
+
+		const out = setup(base);
+		await out.session.start(ID, { prompt: "Покажи воркери", cloudflare: true });
+		expect(out.opencode.execs.filter((e) => e.cmd[0] === "sh")).toEqual([]);
+		expect(JSON.stringify(out.opencode.prompts ?? out.opencode)).toContain("/cloudflare/login");
+	});
+
 	it("MCP Google Calendar: токен у конфігу теки (права 600), окремий агент `calendar`; разом зі Sure — `assistant`; без входу — примітка в завданні", async () => {
 		const base = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "w", TG_OWNER_ID: "1", CHAT_ID: "-100", ACCESS_AUD: "aud", ACCESS_TEAM_DOMAIN: "t" };
 		const login = { tokens: { access: "cal-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };

@@ -116,14 +116,18 @@ const SILPO_PREFIX = /^(?:@silpo|silpo|сільпо|сильпо|сілпо)[\s,
 // Те саме для MCP Google Calendar: «@calendar задача» чи голосом «календар, задача».
 const CALENDAR_PREFIX = /^(?:@calendar|calendar|календар|календарю|календаря)[\s,.:;!—–-]+([\s\S]+)$/iu;
 
-// Шукає префікси моделі, Sure, Сільпо і Календаря в будь-якому порядку; повертає задачу без них.
-function parsePrefixes(transcript: string): { task: string; model?: string; sure: boolean; silpo: boolean; calendar: boolean } {
+// Те саме для MCP Cloudflare, але лише явно (роутер моделі його не вмикає: інструмент керує акаунтом): «@cloudflare задача» чи голосом «клаудфлер, задача».
+const CLOUDFLARE_PREFIX = /^(?:@cloudflare|cloudflare|клаудфлер|клауд флер|клаудфлеру|клаудфлера|клаудфлейр|клодфлер)[\s,.:;!—–-]+([\s\S]+)$/iu;
+
+// Шукає префікси моделі, Sure, Сільпо, Календаря і Cloudflare в будь-якому порядку; повертає задачу без них.
+function parsePrefixes(transcript: string): { task: string; model?: string; sure: boolean; silpo: boolean; calendar: boolean; cloudflare: boolean } {
 	let task = transcript;
 	let model: string | undefined;
 	let sure = false;
 	let silpo = false;
 	let calendar = false;
-	for (let i = 0; i < 4; i++) {
+	let cloudflare = false;
+	for (let i = 0; i < 5; i++) {
 		const m = !model && modelPrefix(task);
 		if (m) ({ model, task } = m);
 		const sm = !sure && SURE_PREFIX.exec(task);
@@ -141,8 +145,13 @@ function parsePrefixes(transcript: string): { task: string; model?: string; sure
 			task = cm[1];
 			calendar = true;
 		}
+		const fm = !cloudflare && CLOUDFLARE_PREFIX.exec(task);
+		if (fm) {
+			task = fm[1];
+			cloudflare = true;
+		}
 	}
-	return { task: task.trim(), model, sure, silpo, calendar };
+	return { task: task.trim(), model, sure, silpo, calendar, cloudflare };
 }
 
 async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
@@ -223,7 +232,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	sw.mark("transcribe");
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
-	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo, calendar: forcedCalendar } = parsePrefixes(transcript);
+	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo, calendar: forcedCalendar, cloudflare } = parsePrefixes(transcript);
 	const withRepo = REPO_PREFIX.exec(task);
 	const prompt = withRepo ? withRepo[2].trim() : task;
 	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
@@ -237,7 +246,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const calendar = forcedCalendar || route.calendar === true;
 	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
 	const model = requestedModel ?? route.model ?? (sure || silpo || calendar ? "haiku" : undefined);
-	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: !!file, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, ...(images && { images }) };
+	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: !!file, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ...(images && { images }) };
 	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.
 	if (!repo && route.unsure) {
 		await askRepo(env, agent, repos, pending);
@@ -249,7 +258,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 }
 
 // Слова, які Whisper часто псує в диктовці задач («Opus» → «опис», «воркер» → «ворки»): іде йому як initial_prompt.
-const VOICE_HINT = "Opus, Sonnet, Haiku, Sure, Сільпо, Google Calendar, воркер, агент, бот, репозиторій, pull request, Cloudflare, Telegram.";
+const VOICE_HINT = "Opus, Sonnet, Haiku, Sure, Сільпо, Google Calendar, Cloudflare MCP, воркер, агент, бот, репозиторій, pull request, Cloudflare, Telegram.";
 
 // Голосове → текст через Whisper; текст як є. Порожній рядок — не розібрали.
 async function transcribe(env: BotEnv, llm: Llm, file: { file_id: string; mime_type?: string } | undefined, text: string | undefined): Promise<string> {
