@@ -404,6 +404,16 @@ describe("AgentSession", () => {
 		vi.unstubAllGlobals();
 	});
 
+	it("тема сесії, що ще не запустилась (завдання в черзі): byThread її знаходить, щоб повідомлення не стартувало нову сесію", async () => {
+		const { session, store } = setup({});
+		await session.begin(ID, { prompt: "Задача" }, { chatId: 42, url: "u", postId: 7, header: "h", threadId: 555 });
+		expect(await session.byThread(42, 555)).toBe(ID);
+		expect(await session.byThread(42, 556)).toBeUndefined();
+		await session.resume(ID, "Уточнення", { chatId: 42, url: "u", threadId: 555 });
+		const job = store.get(`job:${ID}`) as { input?: { prompt: string } };
+		expect(job.input?.prompt).toBe("Задача\n\nУточнення"); // старт не втрачено
+	});
+
 	it("іконка теми: ⚡ при роботі; без потрібного емодзі в наборі чи при збої Telegram нічого не ламається", async () => {
 		const { session } = setup({ BOT_TOKEN: "bot" });
 		const edits: unknown[] = [];

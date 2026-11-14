@@ -469,6 +469,13 @@ export class AgentSession extends DurableObject<Env> {
 			await this.ctx.storage.setAlarm(Date.now());
 			return;
 		}
+		// Старт ще не почався: уточнення дописується до задачі старту (інакше нове завдання з тим самим ключем стерло б сам старт).
+		if (queued && "input" in queued && !queued.startedAt) {
+			const merged = [...(queued.input.images ?? []), ...(images ?? [])];
+			await this.ctx.storage.put(jobKey(id), { ...queued, input: { ...queued.input, prompt: `${queued.input.prompt}\n\n${text}`, ...(merged.length && { images: merged }) } } satisfies Job);
+			await this.ctx.storage.setAlarm(Date.now());
+			return;
+		}
 		await this.enqueue({ id, text, target, attempts: 0, ...(images?.length && { images }) });
 	}
 
@@ -798,6 +805,11 @@ export class AgentSession extends DurableObject<Env> {
 	async byThread(chatId: number, threadId: number): Promise<string | undefined> {
 		for (const [key, tracked] of await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX })) {
 			if (tracked.post?.threadId === threadId && tracked.post.chatId === chatId) return sessionId(key);
+		}
+		// Сесія, що ще не запустилась (холодний старт, клон): її тема відома лише із завдання в черзі. Без цього повідомлення,
+		// надіслане в цей час, стартувало б у тій самій темі нову сесію.
+		for (const [key, job] of await this.ctx.storage.list<Job>({ prefix: jobKey("") })) {
+			if (job.target.threadId === threadId && job.target.chatId === chatId) return key.slice(jobKey("").length);
 		}
 		return undefined;
 	}
