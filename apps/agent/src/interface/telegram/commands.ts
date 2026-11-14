@@ -1,6 +1,7 @@
-import type { BotEnv } from "@voice-notes/core";
+import { tg, type BotEnv } from "@voice-notes/core";
+import type { Schedules } from "../../domain/schedule";
 import type { Computer, SessionReport, Sessions } from "../../domain/agent";
-import { removeMessage, removeOriginal } from "../../infrastructure/chat";
+import { removeMessage, removeOriginal, scheduleCard } from "../../infrastructure/chat";
 import { describeQuota, fetchQuota } from "../../infrastructure/quota";
 
 export type Say = (text: string) => Promise<unknown>;
@@ -54,4 +55,15 @@ export function describe({ status, outcome, cost, tokens }: SessionReport): stri
 		: "💤 Чекає на відповідь";
 	const spent = [cost ? `$${cost.toFixed(2)}` : "", tokens ? `${Math.round(tokens / 1000)}k токенів` : ""].filter(Boolean).join(" · ");
 	return spent ? `${state} (${spent})` : state;
+}
+
+// /automations: по картці з кнопками на кожну автоматизацію (див. scheduleCard); їх створює агент командою `schedule` чи власник через API.
+export async function automations(env: BotEnv, chat: number, schedules: Schedules | undefined, say: Say, threadId?: number): Promise<void> {
+	if (!schedules) return void (await say("ℹ️ Автоматизації недоступні."));
+	const all = await schedules.list();
+	if (!all.length) return void (await say("Автоматизацій ще немає. Попроси агента: «щоранку о 9 роби …» чи «завтра о 18:00 нагадай …»."));
+	for (const s of all) {
+		const { text, reply_markup } = scheduleCard(s);
+		await tg(env, "sendMessage", { chat_id: chat, ...(threadId && { message_thread_id: threadId }), text, reply_markup });
+	}
 }

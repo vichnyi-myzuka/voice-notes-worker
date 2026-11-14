@@ -1,8 +1,8 @@
-import { tg, type BotEnv, type TgUpdate } from "@voice-notes/core";
+import { tg, tgSendMessage, type BotEnv, type TgUpdate } from "@voice-notes/core";
 import type { Agent, Deploys, Sessions } from "../../domain/agent";
-import { DEFAULT_TZ, type Schedules } from "../../domain/schedule";
+import type { Schedule, Schedules } from "../../domain/schedule";
 import type { Env } from "../../env";
-import { parseCallback, removeMessage, removeOriginal, type SessionAction } from "../../infrastructure/chat";
+import { parseCallback, removeMessage, removeOriginal, scheduleCard, scheduleHistory, type ScheduleAction, type SessionAction } from "../../infrastructure/chat";
 // Єдиний дозволений імпорт між interface-модулями: ADR 0004.
 // oxlint-disable-next-line no-restricted-imports
 import { handleMergeButton, handleReviewButton } from "../github/review";
@@ -44,7 +44,7 @@ export async function handleButton(bot: BotEnv, query: Query, env: Env, agent: A
 		await removeMessage(bot, chatId, messageId);
 		return void (await answer("Видалено."));
 	}
-	if (action.kind === "schedule") return handleScheduleButton(bot, schedules, action.approve, action.id, chatId, messageId, answer);
+	if (action.kind === "schedule") return handleScheduleButton(bot, schedules, action.action, action.id, chatId, messageId, answer);
 	if (action.kind === "pick") return void (await answer((await resolveRepo(bot, agent, action.id, action.choice, messageId)) ? "Запускаю." : "Вибір уже неактуальний."));
 	if (!(await agent.link(action.id))) return void (await answer("Сесію не знайдено."));
 	if (action.kind === "choice" || action.action === "ok") {
@@ -55,20 +55,38 @@ export async function handleButton(bot: BotEnv, query: Query, env: Env, agent: A
 	await sessionActions[action.action]({ bot, query, env, agent, id: action.id, chatId, messageId, answer });
 }
 
-// Підтвердження розкладу від агента: ✅ активує (перший запуск показується в тексті), ❌ видаляє. Кнопки зникають, лишається результат.
-async function handleScheduleButton(bot: BotEnv, schedules: Schedules | undefined, approve: boolean, id: string, chatId: number, messageId: number, answer: (text: string) => Promise<unknown>): Promise<void> {
+// Кнопки автоматизацій (ADR 0005): підтвердження розкладу від агента і кнопки картки з /automations. Кожна дія оновлює картку на місці.
+async function handleScheduleButton(bot: BotEnv, schedules: Schedules | undefined, action: ScheduleAction, id: string, chatId: number, messageId: number, answer: (text: string) => Promise<unknown>): Promise<void> {
 	if (!schedules) return void (await answer("Розклади недоступні."));
 	const current = await schedules.get(id);
-	if (!current || current.status !== "pending") return void (await answer("Це вже неактуально."));
-	const done = (text: string) => tg(bot, "editMessageText", { chat_id: chatId, message_id: messageId, text }).catch((err) => console.error("edit failed:", err));
-	if (!approve) {
-		await schedules.remove(id);
-		await done(`❌ Відхилено: «${current.name}»`);
-		return void (await answer("Відхилено."));
+	if (!current) {
+		await removeMessage(bot, chatId, messageId);
+		return void (await answer("Автоматизацію вже видалено."));
 	}
-	const r = await schedules.resume(id);
-	if (!r.ok) return void (await answer(r.error));
-	const first = r.value.nextRun === undefined ? "" : `\nПерший запуск: ${new Date(r.value.nextRun).toLocaleString("uk-UA", { timeZone: "cron" in r.value.when ? r.value.when.tz : DEFAULT_TZ, dateStyle: "short", timeStyle: "short" })}`;
-	await done(`✅ Активовано: «${r.value.name}»${first}`);
-	await answer("Активовано.");
+	const show = (s: Schedule) => {
+		const { text, reply_markup } = scheduleCard(s);
+		return tg(bot, "editMessageText", { chat_id: chatId, message_id: messageId, text, reply_markup }).catch((err) => String(err).includes("not modified") || console.error("edit failed:", err));
+	};
+	const failed = (r: { ok: false; error: string }) => answer(r.error);
+	if ((action === "ok" || action === "no") && current.status !== "pending") return void (await answer("Це вже неактуально."));
+	if (action === "no" || action === "del") {
+		await schedules.remove(id);
+		if (action === "del") await removeMessage(bot, chatId, messageId);
+		else await tg(bot, "editMessageText", { chat_id: chatId, message_id: messageId, text: `❌ Відхилено: «${current.name}»` }).catch((err) => console.error("edit failed:", err));
+		return void (await answer(action === "del" ? "Видалено." : "Відхилено."));
+	}
+	if (action === "hist") {
+		await tgSendMessage(bot, chatId, scheduleHistory(current));
+		return void (await answer("Історія нижче."));
+	}
+	if (action === "run") {
+		const r = await schedules.runNow(id);
+		if (!r.ok) return void (await failed(r));
+		await show((await schedules.get(id)) ?? current);
+		return void (await answer(r.value.result === "ok" ? "Запускаю." : r.value.result === "skipped" ? "Попередній запуск ще працює." : "Не вдалося запустити."));
+	}
+	const r = action === "pause" ? await schedules.pause(id) : await schedules.resume(id);
+	if (!r.ok) return void (await failed(r));
+	await show(r.value);
+	await answer(action === "pause" ? "На паузі." : "Увімкнено.");
 }

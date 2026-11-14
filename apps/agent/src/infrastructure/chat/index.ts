@@ -3,7 +3,8 @@ import { chatHtml, escapeHtml, stripQuote, tablesToCards } from "@voice-notes/te
 import { callback } from "./callback";
 
 export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
-export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
+export { scheduleCard, scheduleHistory } from "./schedule-card";
+export { callback, parseCallback, type Callback, type ScheduleAction, type SessionAction } from "./callback";
 export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
 
 // Кнопки під постом сесії: поки агент працює — «Стоп» і «Видалити», після завершення — лише «Видалити». Id сесії береться з її

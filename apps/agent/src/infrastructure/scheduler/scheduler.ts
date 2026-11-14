@@ -1,8 +1,8 @@
 import { tg, tgSendMessage } from "@voice-notes/core";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { DEFAULT_TZ, type NewSchedule, Outcome, Run, Schedule, SchedulePatch, Schedules } from "../../domain/schedule";
-import { callback, createTopic, sendChat } from "../chat";
+import type { NewSchedule, Outcome, Run, Schedule, SchedulePatch, Schedules } from "../../domain/schedule";
+import { createTopic, scheduleCard, sendChat } from "../chat";
 import { ScheduleBook, type Launcher } from "./book";
 
 // Окремий Durable Object з розкладами автоматизацій (ADR 0005). Живе окремо від AgentSession і життя контейнера:
@@ -72,11 +72,8 @@ function launcher(env: Env): Launcher {
 			return (await agent().status(sessionId)) === "working";
 		},
 		async propose(s) {
-			const first = s.nextRun === undefined ? "—" : new Date(s.nextRun).toLocaleString("uk-UA", { timeZone: "cron" in s.when ? s.when.tz : DEFAULT_TZ, dateStyle: "short", timeStyle: "short" });
-			const when = "cron" in s.when ? `${s.when.cron} (${s.when.tz})` : "один раз";
-			const brief = s.prompt.length > 1500 ? `${s.prompt.slice(0, 1500)}…` : s.prompt;
-			const text = [`⏰ Агент пропонує автоматизацію «${s.name}»`, `Розклад: ${when}\nПерший запуск: ${first}${s.repo ? `\n📦 ${s.repo}` : ""}${s.model ? `\n🤖 ${s.model}` : ""}`, `«${brief}»`].join("\n\n");
-			await tg(bot(), "sendMessage", { chat_id: chat().id, text, reply_markup: { inline_keyboard: [[{ text: "✅ Активувати", callback_data: callback.schedule("ok", s.id) }, { text: "❌ Відхилити", callback_data: callback.schedule("no", s.id) }]] } });
+			const { text, reply_markup } = scheduleCard(s, "Агент пропонує автоматизацію");
+			await tg(bot(), "sendMessage", { chat_id: chat().id, text, reply_markup });
 		},
 		async notify(text) {
 			await tgSendMessage(bot(), chat().id, text);
