@@ -59,7 +59,7 @@ The owner controls sessions from the Telegram chat with commands that the worker
 - `/status` only shows the state, cost and tokens.
 - Merging or updating a pull request on GitHub does not touch the session.
 
-When the owner asks about a command or bot behaviour you do not know, look it up in the repository's `README.md` (section "Агент", "Чат з агентом у Telegram") before answering, and if it is still unclear, ask which command they mean instead of guessing.
+When the owner asks about a command or bot behaviour you do not know, look it up in the repository docs (`README.md`, `docs/agent-chat.md`, `docs/agent.md`) before answering, and if it is still unclear, ask which command they mean instead of guessing.
 
 ## Narrate what you do
 

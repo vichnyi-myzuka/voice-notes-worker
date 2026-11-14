@@ -6,7 +6,7 @@
 
 - Перед комітом: `npm run check` (oxlint + tsc + vitest). Git-хуки однаково запускають pre-commit (lint + typecheck) і pre-push (`npm run check`).
 - **Зміни йдуть через PR, деплоїть GitHub Actions** (`.github/workflows`): PR → `check` → мерж у `main` → `deploy` змінених застосунків (`agent` чекає схвалення власника в environment `production-agent`). Агент пушить лише у свою гілку `agent/<назва>` і відкриває PR; у `main` не пушить, `wrangler deploy` не запускає, `.github/` не чіпає. Локальний `npm run deploy -w apps/<назва>` лишається лише власнику для аварійних випадків (`npx wrangler login`). Кроки налаштування GitHub: розділ «CI/CD» у README.
-- Зміна поведінки → онови README в тому ж коміті. Нова логіка → unit-тести в `test/` відповідного застосунку (без мережі й LLM; `fetch` підміняється через `vi.stubGlobal`, R2 — `test/fake-env.ts`). Зміна наскрізної поведінки → перевір `apps/notes/test/e2e.test.ts` (повний цикл на моках, без реальних сервісів).
+- Зміна поведінки → онови README або відповідний файл у `docs/` (`notes`, `agent*`, `cloudflare`) в тому ж коміті. Нова логіка → unit-тести в `test/` відповідного застосунку (без мережі й LLM; `fetch` підміняється через `vi.stubGlobal`, R2 — `test/fake-env.ts`). Зміна наскрізної поведінки → перевір `apps/notes/test/e2e.test.ts` (повний цикл на моках, без реальних сервісів).
 
 ## Секрети
 
@@ -22,7 +22,7 @@
 
 ## Код
 
-Структура: `apps/*` (воркери) залежать від `packages/*`, але не один від одного. Де що лежить — дивись `ls`/README; тут лише правила.
+Структура: `apps/*` (воркери) залежать від `packages/*`, але не один від одного. Де що лежить — дивись `ls`, README і `docs/`; тут лише правила.
 
 - **Шари** (`apps/notes/src`): `interface → application → domain`, `infrastructure` реалізує порти з `domain`. Складання адаптерів — у `src/index.ts`.
 - **Ядро нічого не знає про Telegram і Todoist.** Воно працює з портами `Channel`, `Llm` (`packages/core`), `TaskTracker`, `NoteRepository`, `TaskLedger`, `RecordingStore` (`domain`). Службові дані каналу (`fileId`, `deleteChatId`…) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.

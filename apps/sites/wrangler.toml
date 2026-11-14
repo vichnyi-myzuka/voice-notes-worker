@@ -13,7 +13,7 @@ enabled = true
 binding = "SITES"
 bucket_name = "agent-sites"
 
-# Публічний хост (share.<BASE_DOMAIN>, домен підключає CI): той самий код, окремий бакет, без Access (змінна PUBLIC, див. README).
+# Публічний хост (share.<BASE_DOMAIN>, домен підключає CI): той самий код, окремий бакет, без Access (змінна PUBLIC, див. docs/agent-integrations.md).
 # Прив'язки не успадковуються, тому бакет вказано явно: приватні сайти не можуть потрапити сюди помилкою.
 [env.public]
 name = "voice-notes-sites-public"
