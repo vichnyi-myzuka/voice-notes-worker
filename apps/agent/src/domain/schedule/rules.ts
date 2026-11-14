@@ -54,3 +54,12 @@ export function validate(input: NewSchedule, now: number): Outcome<{ name: strin
 export function nextRun(when: When, after: number): number | undefined {
 	return "at" in when ? (when.at > after ? when.at : undefined) : nextCron(parseCron(when.cron), when.tz, after);
 }
+
+// Найближчі запуски для форми (ADR 0005): ті самі перевірки, що й при створенні, плюс `count` наступних моментів (мс).
+export function preview(input: Pick<NewSchedule, "at" | "cron" | "tz">, now: number, count = 5): Outcome<number[]> {
+	const valid = validate({ name: "preview", prompt: "preview", ...input }, now);
+	if (!valid.ok) return valid;
+	const times: number[] = [];
+	for (let t = nextRun(valid.value.when, now); t !== undefined && times.length < count; t = nextRun(valid.value.when, t)) times.push(t);
+	return { ok: true, value: times };
+}

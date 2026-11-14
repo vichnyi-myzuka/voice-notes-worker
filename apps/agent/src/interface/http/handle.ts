@@ -1,5 +1,6 @@
 import type { CalendarLogin, Computer, Sessions, SilpoLogin } from "../../domain/agent";
-import type { NewSchedule, Outcome, SchedulePatch, Schedules } from "../../domain/schedule";
+import { preview, type NewSchedule, type Outcome, type SchedulePatch, type Schedules } from "../../domain/schedule";
+import { AUTOMATIONS_HTML } from "./automations-page";
 import type { Env } from "../../env";
 import { verifyAccess } from "@voice-notes/core";
 
@@ -23,6 +24,8 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   GET|PATCH|DELETE /api/schedules/<id>      → один розклад: читання, зміна полів, видалення
 //   POST /api/schedules/<id>/pause|resume|run → пауза, відновлення (і підтвердження розкладу від агента), запуск зараз
 //   GET  /api/schedules/<id>/runs             → історія запусків
+//   POST /api/schedules/preview {at | cron+tz?} → {times}: найближчі запуски для форми (ті самі перевірки, що й при створенні)
+//   GET  /automations                         → веб-сторінка автоматизацій (таблиця, форма, історія) над /api/schedules
 //   GET  /silpo/login, /silpo/callback        → вхід у Сільпо (OAuth для MCP): редірект на Сільпо і завершення входу
 //   GET  /calendar/login, /calendar/callback  → вхід у Google Calendar (OAuth для MCP Google Workspace): те саме
 //   GET  /api/computer                        → стан контейнера для діагностики (чому не засинає, відкриті SSE-потоки)
@@ -41,6 +44,7 @@ export async function handleFetch(req: Request, env: Env, agent: Sessions & Comp
 	if (req.method === "POST" && url.pathname === "/api/sessions") return create(req, agent);
 
 	if (schedules && url.pathname.startsWith("/api/schedules")) return scheduleApi(req, url, schedules);
+	if (schedules && req.method === "GET" && (url.pathname === "/automations" || url.pathname === "/automations/")) return new Response(AUTOMATIONS_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 
 	const api = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|abort))?$/);
 	if (api) {
@@ -136,6 +140,12 @@ const outcome = <T>(o: Outcome<T>, field: string) => (o.ok ? json({ [field]: o.v
 
 // Розклади автоматизацій: усі правила й ліміти живуть у Scheduler, тут лише розбір запиту.
 async function scheduleApi(req: Request, url: URL, schedules: Schedules): Promise<Response> {
+	if (url.pathname === "/api/schedules/preview") {
+		if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
+		const body = await req.json<NewSchedule>().catch(() => null);
+		if (!body || typeof body !== "object") return json({ error: "bad body" }, 400);
+		return outcome(preview({ at: body.at, cron: body.cron, tz: body.tz }, Date.now()), "times");
+	}
 	const m = url.pathname.match(/^\/api\/schedules(?:\/([^/]+)(?:\/(pause|resume|run|runs))?)?$/);
 	if (!m) return json({ error: "not found" }, 404);
 	const [, id, action] = m;

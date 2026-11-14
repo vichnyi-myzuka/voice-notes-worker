@@ -247,6 +247,18 @@ describe("ScheduleBook", () => {
 		expect(t.proposed).toEqual([]);
 	});
 
+	it("порожні repo, model і expiresAt знімають значення (форма на вебі)", async () => {
+		const t = setup();
+		const s = await t.make({ ...base, cron: "0 9 * * *", tz: "UTC", repo: "me/app", model: "opus", expiresAt: "2027-01-01T00:00:00Z" });
+		const r = await t.book.update(s.id, { repo: "", model: "", expiresAt: "" });
+		expect(r.ok && r.value).toMatchObject({ name: base.name });
+		expect(r.ok && Object.keys(r.value)).not.toEqual(expect.arrayContaining(["repo"]));
+		const saved = (await t.book.get(s.id))!;
+		expect(saved.repo).toBeUndefined();
+		expect(saved.model).toBeUndefined();
+		expect(saved.expiresAt).toBeUndefined();
+	});
+
 	it("«запустити зараз» не чіпає розкладу; видалення прибирає запис і alarm", async () => {
 		const t = setup();
 		const s = await t.make({ ...base, cron: "0 9 * * *", tz: "UTC" });

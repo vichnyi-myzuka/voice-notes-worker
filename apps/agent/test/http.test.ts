@@ -272,3 +272,35 @@ describe("розклади автоматизацій", () => {
 		expect((await handleFetch(call("/api/schedules"), configured, agent, schedules)).status).toBe(403);
 	});
 });
+
+describe("веб-сторінка автоматизацій", () => {
+	const schedules = {} as import("../src/domain/schedule").Schedules;
+
+	it("віддається за Access лише з розкладами; скрипт синтаксично коректний і не вставляє дані через innerHTML", async () => {
+		const { agent } = fakeAgent();
+		const res = await handleFetch(call("/automations"), env, agent, schedules);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("text/html");
+		const html = await res.text();
+		expect(html).toContain("Автоматизації агента");
+		expect(html).not.toContain("innerHTML");
+		const script = /<script>([\s\S]*)<\/script>/.exec(html)![1];
+		expect(() => new Function(script)).not.toThrow();
+		const configured = { ...accessEnv, ACCESS_TEAM_DOMAIN: "t.cloudflareaccess.com", ACCESS_AUD: "aud" } as Env;
+		expect((await handleFetch(call("/automations"), configured, agent, schedules)).status).toBe(403);
+	});
+
+	it("попередній перегляд: найближчі запуски й помилки валідації", async () => {
+		const { agent } = fakeAgent();
+		const post = (body: unknown) => handleFetch(call("/api/schedules/preview", "POST", body), env, agent, schedules);
+		const ok = await post({ cron: "0 9 * * *", tz: "UTC" });
+		const { times } = (await ok.json()) as { times: number[] };
+		expect(times).toHaveLength(5);
+		expect(times.every((t, i) => i === 0 || t - times[i - 1] === 86_400_000)).toBe(true);
+		const bad = await post({ cron: "*/5 * * * *" });
+		expect(bad.status).toBe(400);
+		expect(((await bad.json()) as { error: string }).error).toContain("1 hour");
+		expect((await post({ at: "2020-01-01T00:00:00Z" })).status).toBe(400);
+		expect((await handleFetch(call("/api/schedules/preview"), env, agent, schedules)).status).toBe(405);
+	});
+});
