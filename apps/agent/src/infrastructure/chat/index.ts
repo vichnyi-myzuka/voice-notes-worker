@@ -12,7 +12,8 @@ export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, 
 // прибирає, тому їх передає кожен виклик sendChat/editChat.
 // "mergeable": сесія завершена, а в її гілки є відкритий PR: додається «Змерджити» (`merge:<id>`).
 // "dismiss": деплой завершено, сесію прибрано: лишається лише «Видалити» (просте видалення повідомлення, `dismiss`).
-export type Buttons = "working" | "done" | "mergeable" | "dismiss";
+// "retry": сесія впала на лімітах Claude: додається «Повторити» (`retry:<id>`), що просить агента продовжити.
+export type Buttons = "working" | "done" | "mergeable" | "dismiss" | "retry";
 // Запит на схвалення деплою в пості сесії: кнопки «Схвалити/Відхилити» (`appr|rej:<repo>:<id запуску>`, обробляє interface/github/review).
 export type Review = { repo: string; runId: number };
 // Кнопки-відповіді на питання агента: підписи (для множинного вибору з позначками) й режим: одразу відповісти чи перемикати + «Підтвердити».
@@ -23,6 +24,7 @@ function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, 
 	if (!id) return undefined;
 	const row = [
 		...(buttons === "working" ? [{ text: "⏹ Стоп", callback_data: callback.stop(id) }] : []),
+		...(buttons === "retry" ? [{ text: "🔄 Повторити", callback_data: callback.retry(id) }] : []),
 		...(buttons === "mergeable" ? [{ text: "🔀 Змерджити", callback_data: callback.merge(id) }] : []),
 		{ text: "🗑 Видалити", callback_data: buttons === "dismiss" ? callback.dismiss : callback.del(id) },
 	];

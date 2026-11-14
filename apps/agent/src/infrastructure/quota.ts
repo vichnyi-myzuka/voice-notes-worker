@@ -32,6 +32,22 @@ export function parseQuota(headers: Headers): Quota {
 	return { fiveHour: win("5h"), sevenDay: win("7d"), status: headers.get("anthropic-ratelimit-unified-status") ?? undefined };
 }
 
+// Чи схожа помилка моделі на вичерпані ліміти підписки (а не на збій завдання).
+export function isLimitError(error: string): boolean {
+	return /usage limit|hit your limit|limit reached|rate[ _-]?limit|\b429\b|exceeded.*(quota|limit)/i.test(error);
+}
+
+// Ліміти вичерпано зараз: статус «rejected» або одне з вікон заповнене.
+export function isBlocked(q: Quota): boolean {
+	return q.status === "rejected" || [q.fiveHour, q.sevenDay].some((w) => w && w.utilization >= 1);
+}
+
+// Коли ліміти скинуться (unix-секунди): найпізніше скидання серед заповнених вікон.
+export function resetTime(q: Quota): number | undefined {
+	const times = [q.fiveHour, q.sevenDay].filter((w) => w && w.utilization >= 1 && w.resetAt).map((w) => w!.resetAt!);
+	return times.length ? Math.max(...times) : undefined;
+}
+
 const BAR_CELLS = 20; // одна клітинка = 5%
 
 // Смужка заповнення: «██████████████░░░░░░» (63% → 13 клітинок із 20, округлення до найближчої).

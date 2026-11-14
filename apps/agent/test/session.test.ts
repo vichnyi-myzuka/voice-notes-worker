@@ -853,6 +853,72 @@ describe("AgentSession", () => {
 			expect(sent[0].text).toContain("Cloudflare тимчасово заблокував");
 		});
 
+		describe("ліміти Claude", () => {
+			const quotaHeaders = (status: string, util: string) => ({ "anthropic-ratelimit-unified-status": status, "anthropic-ratelimit-unified-5h-utilization": util, "anthropic-ratelimit-unified-5h-reset": "4102444800" });
+			const limited = async () => {
+				const t = setup({ BOT_TOKEN: "bot", CLAUDE_CODE_OAUTH_TOKEN: "tok" });
+				await t.session.start(ID, { prompt: "Задача" });
+				await t.session.watch(ID, { chatId: 5, url: "https://agent.example/s/tg-5-1" }); // кнопки беруть id з адреси `tg-…`
+				await t.session.alarm();
+				t.opencode.busy.clear();
+				t.opencode.info[ocId] = { outcome: "failed" };
+				t.opencode.lastError = "Claude usage limit reached";
+				await t.session.alarm();
+				return t;
+			};
+			// Telegram пише у sent, запити до Anthropic — віддають задані заголовки лімітів.
+			const stubQuota = (headers: () => Record<string, string>) => {
+				const api: string[] = [];
+				vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+					if (url.includes("anthropic.com")) return (api.push(url), new Response("{}", { status: 429, headers: headers() }));
+					sent.push(JSON.parse(init.body as string));
+					return Response.json({ ok: true, result: { message_id: 1 } });
+				});
+				return api;
+			};
+			const buttons = (m: unknown) => ((m as { reply_markup?: { inline_keyboard: { callback_data: string }[][] } }).reply_markup?.inline_keyboard ?? []).flat().map((b) => b.callback_data);
+
+			it("помилка лімітів: пояснення і кнопка «Повторити»", async () => {
+				await limited();
+				expect(sent[0].text).toContain("⏳ Ліміти Claude вичерпано");
+				expect(buttons(sent[0])).toEqual(["retry:tg-5-1", "del:tg-5-1"]);
+			});
+
+			it("поки ліміти не скинулись, мовчимо, а після скидання пишемо в чат один раз із кнопкою", async () => {
+				const t = await limited();
+				let state = "rejected";
+				const api = stubQuota(() => quotaHeaders(state, state === "rejected" ? "1" : "0.1"));
+				sent.length = 0;
+				await t.session.alarm();
+				expect(api).toHaveLength(1);
+				expect(sent).toEqual([]);
+				expect(t.alarm.at).toBeGreaterThan(Date.now());
+				state = "allowed";
+				await t.session.alarm();
+				expect(sent).toHaveLength(1);
+				expect(sent[0].text).toContain("✅ Ліміти Claude скинулись");
+				expect(buttons(sent[0])).toContain("retry:tg-5-1");
+				await t.session.alarm();
+				expect(api).toHaveLength(2); // ніхто більше не чекає: запитів немає
+				expect(sent).toHaveLength(1);
+			});
+
+			it("звичайна помилка чи уточнення від власника: скидання не чекаємо", async () => {
+				const plain = await watched({ CLAUDE_CODE_OAUTH_TOKEN: "tok" });
+				await plain.session.alarm();
+				plain.opencode.busy.clear();
+				plain.opencode.info[ocId] = { outcome: "failed" };
+				plain.opencode.lastError = "Model unavailable";
+				await plain.session.alarm();
+				expect([...plain.store.keys()].some((k) => k.startsWith("limit:"))).toBe(false);
+
+				const t = await limited();
+				expect(t.store.has(`limit:${ID}`)).toBe(true);
+				await t.session.followUp(ID, "продовжуй");
+				expect(t.store.has(`limit:${ID}`)).toBe(false);
+			});
+		});
+
 		it("сесія, яку зупинили вручну, показує «Зупинено»", async () => {
 			const { session, opencode } = await watched();
 			await session.alarm();

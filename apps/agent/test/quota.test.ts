@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { describeQuota, fetchQuota, parseQuota } from "../src/infrastructure/quota";
+import { describeQuota, fetchQuota, isBlocked, isLimitError, parseQuota, resetTime } from "../src/infrastructure/quota";
 
 const headers = (extra: Record<string, string> = {}) =>
 	new Headers({
@@ -44,5 +44,24 @@ describe("ліміти Claude", () => {
 	it("відповідь без заголовків ліміту — помилка", async () => {
 		vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 401 })));
 		await expect(fetchQuota("bad")).rejects.toThrow("quota 401");
+	});
+});
+
+describe("розпізнавання вичерпаних лімітів", () => {
+	it("помилка моделі про ліміти відрізняється від звичайної", () => {
+		expect(isLimitError("Claude AI usage limit reached|1700000000")).toBe(true);
+		expect(isLimitError("API Error: 429 rate_limit_error")).toBe(true);
+		expect(isLimitError("You've hit your limit · resets 5pm")).toBe(true);
+		expect(isLimitError("Model unavailable")).toBe(false);
+		expect(isLimitError("403 Attention Required! | Cloudflare")).toBe(false);
+	});
+
+	it("isBlocked і resetTime: лише заповнені вікна чи статус rejected", () => {
+		expect(isBlocked(parseQuota(headers()))).toBe(false);
+		expect(isBlocked(parseQuota(headers({ "anthropic-ratelimit-unified-status": "rejected" })))).toBe(true);
+		const full = parseQuota(headers({ "anthropic-ratelimit-unified-5h-utilization": "1" }));
+		expect(isBlocked(full)).toBe(true);
+		expect(resetTime(full)).toBe(1000);
+		expect(resetTime(parseQuota(headers()))).toBeUndefined();
 	});
 });
