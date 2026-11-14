@@ -7,7 +7,7 @@
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit",
-    "lint": "oxlint --deny-warnings src test",
+    "lint": "oxlint -c ../../.oxlintrc.json --deny-warnings src test",
     "test": "vitest run"
   },
   "dependencies": {

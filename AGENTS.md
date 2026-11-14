@@ -6,7 +6,7 @@
 
 - Перед комітом: `npm run check` (oxlint + tsc + vitest). Git-хуки однаково запускають pre-commit (lint + typecheck) і pre-push (`npm run check`).
 - **Зміни йдуть через PR, деплоїть GitHub Actions** (`.github/workflows`): PR → `check` → мерж у `main` → `deploy` змінених застосунків (`agent` чекає схвалення власника в environment `production-agent`). Агент пушить лише у свою гілку `agent/<назва>` і відкриває PR; у `main` не пушить, `wrangler deploy` не запускає, `.github/` не чіпає. Локальний `npm run deploy -w apps/<назва>` лишається лише власнику для аварійних випадків (`npx wrangler login`). Кроки налаштування GitHub: розділ «CI/CD» у README.
-- Зміна поведінки → онови README в тому ж коміті. Нова логіка → unit-тести в `test/` відповідного застосунку (без мережі й LLM; `fetch` підміняється через `vi.stubGlobal`, R2 — `test/fake-env.ts`). Зміна наскрізної поведінки → перевір `apps/notes/test/e2e.test.ts` (повний цикл на моках, без реальних сервісів).
+- Зміна поведінки → онови README або відповідний файл у `docs/` (`notes`, `agent*`, `cloudflare`) в тому ж коміті. Нова логіка → unit-тести в `test/` відповідного застосунку (без мережі й LLM; `fetch` підміняється через `vi.stubGlobal`, R2 — `test/fake-env.ts`). Зміна наскрізної поведінки → перевір `apps/notes/test/e2e.test.ts` (повний цикл на моках, без реальних сервісів).
 
 ## Секрети
 
@@ -22,61 +22,18 @@
 
 ## Код
 
-Порти `Channel` і `Llm`, їхні адаптери (`telegram`, `llm`), `openSteps`, `safeEqual` і JSON-типи живуть у `packages/core` (імпорт `@voice-notes/core`); решта шляхів нижче — всередині `apps/notes/`. У тестах мок внутрішнього модуля core (напр. `safeEqual`) робиться за шляхом файлу в `packages/core/src`. Модуль — папка; зовні імпортуй лише з `index.ts` модуля (`../../application/tasks`; в межах шару — `../tasks`), усередині — з файлів (`./apply`). Стан обробки складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `pipeline/types.ts`. Ядро (domain, application, interface) нічого не знає про Telegram і Todoist: воно працює з портами `Channel`, `TaskTracker`, `NoteRepository`, `TaskLedger`, `Llm` (у `domain`), адаптери — `infrastructure/{todoist,r2}` тут і `telegram`, `llm` у `packages/core`, складання — у `src/index.ts`. Службові дані каналу (`fileId`, `deleteChatId` тощо) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
+Структура: `apps/*` (воркери) залежать від `packages/*`, але не один від одного. Де що лежить — дивись `ls`, README і `docs/`; тут лише правила.
 
-```
-apps/agent/src/        domain/agent (порт Agent = Sessions & Computer & Deploys), infrastructure/{container (AgentSession — один Durable Object `main` з єдиним контейнером і всіма сесіями: лише сесії, завдання, стеження й підсумки; решта в модулях поруч: `computer` — контейнер і знімки, `posts` — пост у чаті й деплой, `forms` — питання агента, `proxy` — веб-інтерфейс, `state` — типи й ключі сховища, `config` — ліміти й env; durableAgent — адаптер порту)}, interface/{http, telegram (вебхук чату з агентом повз Access: `handle` — маршрутизація, `commands` — /status, /update…, `buttons` — кнопки), github (вебхук GitHub)}; infrastructure/chat — пости й кнопки в чаті, формат callback_data (`callback.ts`) і спільні дії над повідомленнями (`messages.ts`); interface-модулі залежать від нього, але не один від одного; container/ — образ (лише системне: Node, git, OpenCode, claude, entrypoint); payload/ — те, що воркер розкладає в контейнер сам (AGENTS.md агента, publish, session-prep, git-хук; підключаються як текст); тести з фейком `test/fake-agent.ts`
-packages/core/src/      спільне: domain/{channel,llm,json}, infrastructure/{telegram,llm,steps,security,access}; публічний вхід — index.ts
-apps/sites/src/        serve (шлях → ключ R2, віддача), index (перевірка Access); тести з R2 у пам'яті
-apps/notes/src/index.ts  entrypoint: складає адаптери (канал, трекер) і підключає fetch (inbox) та queue (queue)
-src/<шар>/<модуль>/    шари: interface → application → domain, infrastructure; модуль — папка з index.ts (публічний інтерфейс), types.ts за потреби і кількома змістовними файлами (без файлів на одну константу чи функцію)
-  interface/           точки входу
-    inbox/             HTTP: вебхук каналу (через Channel) і завантаження з шорткату
-    queue/             споживачі черги й DLQ
-  application/         сценарії
-    intake/            acceptIncoming (нова нотатка чи правка) і enqueueNote: запис → R2 + черга
-    pipeline/          processNote / processEdit — кроки обробки запису, showNote; State зі слайсів модулів
-    understand/        readImage (vision), summarize, editNote — промпти й схеми (моделі через порт Llm)
-    setup/             команди налаштування («створи проєкт…», описи міток у «⚙️ Правила»), runSetup
-    tasks/             задачі нотатки в трекері: syncTasks (ops → actionId → tasksApplied), planOps, applyOps, стан TrackedTasks (порт TaskLedger)
-  domain/              правила й дані предметної області
-    tracker/           порт трекера задач (TaskTracker) і нейтральні типи (TriageItem, TaskOp, SetupPlan…); Todoist — лише адаптер
-    note/              чиста логіка нотатки: Meta, підпис, хештеги, посилання на задачі, текстові нотатки
-    published/         опублікована нотатка: Note і порт NoteRepository
-    recording/         порт RecordingStore (записи, підписи, стан обробки), ключі запису, ліміти розміру, час запису
-  infrastructure/      зовнішні сервіси й сховище
-    env/               Env і Job
-    r2/                адаптери RecordingStore, NoteRepository і TaskLedger (записи, нотатки та задачі нотаток у R2)
-    todoist/           адаптер TaskTracker для Todoist: API (/sync), команди, валідація полів задач, тріаж, налаштування проєктів і міток
-```
+- **Шари** (`apps/notes/src`): `interface → application → domain`, `infrastructure` реалізує порти з `domain`. Складання адаптерів — у `src/index.ts`.
+- **Ядро нічого не знає про Telegram і Todoist.** Воно працює з портами `Channel`, `Llm` (`packages/core`), `TaskTracker`, `NoteRepository`, `TaskLedger`, `RecordingStore` (`domain`). Службові дані каналу (`fileId`, `deleteChatId`…) лежать у `customMetadata` запису в R2, ядро передає їх каналу як є.
+- **Модуль — папка з `index.ts`.** Зовні імпортуй лише з `index.ts` (`../tasks`, а не `../tasks/apply`), пакет core — лише `@voice-notes/core`. Це перевіряє `.oxlintrc.json` (`npm run lint`); тести можуть імпортувати глибше. У тестах мок внутрішнього модуля core робиться за шляхом файлу в `packages/core/src`.
+- **Стан обробки** складається зі слайсів модулів (`SyncState`, `SetupState`, `ContentState`, `PublishState`) у `application/pipeline/types.ts`.
+- **`apps/agent`**: порт `Agent = Sessions & Computer & Deploys`; один Durable Object `main` з єдиним контейнером (`infrastructure/container`); interface-модулі (`telegram`, `github`, `http`) не залежать один від одного, спільне — в `infrastructure/chat` (ADR 0004). Образ контейнера (`container/`) — лише системне; усе, що змінюється часто (AGENTS.md агента, `publish`, хуки), лежить у `payload/` і розкладається воркером. Тести — з фейком `test/fake-agent.ts`.
 
-## Локальний e2e (справжній канал і Todoist!)
+## Довідники
 
-```sh
-cd apps/notes && npx wrangler dev --port 8787 --var LOCAL_DEV:1 --var TG_OWNER_ID:<твій Telegram id> --var TG_WEBHOOK_SECRET:local-webhook-test --env-file ../../.env
-```
-
-- Пост у каналі імітується POST на `localhost:8787/telegram` з заголовком `x-telegram-bot-api-secret-token: local-webhook-test` і тілом `{"channel_post":{"message_id":…,"date":…,"chat":{"id":CHAT_ID,"type":"channel"},"text":"…"}}` (правка — з `"reply_to_message":{"message_id":<id нотатки>}`).
-- Помилки «message to react/delete not found» для вигаданих `message_id` — очікувані.
-- Кінець обробки — рядок `QUEUE voice-notes` у лозі; id опублікованої нотатки — `published as message N`.
-- **Тест створює справжні задачі й повідомлення: завжди прибирай** відповіддю «Видали нотатку» на тестову нотатку.
-- Не використовуй назви реальних задач користувача (напр. ліки в Health): тріаж позначить їх дублікатами.
-- Перевіряти Todoist можна через `td` CLI або `curl` з `$TODOIST_TOKEN`.
-
-## Todoist API — нюанси
-
-- API v1: `/api/v1/sync` для змін, REST лише для читання й uploads. Priority 4 у API = p1 у додатку.
-- Архівні проєкти не приходять у `/sync`: «⚙️ Правила» шукаємо ще й через `/projects/archived`.
-- Повтор кілька разів на день (`every day at 9:00, 14:00`) → `INVALID_DATE`; `until`, `for N days`, `every 8 hours` працюють. Повтор шлемо як `{string, lang: "en"}`.
-- `label_delete` знімає мітку з усіх задач.
-- Повторний uuid Todoist ігнорує — на цьому тримається ідемпотентність ретраїв.
-
-## Telegram — нюанси
-
-- Підпис до медіа — 1024 символи, текст — 4096 (див. `fitCaption`, `CAPTION_MAX`, `TEXT_CAPTION_MAX`).
-- Реакція ✍ — без U+FE0F, інакше `REACTION_INVALID`; ✏ для ботів недоступна (тому 👨‍💻).
-- Бот не отримує власних дописів у каналі через вебхук.
-- `getFile` — до 20 МБ; посилання на повідомлення є лише для чатів `-100…`.
+- Нюанси API Todoist і Telegram: `docs/agents/api-notes.md`.
+- Локальний e2e зі справжнім каналом і Todoist (створює реальні дані!): `docs/agents/local-e2e.md`.
 
 ## Agent skills
 

@@ -2,6 +2,8 @@ import { tg, type BotEnv, type TgUpdate } from "@voice-notes/core";
 import type { Deploys, Sessions } from "../../domain/agent";
 import type { Env } from "../../env";
 import { parseCallback, removeMessage, removeOriginal, type SessionAction } from "../../infrastructure/chat";
+// Єдиний дозволений імпорт між interface-модулями: ADR 0004.
+// oxlint-disable-next-line no-restricted-imports
 import { handleMergeButton, handleReviewButton } from "../github/review";
 import { parseRepos } from "./repo";
 
