@@ -17,7 +17,7 @@ const outcome = <T>(o: Outcome<T>) => (o.ok ? json({ schedule: o.value }) : json
 // секрет сесії в `authorization: Bearer`, назва теки сесії в `x-session-folder`. Агент може лише пропонувати: нові розклади й зміни стають `pending`, і їх активує власник кнопкою в Telegram.
 //   GET /agent-api/schedules, POST /agent-api/schedules, PATCH|DELETE /agent-api/schedules/<id>
 export async function handleAgentApi(req: Request, env: Env, schedules: Schedules): Promise<Response> {
-	const denied = await denyUnlessAccess(req, env);
+	const denied = await denyUnlessAccess(req, env, env.AGENT_API_ACCESS_AUD);
 	if (denied) return denied;
 	const folder = req.headers.get("x-session-folder") ?? "";
 	const bearer = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";

@@ -36,6 +36,8 @@ export interface Env {
 	GITHUB_WEBHOOK_SECRET?: string;
 	GITHUB_APPROVE_TOKEN?: string;
 	// Service Token Cloudflare Access для команди `schedule` у контейнері (шлях /agent-api/* за Access): йде в контейнер через session-prep
+	// AUD окремого застосунку Access на шлях /agent-api (необов'язково; без нього токен перевіряється за ACCESS_AUD)
+	AGENT_API_ACCESS_AUD?: string;
 	AGENT_API_ACCESS_CLIENT_ID?: string;
 	AGENT_API_ACCESS_CLIENT_SECRET?: string;
 	AI: Ai;
