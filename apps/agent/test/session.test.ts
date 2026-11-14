@@ -1147,10 +1147,13 @@ describe("AgentSession", () => {
 				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 });
 				sent.length = 0;
 				await t.session.watch(SID, { chatId: 5, url: "https://agent.example/s/tg-1-1" }); // уточнення: без postId
-				const fresh = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c)) as unknown as { message_thread_id: number; text: string; reply_markup: { keyboard: { text: string }[][] } }[];
-				expect(fresh).toHaveLength(1); // одне повідомлення «Працює», а не станом і ще окремим носієм клавіш
+				const fresh = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c)) as unknown as { message_thread_id: number; text: string; reply_markup: { keyboard?: { text: string }[][] } }[];
+				// Повідомлення стану редагується, а Telegram не дає редагувати повідомлення з клавіатурою внизу: воно без неї,
+				// а клавіші йдуть окремим коротким носієм.
+				expect(fresh).toHaveLength(2);
 				expect(fresh[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Працює") });
-				expect(fresh[0].reply_markup.keyboard[0].map((b) => b.text)).toEqual(["⏹ Стоп", "🗑 Видалити"]);
+				expect(fresh[0].reply_markup?.keyboard).toBeUndefined();
+				expect(fresh[1].reply_markup.keyboard![0].map((b) => b.text)).toEqual(["⏹ Стоп", "🗑 Видалити"]);
 				expect(edits().filter((e) => e.message_id === 77)).toEqual([]); // початковий пост не редагується
 				t.opencode.lastText = "Друга відповідь";
 				await t.session.alarm();

@@ -79,8 +79,8 @@ export async function editChat(env: BotEnv, chatId: number | string, messageId: 
 	try {
 		return await edit(html, "HTML");
 	} catch (err) {
-		console.error("html edit rejected, editing plain:", err);
-		return edit(plain).catch((e) => (console.error("edit failed:", e), false));
+		console.error(`html edit rejected, editing plain: ${String(err)}`);
+		return edit(plain).catch((e) => (console.error(`edit failed: ${String(e)}`), false));
 	}
 }
 

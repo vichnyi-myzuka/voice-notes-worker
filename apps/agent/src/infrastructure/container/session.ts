@@ -452,9 +452,8 @@ export class AgentSession extends DurableObject<Env> {
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
 	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
 		if (await this.link(id)) return;
-		// З постом (його щойно надіслано з клавішами, див. launchSession) лише запам'ятовуємо стан; без нього клавіші йдуть окремо.
-		if (target.postId) await this.posts.nextKeys(target, "working").catch((err) => console.error("keys failed:", err));
-		else await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
+		// Клавіші завжди окремим повідомленням-носієм: пост із клавіатурою внизу Telegram не дає редагувати.
+		await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
 		await this.enqueue({ id, input, target, attempts: 0 });
 	}
 
@@ -596,8 +595,9 @@ export class AgentSession extends DurableObject<Env> {
 		// початковий пост лишається як є (на ньому деплой, ідентичність сесії).
 		let fresh = false;
 		if (!target.postId && post?.threadId && this.env.BOT_TOKEN && (await threadUi(this.env, true)).statusPerTurn) {
-			const keys = await this.posts.nextKeys({ chatId: full.chatId, threadId: post.threadId }, "working").catch((err) => (console.error("keys failed:", err), undefined));
-			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, full.url, "none", undefined, undefined, post.threadId, keys).catch((err) => (console.error("status message failed:", err), undefined));
+			// Без клавіатури внизу (її мають лише нередаговані повідомлення): стан оновлюється на місці.
+			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, full.url, "none", undefined, undefined, post.threadId).catch((err) => (console.error("status message failed:", err), undefined));
+			await this.posts.keys({ chatId: full.chatId, threadId: post.threadId }, "working").catch((err) => console.error("keys failed:", err));
 			if (statusId) (full = { ...full, postId: statusId, header: "" }), (fresh = true);
 		}
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
