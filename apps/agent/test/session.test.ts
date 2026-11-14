@@ -1007,6 +1007,19 @@ describe("AgentSession", () => {
 				expect(edits.at(-1)).toContain("⏳ Працює");
 			});
 
+			it("begin і resume без чату (веб-API): сесія стартує в черзі, а стеження й повідомлень у чат немає", async () => {
+				const { session, opencode, store } = setup({ BOT_TOKEN: "bot" });
+				await session.begin(ID, { prompt: "Задача" });
+				await session.alarm();
+				expect(opencode.prompts).toEqual([{ id: ocId, text: "Задача" }]);
+				expect(store.has(`job:${ID}`)).toBe(false);
+				expect(store.has(`watch:${ID}`)).toBe(false);
+				await session.resume(ID, "Ще й це");
+				await session.alarm();
+				expect(opencode.prompts.at(-1)).toEqual({ id: ocId, text: "Ще й це" });
+				expect(sent).toEqual([]);
+			});
+
 			it("збій запуску повторюється з наступним alarm; зрештою пост показує помилку, а не лишається «Запускаю»", async () => {
 				const { session, opencode, alarm, store } = setup({ BOT_TOKEN: "bot" });
 				vi.spyOn(console, "error").mockImplementation(() => {});

@@ -30,7 +30,7 @@ export function fakeAgent(origin = "https://agent.example") {
 		url: (id) => `${origin}/s/${id}`,
 		async begin(id, input, target) {
 			await agent.start(id, input);
-			await agent.watch(id, target);
+			if (target) await agent.watch(id, target);
 		},
 		async answer(id, choice) {
 			get(id);
@@ -39,7 +39,7 @@ export function fakeAgent(origin = "https://agent.example") {
 		},
 		async resume(id, text, target, images) {
 			await agent.followUp(id, text, images);
-			await agent.watch(id, target);
+			if (target) await agent.watch(id, target);
 		},
 		async start(id, input) {
 			if (!sessions.has(id)) sessions.set(id, { input, messages: [input.prompt], status: "working" });

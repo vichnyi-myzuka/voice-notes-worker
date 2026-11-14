@@ -3,7 +3,7 @@
 Окремий воркер із **одним спільним контейнером** Cloudflare (Durable Object `main`), у якому працює `opencode serve` (OpenCode V2: веб-інтерфейс + API `/api/...`). Сесії агентів живуть усередині нього: кожна у своїй теці `/workspace/sessions/<id>`, для репозиторію це окремий `git worktree` з гілкою `agent/<id>` від свіжої default-гілки (спільний клон у `/workspace/repos/<owner>/<name>`), без репозиторію порожня тека. Воркер створює сесію, ставить агенту задачу і повертає посилання на неї. Усі сесії видно в одному веб-інтерфейсі. Доступ — лише через Cloudflare Access.
 
 ```
-POST /api/sessions {prompt, repo?: "owner/name", id?}  → {id, url}   створити сесію й одразу поставити задачу (ідемпотентно за id)
+POST /api/sessions {prompt, repo?: "owner/name", id?}  → {id, url}   створити сесію й одразу поставити задачу (ідемпотентно за id; запит лише ставить завдання в чергу, запуск іде в alarm, а відповідь без чекання холодного старту; підсумку в чат немає)
 GET  /api/sessions/<id>                                → {status}: working | idle | stopped
 POST /api/sessions/<id>/messages {text}                → уточнення в ту саму сесію
 POST /api/sessions/<id>/abort                          → зупинити поточну роботу агента (сесія лишається)

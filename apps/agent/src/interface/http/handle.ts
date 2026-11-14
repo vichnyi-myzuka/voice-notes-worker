@@ -43,7 +43,7 @@ export async function handleFetch(req: Request, env: Env, agent: Sessions & Comp
 		if (action === "messages" && req.method === "POST") {
 			const body = await req.json<{ text?: string }>().catch(() => null);
 			if (!body?.text?.trim()) return json({ error: "text is required" }, 400);
-			await agent.followUp(id, body.text);
+			await agent.resume(id, body.text);
 			return json({ ok: true });
 		}
 		return json({ error: "not found" }, 404);
@@ -94,7 +94,8 @@ async function create(req: Request, agent: Sessions & Computer): Promise<Respons
 	const id = body.id ?? crypto.randomUUID();
 	if (!ID.test(id)) return json({ error: "bad id" }, 400);
 	if (body.repo && !REPO.test(body.repo)) return json({ error: "bad repo" }, 400);
-	return json(await agent.start(id, { prompt: body.prompt, repo: body.repo }));
+	await agent.begin(id, { prompt: body.prompt, repo: body.repo }); // ідемпотентно за id; запуск іде в черзі агента
+	return json({ id, url: agent.url(id) });
 }
 
 const isOAuthMcp = (name: string): name is OAuthMcpName => (OAUTH_MCP_NAMES as readonly string[]).includes(name);

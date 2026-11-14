@@ -69,10 +69,10 @@ export type Sessions = {
 	// Адреса сесії в веб-інтерфейсі (від id, без звернення до контейнера): потрібна для посилання в пості до старту.
 	url(id: string): string;
 	// Приймає завдання й одразу повертається: холодний старт контейнера й клонування займають хвилини, а відповідь вебхуку
-	// й waitUntil так довго не живуть. Запуск, стеження (target) і повтори ведe сам агент; збій він показує в пості (target.postId).
-	begin(id: string, input: StartInput, target: WatchTarget): Promise<void>;
+	// й waitUntil так довго не живуть. Запуск, стеження (target) і повтори ведe сам агент; збій він показує в пості (target.postId). Без target (веб-API) стеження й повідомлень у чат немає.
+	begin(id: string, input: StartInput, target?: WatchTarget): Promise<void>;
 	// Те саме для уточнення в наявну сесію.
-	resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void>;
+	resume(id: string, text: string, target?: WatchTarget, images?: ImageRef[]): Promise<void>;
 	// Ідемпотентно за ключем: повторний виклик з тим самим id не створює другу сесію.
 	start(id: string, input: StartInput): Promise<SessionRef>;
 	// Кнопка під питанням агента: номер варіанта (одиночний вибір — це відповідь, множинний — перемикає варіант) чи "ok" (підтвердити

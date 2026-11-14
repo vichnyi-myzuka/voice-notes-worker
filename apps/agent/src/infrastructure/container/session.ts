@@ -219,11 +219,11 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Приймає нову сесію чи уточнення в чергу завдань (див. Jobs).
-	begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
+	begin(id: string, input: StartInput, target?: WatchTarget): Promise<void> {
 		return this.jobs.begin(id, input, target);
 	}
 
-	resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
+	resume(id: string, text: string, target?: WatchTarget, images?: ImageRef[]): Promise<void> {
 		return this.jobs.resume(id, text, target, images);
 	}
 
@@ -296,7 +296,7 @@ export class AgentSession extends DurableObject<Env> {
 		// Сесія, що ще не запустилась (холодний старт, клон): її тема відома лише із завдання в черзі. Без цього повідомлення,
 		// надіслане в цей час, стартувало б у тій самій темі нову сесію.
 		for (const job of await this.store.jobs()) {
-			if (job.target.threadId === threadId && job.target.chatId === chatId) return job.id;
+			if (job.target?.threadId === threadId && job.target?.chatId === chatId) return job.id;
 		}
 		return undefined;
 	}

@@ -3,8 +3,8 @@ import type { Agent, DeployInfo, McpAnswer, McpName, OAuthMcpName, ImageRef, Pos
 // Що має вміти Durable Object, щоб за ним працював порт Agent: він володіє єдиним контейнером і всіма сесіями в ньому.
 export type SessionObject = {
 	start(id: string, input: StartInput): Promise<unknown>;
-	begin(id: string, input: StartInput, target: WatchTarget): Promise<void>;
-	resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void>;
+	begin(id: string, input: StartInput, target?: WatchTarget): Promise<void>;
+	resume(id: string, text: string, target?: WatchTarget, images?: ImageRef[]): Promise<void>;
 	answer(id: string, choice: number | "ok"): Promise<string | undefined>;
 	followUp(id: string, text: string, images?: ImageRef[]): Promise<void>;
 	setModel(id: string, model: string): Promise<boolean>;

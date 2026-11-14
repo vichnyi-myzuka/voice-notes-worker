@@ -3,8 +3,8 @@ import type { Choice } from "./activity";
 
 // Що Durable Object тримає у сховищі і за якими ключами. Усі ключі й форми записів — тут, щоб модулі не вгадували їх самі.
 
-// Прийняте завдання (begin/resume), яке виконує alarm.
-export type Job = { id: string; target: WatchTarget; attempts: number; queuedAt?: number; startedAt?: number } & ({ input: StartInput } | { text: string; images?: ImageRef[] });
+// Прийняте завдання (begin/resume), яке виконує alarm. target немає в запитів із веб-API: стеження й підсумок у чат їм ні до чого.
+export type Job = { id: string; target?: WatchTarget; attempts: number; queuedAt?: number; startedAt?: number } & ({ input: StartInput } | { text: string; images?: ImageRef[] });
 export const jobKey = (id: string) => `job:${id}`;
 
 // Питання агента, на яке можна відповісти кнопкою: форма й варіанти (callback_data несе лише номер варіанта).
