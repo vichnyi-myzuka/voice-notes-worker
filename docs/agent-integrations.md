@@ -86,4 +86,4 @@
 
 ## Як додати новий MCP-сервіс
 
-Сервіс додається записом у `MCP_SERVICES` (`domain/agent/mcp.ts`: емодзі, назва, чи змінює дані, чи має вхід OAuth) і по одному запису в кожному `Record<McpName, …>`, на яких tsc підкаже, чого бракує: сервер і інструкції агента (`MCP_SERVERS` у `payload.ts`), префікс у чаті (`MCP_PREFIXES` у `interface/telegram/handle.ts`), назва прапорця у відповіді роутера (`ROUTE_KEYS` у `repo.ts`), для OAuth ще вхід у `mcpLogins` (`logins.ts`). Маршрути `/<сервіс>/login` і `/callback`, прапорці в записі сесії й підключення посеред сесії працюють самі.
+Сервіс додається записом у `MCP_SERVICES` (`domain/agent/mcp.ts`: емодзі, назва, чи змінює дані, чи має вхід OAuth) і по одному запису в кожному `Record<McpName, …>`, на яких tsc підкаже, чого бракує: сервер і інструкції агента (`MCP_SERVERS` у `payload.ts`), префікс у чаті (`MCP_PREFIXES` у `application/task/prefixes.ts`), назва прапорця у відповіді роутера (`ROUTE_KEYS` у `application/task/route.ts`), для OAuth ще вхід у `mcpLogins` (`logins.ts`). Маршрути `/<сервіс>/login` і `/callback`, прапорці в записі сесії й підключення посеред сесії працюють самі.

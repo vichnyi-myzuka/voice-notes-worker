@@ -28,6 +28,6 @@
 - [x] `Computer`: підготовку тек і MCP-конфігів (`prepare`, `enableMcp`) винесено в `Workspace` (`workspace.ts`); ключі сховища контейнера — `computerKey` у `state.ts`.
 - [x] `Env` розділено на групи (`AccessEnv`, `ContainerEnv`, `ChatEnv`, `GithubEnv`, `PublishEnv`, `McpEnv` у `env.ts`); модулі просять лише свою групу.
 - [x] `chat`: id сесії в кнопках передається явно (`SessionLink { id, url }`), а не добувається з URL.
-- `application/` для агента: вибір репозиторію, моделі й MCP з `interface/telegram/handle.ts`.
+- [x] `application/task` для агента: вибір репозиторію, моделі й MCP (`planTask`, префікси, роутер) винесено з `interface/telegram/handle.ts`; interface лишає лише Telegram.
 - Правило лінтера на напрямок шарів (`interface` не імпортує `infrastructure` напряму).
 - Шаблон report-site — тека з файлами замість heredoc у `new-report-site.sh`.

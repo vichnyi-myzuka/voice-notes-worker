@@ -70,7 +70,7 @@ export function AgentFlow() {
   return (
     <DiagramCard title="Агент: від повідомлення до PR" description="Що відбувається після завдання в чаті" viewBox="0 0 960 310">
       <Box x={20} y={30} w={190} h={80} title="Чат у Telegram" lines={["текст або голос"]} color={4} />
-      <Box x={265} y={30} w={190} h={80} title="interface/telegram" lines={["репозиторій і назва сесії", "команди, кнопки"]} color={0} />
+      <Box x={265} y={30} w={190} h={80} title="interface/telegram" lines={["команди, кнопки", "вибір сесії → application/task"]} color={0} />
       <Box x={510} y={30} w={190} h={80} title="AgentSession" lines={["Durable Object main", "session-prep"]} color={1} />
       <Box x={755} y={30} w={185} h={80} title="Контейнер" lines={["OpenCode", "worktree agent/назва"]} color={1} />
       <Box x={755} y={200} w={185} h={80} title="GitHub" lines={["push, PR, CI", "мерж у main"]} color={3} />
@@ -90,9 +90,10 @@ export function AgentFlow() {
 export function AgentModules() {
   return (
     <DiagramCard title="Агент: модулі" description="Interface-модулі не залежать один від одного (ADR 0004)" viewBox="0 0 960 400">
-      <Box x={20} y={20} w={200} h={70} title="interface/telegram" lines={["команди, кнопки, роутер"]} color={0} />
+      <Box x={20} y={20} w={200} h={70} title="interface/telegram" lines={["команди, кнопки, Whisper"]} color={0} />
       <Box x={280} y={20} w={200} h={70} title="interface/github" lines={["вебхуки, рев'ю, мерж"]} color={0} />
       <Box x={540} y={20} w={200} h={70} title="interface/http" lines={["REST API, проксі OpenCode"]} color={0} />
+      <Box x={140} y={100} w={220} h={50} title="application/task" lines={["репозиторій, модель, MCP"]} color={1} />
       <Box x={20} y={160} w={460} h={80} title="infrastructure/chat" lines={["пости, клавіатури, callback_data,", "дії над повідомленнями"]} color={2} />
       <Box x={540} y={160} w={400} h={80} title="domain/agent (порт Agent)" lines={["Sessions & Computer & Deploys", "кожен модуль бере лише потрібне"]} color={1} />
       <Box x={540} y={300} w={400} h={80} title="infrastructure/container" lines={["AgentSession — фасад над Jobs, Watcher,", "Progress, Mcp, Limits, Computer, Workspace, Posts"]} color={1} />

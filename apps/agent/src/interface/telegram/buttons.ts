@@ -6,7 +6,7 @@ import { parseCallback, removeMessage, removeOriginal, type SessionAction } from
 // oxlint-disable-next-line no-restricted-imports
 import { handleMergeButton, handleReviewButton } from "../github/review";
 import { resolveMcp, resolveRepo } from "./launch";
-import { parseRepos } from "./repo";
+import { parseRepos } from "../../application/task";
 
 type Query = NonNullable<TgUpdate["callback_query"]>;
 type Handler = (ctx: { bot: BotEnv; query: Query; env: ChatEnv & ContainerEnv & GithubEnv; agent: Sessions & Deploys; id: string; chatId: number; messageId: number; answer: (text: string) => Promise<unknown> }) => Promise<void>;

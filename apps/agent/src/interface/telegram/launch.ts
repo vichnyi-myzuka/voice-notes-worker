@@ -2,7 +2,7 @@ import { tg, tgSendMessage, type BotEnv } from "@voice-notes/core";
 import { MCP_LABELS, MCP_NAMES, OAUTH_MCP_NAMES, folderFor, type Agent, type ImageRef, type McpFlags, type McpName } from "../../domain/agent";
 import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, removeMessage, sendChat } from "../../infrastructure/chat";
 import { type Stopwatch } from "../../timing";
-import type { KnownRepo, Route } from "./repo";
+import type { KnownRepo, Route } from "../../application/task";
 
 const POST_MAX = 3500; // запас до ліміту повідомлення Telegram (4096): решта — посилання
 
