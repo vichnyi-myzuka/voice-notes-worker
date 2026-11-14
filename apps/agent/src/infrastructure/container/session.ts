@@ -598,21 +598,17 @@ export class AgentSession extends DurableObject<Env> {
 		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }), ...(target.title && { title: target.title }) } : tracked.post;
 		if (target.postId) await this.ctx.storage.put(sessionKey(id), { ...tracked, post } satisfies Tracked);
 		let full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
-		// Уточнення в темі (режим messages): хід агента отримує власне повідомлення зі станом (без шапки завдання), яке оновлюється до підсумку;
-		// початковий пост лишається як є (на ньому деплой, ідентичність сесії).
-		let fresh = false;
+		// Уточнення в темі (режим messages): окремого повідомлення стану немає, прогрес показує табло (пост сесії, редагується на місці),
+		// а клавіші «працює» міняє єдине повідомлення-носій.
 		if (!target.postId && post?.threadId && this.env.BOT_TOKEN && (await threadUi(this.env, true)).statusPerTurn) {
-			// Без клавіатури внизу (її мають лише нередаговані повідомлення): стан оновлюється на місці.
-			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, undefined, "none", undefined, undefined, post.threadId).catch((err) => (console.error("status message failed:", err), undefined));
 			await this.posts.keys({ chatId: full.chatId, threadId: post.threadId }, "working").catch((err) => console.error("keys failed:", err));
-			if (statusId) (full = { ...full, postId: statusId, header: "", turn: true }), (fresh = true);
 		}
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
 		if (previous?.postId && previous.postId !== full.postId) await this.posts.mark(previous, false); // реакція не лишається на старому пості
 		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);
 		await this.posts.mark(full, true);
 		await this.icon(full, "working");
-		if (!target.postId && post && !fresh) await this.posts.show(full, WORKING); // уточнення: пост знову показує «Працює»
+		if (!target.postId && post) await this.posts.show(full, WORKING); // уточнення: пост знову показує «Працює»
 		this.listen();
 		await this.scheduleSoon();
 	}
