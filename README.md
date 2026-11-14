@@ -112,6 +112,15 @@ npx wrangler deploy
    - Request Body: **Form**, поле `audio`: тип **File** → **Recorded Audio**
 3. (опційно) **Show Notification** з **Contents of URL**: воркер відповідає `ok`, обробка йде у фоні.
 
+### Один Shortcut для нотаток і агента
+
+Щоб після запису вибирати, куди надіслати аудіо, між кроками 1 і 2 додай **Choose from Menu** (пункти «Нотатки» і «Агент») і в кожну гілку встав свій **Get Contents of URL** (метод, заголовок `x-secret` і форма з полем `audio` — як вище; різниться лише адреса і значення секрету):
+
+- «Нотатки»: `https://notes.example.com`, `x-secret` = `SECRET` воркера нотаток;
+- «Агент»: `https://agent.example.com/shortcut`, `x-secret` = `SHORTCUT_SECRET` воркера агента. Воркер агента розшифровує запис (Whisper) і створює сесію так само, як для голосового в Telegram (префікси «модель опус, …», «шур, …», вибір репозиторію, тема в приваті); пост із сесією приходить у твій приватний чат з ботом агента (`TG_OWNER_ID`).
+
+Налаштування: `cd apps/agent && npx wrangler secret put SHORTCUT_SECRET`, а в Cloudflare Access до політики Bypass додай шлях `shortcut` (див. `docs/agent-chat.md`).
+
 Проєкти, мітки й задачі шорткат не надсилає: воркер бере їх із Todoist сам. Будь-які інші поля форми ігноруються.
 
 ## Тести, lint і git-хуки

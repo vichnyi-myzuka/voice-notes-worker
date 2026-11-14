@@ -154,14 +154,16 @@ function parsePrefixes(transcript: string): { task: string; model?: string; sure
 	return { task: task.trim(), model, sure, silpo, calendar, cloudflare };
 }
 
-async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
+// spoken — уже розшифроване голосове (запис із Shortcut): задача йде як голосова, але Whisper не викликається.
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string, spoken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
+	const voiced = !!file || spoken !== undefined;
 	// Фото (стиснене чи надіслане файлом) іде агентові як зображення; підпис до нього — текст задачі.
 	const photo = msg.photo?.at(-1);
 	const image: (ImageRef & { size?: number }) | undefined = photo ? { fileId: photo.file_id, mime: "image/jpeg", size: photo.file_size } : msg.document?.mime_type?.startsWith("image/") ? { fileId: msg.document.file_id, mime: msg.document.mime_type, size: msg.document.file_size } : undefined;
 	const images = image ? [{ fileId: image.fileId, mime: image.mime }] : undefined;
-	const text = (msg.text ?? (image ? msg.caption : undefined))?.trim();
+	const text = (spoken ?? msg.text ?? (image ? msg.caption : undefined))?.trim();
 	// Тема приватного чату: повідомлення в ній без reply теж належить сесії цієї теми (тема створюється під кожну нову сесію).
 	const threadId = inChannel ? undefined : msg.message_thread_id;
 	const viaReply = SESSION_URL.exec(textWithLinks(msg.reply_to_message));
@@ -171,7 +173,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const cleanups: Promise<unknown>[] = [];
 	const sayTemp: Say = (t) => sayTemporarily(env, chat, t, sleep, cleanups, threadId);
 
-	if (!file && !image && (!text || text.startsWith("/"))) {
+	if (!voiced && !image && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
 		console.log(`telegram ${chat}/${msg.message_id}: command=${command ?? "(empty)"} reply-to-session=${replied?.[1] ?? "-"}`);
 		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /model opus змінює модель сесії (початок тексту «@opus задача» задає модель одразу), /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер з поточного образу.");
@@ -198,9 +200,9 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	}
 	// Затримки: lag — скільки секунд минуло між відправленням у Telegram і початком обробки (доставка вебхука + черга).
 	const sw = stopwatch(`telegram ${chat}/${msg.message_id}`);
-	const kind = file ? "voice" : image ? "image" : "text";
+	const kind = voiced ? "voice" : image ? "image" : "text";
 	const lag = Math.max(0, Math.round(Date.now() / 1000 - msg.date));
-	await react(env, msg);
+	if (spoken === undefined) await react(env, msg);
 	sw.mark("react");
 
 	// Відповідь на пост із сесією — уточнення в ту саму сесію.
@@ -256,7 +258,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
 	// Cloudflare сюди не входить: аналіз витрат і неефективностей потребує міркувань, модель лишається за замовчуванням.
 	const model = requestedModel ?? route.model ?? (sure || silpo || calendar || ask.some((n) => n !== "cloudflare") ? "haiku" : undefined);
-	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: !!file, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ask, ...(images && { images }) };
+	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: voiced, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ask, ...(images && { images }) };
 	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.
 	if (!repo && route.unsure) {
 		await askRepo(env, agent, repos, pending);
@@ -275,4 +277,44 @@ async function transcribe(env: BotEnv, llm: Llm, file: { file_id: string; mime_t
 	if (!file) return text ?? "";
 	const { data } = await downloadTelegramFile(env, file.file_id);
 	return llm.transcribe(data, file.mime_type ?? "audio/ogg", VOICE_HINT);
+}
+
+// Шорткат: один запис на iPhone, а куди його надіслати (нотатки чи агент), обирається в самому шорткаті. Агентові запис
+// приходить сюди (повз Access, захист — секрет `x-secret`, як у воркері нотаток): Whisper розшифровує, а далі шлях той самий,
+// що й для голосового з Telegram. Службове повідомлення «🎙 Розпізнаю…» у чаті дає сесії id і прибирається разом з оригіналом.
+export const SHORTCUT_PATH = "/shortcut";
+
+export async function handleShortcut(req: Request, env: Env, deps: TelegramDeps): Promise<Response> {
+	if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
+	if (!env.SHORTCUT_SECRET) return new Response("SHORTCUT_SECRET is not configured", { status: 503 });
+	if (!(await safeEqual(req.headers.get("x-secret") ?? "", env.SHORTCUT_SECRET))) return new Response("unauthorized", { status: 401 });
+	if (!env.BOT_TOKEN || !env.TG_OWNER_ID) return new Response("bot is not configured", { status: 503 });
+
+	// Сирий файл у тілі або форма з полем audio (як у воркері нотаток).
+	let body: ArrayBuffer;
+	if ((req.headers.get("content-type") ?? "").startsWith("multipart/form-data")) {
+		const audio = (await req.formData()).get("audio");
+		if (!audio || typeof audio === "string") return new Response("missing audio field", { status: 400 });
+		body = await audio.arrayBuffer();
+	} else {
+		body = await req.arrayBuffer();
+	}
+	if (body.byteLength === 0) return new Response("empty body", { status: 400 });
+
+	const bot = { BOT_TOKEN: env.BOT_TOKEN };
+	const chat = Number(env.TG_OWNER_ID);
+	// Whisper і холодний старт контейнера йдуть у фоні: шорткат одразу отримує ok.
+	deps.defer(
+		(async () => {
+			const spoken = (await deps.llm.transcribe(body, "audio/mp4", VOICE_HINT)).trim();
+			if (!spoken) return void (await tgSendMessage(bot, chat, "⚠️ Не розібрав голос із шортката, запиши ще раз."));
+			const sent = await tg(bot, "sendMessage", { chat_id: chat, text: "🎙 Розпізнаю…" });
+			const msg: TgMessage = { message_id: sent.message_id, date: Math.floor(Date.now() / 1000), chat: { id: chat, type: "private" }, from: { id: chat } };
+			await handleMessage(bot, msg, false, deps, env.CLAUDE_CODE_OAUTH_TOKEN, spoken);
+		})().catch(async (err) => {
+			console.error("shortcut failed:", err);
+			await tgSendMessage(bot, chat, "⚠️ Не вдалося створити сесію із шортката, спробуй ще раз.").catch(() => {});
+		}),
+	);
+	return new Response("ok");
 }
