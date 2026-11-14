@@ -67,4 +67,12 @@ describe("режим теми: Flagship і THREAD_UI", () => {
 		expect(await threadUi({}, true)).toBe(classicUi);
 		expect(await threadUi({ THREAD_UI: "messages", FLAGS: { getStringValue: async () => "messages" } }, false)).toBe(classicUi);
 	});
+
+	it("noticeButtons: у classic кнопки службових повідомлень лишаються, у messages їх немає (дії вже в клавішах внизу)", async () => {
+		const { messagesUi, classicUi } = await import("../src/infrastructure/chat/thread-ui");
+		expect(classicUi.noticeButtons("retry")).toBe("retry");
+		expect(classicUi.noticeButtons("done")).toBe("done");
+		expect(messagesUi.noticeButtons("retry")).toBe("none");
+		expect(messagesUi.noticeButtons("done")).toBe("none");
+	});
 });

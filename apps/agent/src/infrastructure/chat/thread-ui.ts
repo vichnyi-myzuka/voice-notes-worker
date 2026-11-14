@@ -17,6 +17,8 @@ export const keyAction = (text: string | undefined): SessionKey | undefined => (
 export type ThreadUi = {
 	// Кнопки під постом сесії. deployDone: деплой PR завершено (лишається лише «Видалити»); mergeable: можна змерджити.
 	postButtons(s: { final: boolean; retry: boolean; mergeable: boolean; deployDone: boolean }): Buttons;
+	// Кнопки службових повідомлень сесії (скидання лімітів, збій запуску): у messages ті самі дії вже є в клавішах внизу теми.
+	noticeButtons(b: Buttons): Buttons;
 	// Підсумок ходу агента: що писати в пості (post) і чи слати підсумок ще й окремим повідомленням (separate; без поста він іде завжди)
 	// з якими кнопками (buttons).
 	// message — текст окремого повідомлення (у «messages» без повтору «✅ Готово», яке вже є в повідомленні стану).
@@ -38,6 +40,7 @@ export type ThreadUi = {
 
 // Класичний вигляд: один пост, який оновлюється на місці, з кнопками керування під ним; підсумок усередині поста.
 export const classicUi: ThreadUi = {
+	noticeButtons: (b) => b,
 	postButtons: ({ final, retry, mergeable, deployDone }) => (deployDone ? "dismiss" : final ? (retry ? "retry" : mergeable ? "mergeable" : "done") : "working"),
 	summary: ({ text, limit, mergeable }) => ({ post: text, message: text, separate: false, buttons: limit ? "retry" : mergeable ? "mergeable" : "done" }),
 	statusPerTurn: false,
@@ -61,6 +64,7 @@ const KEYSETS: Record<KeyState, KeySet> = {
 };
 const COMMANDS_SET: KeySet = { label: "⚙️ Команди", keys: [["quota", "status"], ["update"], ["back"]] };
 export const messagesUi: ThreadUi = {
+	noticeButtons: () => "none",
 	postButtons: () => "none",
 	// Без кнопок під підсумком: «Змерджити» й «Повторити» уже є в клавішах внизу теми, які прикріплюються до цього повідомлення.
 	summary: ({ text, limit }) => ({ post: STATUS(text, limit), message: text.replace(/^✅ Готово\n\n(?=\S)/, ""), separate: true, buttons: "none" }),

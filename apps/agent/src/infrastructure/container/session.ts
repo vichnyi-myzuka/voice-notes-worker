@@ -501,7 +501,7 @@ export class AgentSession extends DurableObject<Env> {
 		}
 		for (const [key, w] of waiting) {
 			await this.ctx.storage.delete(key);
-			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", w.url, "retry", undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", w.url, (await threadUi(this.env, !!w.threadId)).noticeButtons("retry"), undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
 		}
 		return undefined;
 	}
@@ -543,7 +543,7 @@ export class AgentSession extends DurableObject<Env> {
 		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
 		if (!this.env.BOT_TOKEN) return;
 		if (job.target.postId && (await this.posts.show(job.target, text, true))) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, (await threadUi(this.env, !!job.target.threadId)).noticeButtons("done"), undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
 	}
 
 	// Статус не будить контейнер, що спить.
