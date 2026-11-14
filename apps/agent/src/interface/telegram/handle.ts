@@ -116,7 +116,7 @@ const SILPO_PREFIX = /^(?:@silpo|silpo|сільпо|сильпо|сілпо)[\s,
 // Те саме для MCP Google Calendar: «@calendar задача» чи голосом «календар, задача».
 const CALENDAR_PREFIX = /^(?:@calendar|calendar|календар|календарю|календаря)[\s,.:;!—–-]+([\s\S]+)$/iu;
 
-// Те саме для MCP Cloudflare, але лише явно (роутер моделі його не вмикає: інструмент керує акаунтом): «@cloudflare задача» чи голосом «клаудфлер, задача».
+// Те саме для MCP Cloudflare (доступ лише для читання): «@cloudflare задача» чи голосом «клаудфлер, задача»; без префікса його вмикає й роутер.
 const CLOUDFLARE_PREFIX = /^(?:@cloudflare|cloudflare|клаудфлер|клауд флер|клаудфлеру|клаудфлера|клаудфлейр|клодфлер)[\s,.:;!—–-]+([\s\S]+)$/iu;
 
 // Шукає префікси моделі, Sure, Сільпо, Календаря і Cloudflare в будь-якому порядку; повертає задачу без них.
@@ -232,7 +232,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	sw.mark("transcribe");
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
-	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo, calendar: forcedCalendar, cloudflare } = parsePrefixes(transcript);
+	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo, calendar: forcedCalendar, cloudflare: forcedCloudflare } = parsePrefixes(transcript);
 	const withRepo = REPO_PREFIX.exec(task);
 	const prompt = withRepo ? withRepo[2].trim() : task;
 	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
@@ -244,7 +244,10 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const silpo = forcedSilpo || route.silpo === true;
 	// Календар так само: явно («календар, …», «@calendar») або модель побачила, що треба дивитись чи міняти події власника.
 	const calendar = forcedCalendar || route.calendar === true;
+	// Cloudflare так само: явно («клаудфлер, …», «@cloudflare») або модель побачила, що треба дивитись акаунт власника (доступ лише для читання).
+	const cloudflare = forcedCloudflare || route.cloudflare === true;
 	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
+	// Cloudflare сюди не входить: аналіз витрат і неефективностей потребує міркувань, модель лишається за замовчуванням.
 	const model = requestedModel ?? route.model ?? (sure || silpo || calendar ? "haiku" : undefined);
 	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: !!file, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ...(images && { images }) };
 	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.

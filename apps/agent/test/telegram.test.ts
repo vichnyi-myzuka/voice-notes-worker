@@ -304,9 +304,14 @@ describe("вебхук Telegram", () => {
 			const b = setup();
 			await b.send(msg({ text: "модель опус, @cloudflare що з DNS" }));
 			expect(b.sessions.get(SID)?.input).toMatchObject({ prompt: "що з DNS", model: "opus", cloudflare: true });
-			const c = setup();
-			await c.send(msg({ text: "покажи список воркерів у cloudflare" }));
-			expect(c.sessions.get(SID)?.input.cloudflare).toBeUndefined();
+			// Без префікса: вирішує роутер (задача про акаунт власника — так, звичайна — ні).
+			const c = setup("", () => ({ repo: "none", type: "chore", name: "container-costs", cloudflare: true }));
+			await c.send(msg({ text: "перевір витрати на контейнери в Cloudflare" }));
+			expect(c.sessions.get(SID)?.input).toMatchObject({ cloudflare: true });
+			expect(c.replies()[0]).toContain("☁️ Cloudflare");
+			const d = setup("", () => ({ repo: "none", type: "feat", name: "worker-page", cloudflare: false }));
+			await d.send(msg({ text: "напиши воркер для Cloudflare" }));
+			expect(d.sessions.get(SID)?.input.cloudflare).toBeUndefined();
 		});
 
 		it("задачі зі Sure чи Сільпо за замовчуванням на haiku, явна модель сильніша", async () => {
