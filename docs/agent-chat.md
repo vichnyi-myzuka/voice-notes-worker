@@ -48,3 +48,7 @@
 1. Секрети воркера агента: `npx wrangler secret put GITHUB_WEBHOOK_SECRET` (довільний довгий рядок) і `GITHUB_APPROVE_TOKEN` (fine-grained PAT на цей репозиторій: **Actions: Read and write**; належить тобі як рев'юверу environment; агент цього токена не бачить, у контейнер він не передається). Якщо в environment увімкнено «Prevent self-review», схвалити власний запуск не вийде.
 2. GitHub → репозиторій → Settings → Webhooks → Add webhook: Payload URL `https://agent.example.com/github`, Content type `application/json`, Secret той самий, події: **Workflow jobs** і **Workflow runs** (Pull requests і Deployment reviews не потрібні).
 3. Cloudflare Access: до політики Bypass для шляху `telegram` додай шлях `github`.
+
+## Запис із iPhone Shortcut
+
+`POST /shortcut` (повз Access; захист — секрет `SHORTCUT_SECRET` у заголовку `x-secret`, порівняння через `safeEqual`) приймає аудіо (сире тіло чи форма з полем `audio`, як у воркері нотаток) і створює сесію агента: Whisper розшифровує запис, воркер надсилає в приватний чат власника (`TG_OWNER_ID`) службове «🎙 Розпізнаю…» (воно дає сесії id `tg-<чат>-<повідомлення>`) і далі веде розшифровку тим самим шляхом, що й голосове з Telegram (`handleMessage`: префікси, роутер репозиторію, тема, пост із 🗣-цитатою); службове повідомлення прибирається. Відповідь `ok` іде одразу, робота — у фоні. Порожня розшифровка дає підказку в чаті. Один Shortcut для нотаток і агента: див. README, «iPhone Shortcut». Налаштування: `wrangler secret put SHORTCUT_SECRET` і шлях `shortcut` у політиці Bypass Cloudflare Access.

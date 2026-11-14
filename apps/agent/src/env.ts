@@ -29,6 +29,7 @@ export interface Env {
 	BOT_TOKEN?: string;
 	TG_WEBHOOK_SECRET?: string;
 	TG_OWNER_ID?: string;
+	SHORTCUT_SECRET?: string; // секрет (заголовок x-secret) для POST /shortcut: запис з iPhone Shortcut → сесія агента
 	CHAT_ID?: string; // канал, у який публікуєш задачі (бот адмін): працює так само, як канал бота нотаток
 	// Вебхук GitHub (/github): секрет підпису і токен для схвалення деплоїв з Telegram (Actions: read/write, лише у воркері, у контейнер не йде)
 	GITHUB_WEBHOOK_SECRET?: string;

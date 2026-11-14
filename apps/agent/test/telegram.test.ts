@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Llm } from "@voice-notes/core";
 import type { Env } from "../src/env";
-import { handleTelegram, parseRepos } from "../src/interface/telegram";
+import { handleShortcut, handleTelegram, parseRepos } from "../src/interface/telegram";
 import { describe as describeReport } from "../src/interface/telegram/commands";
 import { EPHEMERAL_MS } from "../src/infrastructure/chat";
 import { fakeAgent } from "./fake-agent";
@@ -766,5 +766,42 @@ describe("зображення від власника", () => {
 		expect(s.messages.at(-1)).toBe("Ось макет");
 		expect(s.images).toEqual([{ fileId: "p", mime: "image/jpeg" }]);
 		expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 41)).toBe(true); // як і інші уточнення
+	});
+});
+
+describe("запис із Shortcut", () => {
+	const shortcutEnv = { ...env, SHORTCUT_SECRET: "sc" } as unknown as Env;
+	const upload = async (t: ReturnType<typeof setup>, headers: HeadersInit, body: BodyInit = new Uint8Array([1, 2, 3])) => {
+		const pending: Promise<unknown>[] = [];
+		const res = await handleShortcut(new Request("https://agent.example/shortcut", { method: "POST", headers, body }), shortcutEnv, { agent: t.agent, llm: t.llm, defer: (w) => void pending.push(w), sleep: async () => {} });
+		await Promise.all(pending);
+		return res;
+	};
+
+	it("без правильного секрету — 401, нічого не створюється", async () => {
+		const t = setup();
+		expect((await upload(t, { "x-secret": "bad" })).status).toBe(401);
+		expect(t.llm.transcribe).not.toHaveBeenCalled();
+	});
+
+	it("порожнє тіло — 400", async () => {
+		const t = setup();
+		expect((await upload(t, { "x-secret": "sc" }, new Uint8Array())).status).toBe(400);
+	});
+
+	it("розшифровує запис і стартує сесію як із голосового", async () => {
+		const t = setup("Поправ README");
+		const res = await upload(t, { "x-secret": "sc" });
+		expect(res.status).toBe(200);
+		expect(t.llm.transcribe).toHaveBeenCalledOnce();
+		expect(t.sessions.size).toBe(1);
+		expect([...t.sessions.values()][0].input.prompt).toBe("Поправ README");
+	});
+
+	it("порожня розшифровка — підказка без сесії", async () => {
+		const t = setup("");
+		await upload(t, { "x-secret": "sc" });
+		expect(t.sessions.size).toBe(0);
+		expect(t.replies().at(-1)).toContain("Не розібрав");
 	});
 });
