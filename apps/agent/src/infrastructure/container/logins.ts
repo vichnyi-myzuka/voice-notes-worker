@@ -1,6 +1,7 @@
 // Входи в сервіси власника для MCP-серверів у контейнері сесії (див. mcpConfig у payload.ts). Саму логіку OAuth дає @voice-notes/oauth.
 // Власник один раз відкриває сторінку входу; токени живуть у сховищі Durable Object, у контейнер іде лише короткий access-токен.
 import { OAuthLogin } from "@voice-notes/oauth";
+import type { OAuthMcpName } from "../../domain/agent";
 
 export const SILPO_MCP_URL = "https://mcp.silpo.ua/mcp";
 const SILPO_ISSUER = "https://mcp.silpo.ua";
@@ -50,3 +51,10 @@ export const calendarLogin = (storage: ConstructorParameters<typeof OAuthLogin>[
 		authParams: { access_type: "offline", prompt: "consent" }, // без цього Google не видає refresh_token, а без consent — при повторному вході
 		client,
 	});
+
+// Входи всіх OAuth-сервісів реєстру (Sure входу не має). Сторінка /<сервіс>/login і /<сервіс>/callback однакова для всіх.
+export const mcpLogins = (storage: ConstructorParameters<typeof OAuthLogin>[0], google: GoogleClient): Record<OAuthMcpName, OAuthLogin> => ({
+	silpo: silpoLogin(storage),
+	calendar: calendarLogin(storage, google),
+	cloudflare: cloudflareLogin(storage),
+});

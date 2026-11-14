@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { folderFor, type McpAnswer, type McpName, type OAuthMcpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { stopwatch } from "../../timing";
 import { removeTopic } from "../chat";
 import { CLEANUP } from "./cleanup";
@@ -104,40 +104,16 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Контейнер: знімки, скидання, діагностика (див. Computer).
-	silpoLoginUrl(origin: string): Promise<string> {
-		return this.mcp.silpo.loginUrl(origin);
+	loginUrl(name: OAuthMcpName, origin: string): Promise<string> {
+		return this.mcp.logins[name].loginUrl(origin);
 	}
 
-	silpoCallback(code: string, state: string): Promise<boolean> {
-		return this.mcp.silpo.callback(code, state);
+	loginCallback(name: OAuthMcpName, code: string, state: string): Promise<boolean> {
+		return this.mcp.logins[name].callback(code, state);
 	}
 
-	silpoConnected(): Promise<boolean> {
-		return this.mcp.silpo.connected();
-	}
-
-	calendarLoginUrl(origin: string): Promise<string> {
-		return this.mcp.calendar.loginUrl(origin);
-	}
-
-	calendarCallback(code: string, state: string): Promise<boolean> {
-		return this.mcp.calendar.callback(code, state);
-	}
-
-	calendarConnected(): Promise<boolean> {
-		return this.mcp.calendar.connected();
-	}
-
-	cloudflareLoginUrl(origin: string): Promise<string> {
-		return this.mcp.cloudflare.loginUrl(origin);
-	}
-
-	cloudflareCallback(code: string, state: string): Promise<boolean> {
-		return this.mcp.cloudflare.callback(code, state);
-	}
-
-	cloudflareConnected(): Promise<boolean> {
-		return this.mcp.cloudflare.connected();
+	loginConnected(name: OAuthMcpName): Promise<boolean> {
+		return this.mcp.logins[name].connected();
 	}
 
 	snapshot(): Promise<SnapshotInfo> {
@@ -181,14 +157,14 @@ export class AgentSession extends DurableObject<Env> {
 			const again = await this.store.session(id);
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
-			const { silpo, calendar, cloudflare } = await this.mcp.wanted(input);
+			const wanted = await this.mcp.wanted(input);
 			sw.mark("queue");
-			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar, cloudflare });
+			const directory = await this.computer.prepare(folder, input.repo, wanted);
 			sw.mark("prepare");
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
 			sw.mark("create");
-			await this.store.saveSession(id, { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(silpo && { silpo: true }), ...(calendar && { calendar: true }), ...(cloudflare && { cloudflare: true }) } satisfies Tracked);
-			const notes = Mcp.missing(input, { silpo, calendar, cloudflare });
+			await this.store.saveSession(id, { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...Mcp.flags(wanted) } satisfies Tracked);
+			const notes = Mcp.missing(input, wanted);
 			await prompt(this.opencode(), ocId, notes.length ? `${input.prompt}\n\n(Системна примітка: ${notes.join(" ")})` : input.prompt, await this.images(input.images));
 			sw.mark("prompt");
 			sw.log({ repo: input.repo ?? "-" });

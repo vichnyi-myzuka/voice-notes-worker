@@ -1,5 +1,5 @@
 import { tg, tgSendMessage, type BotEnv } from "@voice-notes/core";
-import { MCP_LABELS, folderFor, type Agent, type ImageRef, type McpName } from "../../domain/agent";
+import { MCP_LABELS, MCP_NAMES, OAUTH_MCP_NAMES, folderFor, type Agent, type ImageRef, type McpFlags, type McpName } from "../../domain/agent";
 import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, removeMessage, sendChat } from "../../infrastructure/chat";
 import { type Stopwatch } from "../../timing";
 import type { KnownRepo, Route } from "./repo";
@@ -19,10 +19,8 @@ export type Pending = {
 	prompt: string;
 	route: Route;
 	model?: string;
-	sure: boolean;
-	silpo: boolean;
-	calendar: boolean;
-	cloudflare: boolean;
+	// Підключені сервіси (за реєстром MCP_SERVICES)
+	mcp: McpFlags;
 	// MCP, які роутер вважає потрібними чи припускає, але вмикати без підтвердження не можна (див. askMcp)
 	ask: McpName[];
 	images?: ImageRef[];
@@ -30,8 +28,9 @@ export type Pending = {
 
 // Створює пост і сесію (тему в приватному чаті, пост із ⏳, begin в агента). repo — вибраний чи розпізнаний репозиторій.
 export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo: string | undefined, sw?: Stopwatch): Promise<void> {
-	const { id, chat, messageId, inChannel, threadId, voice: file, image: hasImage, prompt, route, model, sure, silpo, calendar, cloudflare, images } = p;
-	console.log(`telegram ${chat}/${messageId}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo} calendar=${calendar} cloudflare=${cloudflare}`);
+	const { id, chat, messageId, inChannel, threadId, voice: file, image: hasImage, prompt, route, model, mcp, images } = p;
+	const on = MCP_NAMES.filter((name) => mcp[name]);
+	console.log(`telegram ${chat}/${messageId}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} mcp=${on.join("+") || "-"}`);
 	const url = agent.url(id);
 	// Приватний чат: кожна нова сесія отримує свою тему, і далі розмова йде в ній. Теми не ввімкнено (чи збій) — усе в самому чаті.
 	// Повідомлення з уже наявної, не прив'язаної до сесії теми лишається в ній.
@@ -48,19 +47,19 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
-	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : "", calendar ? "📅 Календар" : "", cloudflare ? "☁️ Cloudflare" : ""].filter(Boolean).join("\n");
+	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", ...on.map((name) => MCP_LABELS[name])].filter(Boolean).join("\n");
 	const header = (file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n") : `${moved ? `${clipped}\n\n` : ""}${where}`).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
 	sw?.mark("post");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(cloudflare && { cloudflare }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...Object.fromEntries(on.map((name) => [name, true])), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
 	sw?.mark("begin");
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
 	if (moved || file) await removeMessage(env, chat, messageId);
-	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
-	if (silpo && !(await agent.silpoConnected().catch(() => true))) await tgSendMessage(env, chat, `🛒 Сільпо ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/silpo/login`, thread);
-	if (calendar && !(await agent.calendarConnected().catch(() => true))) await tgSendMessage(env, chat, `📅 Календар ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/calendar/login`, thread);
-	if (cloudflare && !(await agent.cloudflareConnected().catch(() => true))) await tgSendMessage(env, chat, `☁️ Cloudflare ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/cloudflare/login`, thread);
+	// Сервіс із входом потрібен, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
+	for (const name of OAUTH_MCP_NAMES) {
+		if (mcp[name] && !(await agent.loginConnected(name).catch(() => true))) await tgSendMessage(env, chat, `${MCP_LABELS[name]} ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/${name}/login`, thread);
+	}
 }
 
 const pickKey = (id: string) => `pick:${id}`;
@@ -115,6 +114,6 @@ export async function resolveMcp(env: BotEnv, agent: Agent, id: string, allow: b
 	const { p, repo } = JSON.parse(ref.text) as SavedMcp;
 	await removeMessage(env, p.chat, askerId);
 	const on = allow ? Object.fromEntries(p.ask.map((n) => [n, true])) : {};
-	await launchSession(env, agent, { ...p, ...on, ask: [] }, repo);
+	await launchSession(env, agent, { ...p, mcp: { ...p.mcp, ...on }, ask: [] }, repo);
 	return true;
 }

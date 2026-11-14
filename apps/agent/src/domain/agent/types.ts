@@ -1,4 +1,4 @@
-import type { McpAnswer, McpName } from "./mcp";
+import type { McpAnswer, McpFlags, McpName, OAuthMcpName } from "./mcp";
 
 // Порт агента: сесія з автономним агентом, якій можна поставити задачу, дописати уточнення, спитати статус і яку можна зупинити.
 // Реалізація — infrastructure/container (Durable Object + контейнер з OpenCode).
@@ -6,7 +6,7 @@ import type { McpAnswer, McpName } from "./mcp";
 // name: коротка назва за змістом задачі (kebab-case); з неї складаються тека й гілка сесії, без неї — технічний id
 // model: модель сесії — «opus» (провайдер Claude Agent) або «провайдер/модель»; без неї — модель за замовчуванням воркера
 // images: фото від користувача (id файлів Telegram): агент отримує їх як зображення, а не як опис
-export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; sure?: boolean; silpo?: boolean; calendar?: boolean; cloudflare?: boolean; images?: ImageRef[] };
+export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; images?: ImageRef[] } & McpFlags;
 
 // Зображення в Telegram: id файлу й тип (завантажує його Durable Object, у завданні лише посилання: сховище не тримає великих значень).
 export type ImageRef = { fileId: string; mime: string };
@@ -58,24 +58,6 @@ export type FoundSession = { id: string; chatId?: number; threadId?: number };
 
 // Пост чату, який потім треба оновити (запит на схвалення деплою → його результат); живе у сховищі воркера.
 export type PostRef = { chatId: number | string; messageId: number; text: string };
-
-// Вхід у Сільпо (офіційний MCP з OAuth): токени живуть у сховищі агента, у контейнер іде лише короткий access-токен.
-export type SilpoLogin = {
-	// Адреса входу в Сільпо (origin — адреса воркера, куди Сільпо поверне користувача).
-	silpoLoginUrl(origin: string): Promise<string>;
-	// Завершує вхід кодом з повернення; false — state не збігся.
-	silpoCallback(code: string, state: string): Promise<boolean>;
-	silpoConnected(): Promise<boolean>;
-};
-
-// Вхід у Google Calendar (офіційний MCP Google Workspace): так само, як у Сільпо, у контейнер іде лише короткий access-токен.
-export type CalendarLogin = {
-	// Адреса входу в Google (origin — адреса воркера, куди Google поверне користувача).
-	calendarLoginUrl(origin: string): Promise<string>;
-	// Завершує вхід кодом з повернення; false — state не збігся.
-	calendarCallback(code: string, state: string): Promise<boolean>;
-	calendarConnected(): Promise<boolean>;
-};
 
 // Деплой PR сесії для її поста: text — рядки під станом сесії; repo+runId — чекає схвалення (кнопки); done — деплой завершено, сесію прибрано.
 // stage — стадія деплою для іконки теми: чекає схвалення, змерджено/виконується, успіх, збій чи відхилення.
@@ -150,14 +132,14 @@ export type Deploys = {
 	takeRef(key: string): Promise<PostRef | undefined>;
 };
 
-// Усе разом: те, що реалізує адаптер (infrastructure/container). Обробники беруть лише потрібну частину.
-// Вхід у Cloudflare (офіційний MCP mcp.cloudflare.com, OAuth з динамічною реєстрацією клієнта): як у Сільпо, у контейнер іде лише короткий access-токен.
-export type CloudflareLogin = {
-	// Адреса входу в Cloudflare (origin — адреса воркера, куди Cloudflare поверне користувача).
-	cloudflareLoginUrl(origin: string): Promise<string>;
+// Входи OAuth у сервіси власника (Сільпо, Google Calendar, Cloudflare): токени живуть у сховищі агента, у контейнер іде лише короткий access-токен.
+export type McpLogin = {
+	// Адреса входу в сервіс (origin — адреса воркера, куди сервіс поверне користувача).
+	loginUrl(name: OAuthMcpName, origin: string): Promise<string>;
 	// Завершує вхід кодом з повернення; false — state не збігся.
-	cloudflareCallback(code: string, state: string): Promise<boolean>;
-	cloudflareConnected(): Promise<boolean>;
+	loginCallback(name: OAuthMcpName, code: string, state: string): Promise<boolean>;
+	loginConnected(name: OAuthMcpName): Promise<boolean>;
 };
 
-export type Agent = Sessions & Computer & Deploys & SilpoLogin & CalendarLogin & CloudflareLogin;
+// Усе разом: те, що реалізує адаптер (infrastructure/container). Обробники беруть лише потрібну частину.
+export type Agent = Sessions & Computer & Deploys & McpLogin;

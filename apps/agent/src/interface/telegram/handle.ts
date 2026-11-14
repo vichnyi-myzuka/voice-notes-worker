@@ -1,5 +1,5 @@
 import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
-import { MCP_WRITES, type Agent, type ImageRef, type McpName } from "../../domain/agent";
+import { MCP_NAMES, MCP_WRITES, type Agent, type ImageRef, type McpFlags, type McpName } from "../../domain/agent";
 import type { Env } from "../../env";
 import { stamp, stopwatch } from "../../timing";
 import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
@@ -120,52 +120,33 @@ function modelPrefix(transcript: string): { model: string; task: string } | unde
 	return spoken && model ? { model, task: spoken[2] } : undefined;
 }
 
-// Явне ввімкнення MCP Sure (фінанси власника): «@sure задача» чи голосом «шур, задача» на початку. Без префікса Sure пропонує висновок
-// моделі (routeTask: задача потребує особистих фінансів власника) і вмикає його після підтвердження кнопкою, тож слово «шур» не обов'язкове.
-const SURE_PREFIX = /^(?:@sure|shure|шур|шюр|шуре)[\s,.:;!—–-]+([\s\S]+)$/iu;
+// Явне ввімкнення MCP: «@sure задача» чи голосом «шур, задача» на початку (так само Сільпо, Календар, Cloudflare). Для Sure без префікса
+// його пропонує висновок моделі (routeTask: задача потребує особистих фінансів власника) і вмикає після підтвердження кнопкою, тож слово
+// «шур» не обов'язкове; Cloudflare (лише читання) вмикає й роутер.
+const MCP_PREFIXES: Record<McpName, RegExp> = {
+	sure: /^(?:@sure|shure|шур|шюр|шуре)[\s,.:;!—–-]+([\s\S]+)$/iu,
+	silpo: /^(?:@silpo|silpo|сільпо|сильпо|сілпо)[\s,.:;!—–-]+([\s\S]+)$/iu,
+	calendar: /^(?:@calendar|calendar|календар|календарю|календаря)[\s,.:;!—–-]+([\s\S]+)$/iu,
+	cloudflare: /^(?:@cloudflare|cloudflare|клаудфлер|клауд флер|клаудфлеру|клаудфлера|клаудфлейр|клодфлер)[\s,.:;!—–-]+([\s\S]+)$/iu,
+};
 
-// Те саме для MCP Сільпо (покупки в магазині): «@silpo задача» чи голосом «сільпо, задача».
-const SILPO_PREFIX = /^(?:@silpo|silpo|сільпо|сильпо|сілпо)[\s,.:;!—–-]+([\s\S]+)$/iu;
-
-// Те саме для MCP Google Calendar: «@calendar задача» чи голосом «календар, задача».
-const CALENDAR_PREFIX = /^(?:@calendar|calendar|календар|календарю|календаря)[\s,.:;!—–-]+([\s\S]+)$/iu;
-
-// Те саме для MCP Cloudflare (доступ лише для читання): «@cloudflare задача» чи голосом «клаудфлер, задача»; без префікса його вмикає й роутер.
-const CLOUDFLARE_PREFIX = /^(?:@cloudflare|cloudflare|клаудфлер|клауд флер|клаудфлеру|клаудфлера|клаудфлейр|клодфлер)[\s,.:;!—–-]+([\s\S]+)$/iu;
-
-// Шукає префікси моделі, Sure, Сільпо, Календаря і Cloudflare в будь-якому порядку; повертає задачу без них.
-function parsePrefixes(transcript: string): { task: string; model?: string; sure: boolean; silpo: boolean; calendar: boolean; cloudflare: boolean } {
+// Шукає префікси моделі й сервісів MCP в будь-якому порядку; повертає задачу без них.
+function parsePrefixes(transcript: string): { task: string; model?: string; forced: McpFlags } {
 	let task = transcript;
 	let model: string | undefined;
-	let sure = false;
-	let silpo = false;
-	let calendar = false;
-	let cloudflare = false;
+	const forced: McpFlags = {};
 	for (let i = 0; i < 5; i++) {
 		const m = !model && modelPrefix(task);
 		if (m) ({ model, task } = m);
-		const sm = !sure && SURE_PREFIX.exec(task);
-		if (sm) {
-			task = sm[1];
-			sure = true;
-		}
-		const lm = !silpo && SILPO_PREFIX.exec(task);
-		if (lm) {
-			task = lm[1];
-			silpo = true;
-		}
-		const cm = !calendar && CALENDAR_PREFIX.exec(task);
-		if (cm) {
-			task = cm[1];
-			calendar = true;
-		}
-		const fm = !cloudflare && CLOUDFLARE_PREFIX.exec(task);
-		if (fm) {
-			task = fm[1];
-			cloudflare = true;
+		for (const name of MCP_NAMES) {
+			const found = !forced[name] && MCP_PREFIXES[name].exec(task);
+			if (found) {
+				task = found[1];
+				forced[name] = true;
+			}
 		}
 	}
-	return { task: task.trim(), model, sure, silpo, calendar, cloudflare };
+	return { task: task.trim(), model, forced };
 }
 
 // spoken — уже розшифроване голосове (запис із Shortcut): задача йде як голосова, але Whisper не викликається.
@@ -248,7 +229,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	sw.mark("transcribe");
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
-	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo, calendar: forcedCalendar, cloudflare: forcedCloudflare } = parsePrefixes(transcript);
+	const { task, model: requestedModel, forced } = parsePrefixes(transcript);
 	const withRepo = REPO_PREFIX.exec(task);
 	const prompt = withRepo ? withRepo[2].trim() : task;
 	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
@@ -265,14 +246,12 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		if (routed || route.maybe?.includes(name)) ask.push(name);
 		return false;
 	};
-	const sure = decide("sure", forcedSure, route.sure);
-	const silpo = decide("silpo", forcedSilpo, route.silpo);
-	const calendar = decide("calendar", forcedCalendar, route.calendar);
-	const cloudflare = decide("cloudflare", forcedCloudflare, route.cloudflare);
+	const mcp: McpFlags = {};
+	for (const name of MCP_NAMES) if (decide(name, !!forced[name], route[name])) mcp[name] = true;
 	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
 	// Cloudflare сюди не входить: аналіз витрат і неефективностей потребує міркувань, модель лишається за замовчуванням.
-	const model = requestedModel ?? route.model ?? (sure || silpo || calendar || ask.some((n) => n !== "cloudflare") ? "haiku" : undefined);
-	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: voiced, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ask, ...(images && { images }) };
+	const model = requestedModel ?? route.model ?? (mcp.sure || mcp.silpo || mcp.calendar || ask.some((n) => n !== "cloudflare") ? "haiku" : undefined);
+	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: voiced, image: !!image, prompt, route, ...(model && { model }), mcp, ask, ...(images && { images }) };
 	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.
 	if (!repo && route.unsure) {
 		await askRepo(env, agent, repos, pending);

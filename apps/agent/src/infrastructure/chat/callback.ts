@@ -1,7 +1,7 @@
 // callback_data кнопок під постами: формат живе тільки тут. Формують його chat (клавіатура) і interface/github (запит на деплой),
 // розбирає interface/telegram. Telegram дозволяє до 64 байт.
 
-import type { McpName } from "../../domain/agent";
+import { MCP_NAMES, type McpName } from "../../domain/agent";
 
 export type SessionAction = "stop" | "del" | "merge" | "ok" | "retry";
 
@@ -36,7 +36,7 @@ const REVIEW = /^(appr|rej):([\w.-]+\/[\w.-]+):(\d+)$/;
 const SESSION = /^(stop|del|merge|ok|retry):(tg-[\w-]+)$/;
 const PICK = /^pick:(tg-[\w-]+):(\d+|-)$/;
 const MCP_START = /^mcps:(tg-[\w-]+):([yn])$/;
-const MCP_LIVE = /^mcpl:(tg-[\w-]+):(sure|silpo|calendar|cloudflare):([yn])$/;
+const MCP_LIVE = new RegExp(`^mcpl:(tg-[\\w-]+):(${MCP_NAMES.join("|")}):([yn])$`);
 const CHOICE = /^(ans|tog):(tg-[\w-]+):(\d+)$/;
 
 // undefined — не наша кнопка або формат невідомий.

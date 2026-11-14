@@ -180,7 +180,7 @@ describe("вхід у Сільпо", () => {
 	it("/silpo/callback з правильним state підключає Сільпо, з хибним чи без коду — 400", async () => {
 		const { agent } = fakeAgent();
 		expect((await handleFetch(call("/silpo/callback?code=c1&state=good"), env, agent)).status).toBe(200);
-		expect(await agent.silpoConnected()).toBe(true);
+		expect(await agent.loginConnected("silpo")).toBe(true);
 		expect((await handleFetch(call("/silpo/callback?code=c2&state=bad"), env, agent)).status).toBe(400);
 		expect((await handleFetch(call("/silpo/callback"), env, agent)).status).toBe(400);
 	});
@@ -202,7 +202,7 @@ describe("вхід у Cloudflare", () => {
 	it("/cloudflare/callback з правильним state підключає Cloudflare, з хибним чи без коду — 400", async () => {
 		const { agent } = fakeAgent();
 		expect((await handleFetch(call("/cloudflare/callback?code=c1&state=good"), env, agent)).status).toBe(200);
-		expect(await agent.cloudflareConnected()).toBe(true);
+		expect(await agent.loginConnected("cloudflare")).toBe(true);
 		expect((await handleFetch(call("/cloudflare/callback?code=c2&state=bad"), env, agent)).status).toBe(400);
 		expect((await handleFetch(call("/cloudflare/callback"), env, agent)).status).toBe(400);
 	});
@@ -218,7 +218,7 @@ describe("вхід у Google Calendar", () => {
 
 	it("без GOOGLE_CLIENT_ID/SECRET вхід дає 503, а не виняток", async () => {
 		const { agent } = fakeAgent();
-		agent.calendarLoginUrl = async () => {
+		agent.loginUrl = async () => {
 			throw new Error("calendar: не налаштовано");
 		};
 		expect((await handleFetch(call("/calendar/login"), env, agent)).status).toBe(503);
@@ -227,7 +227,7 @@ describe("вхід у Google Calendar", () => {
 	it("/calendar/callback з правильним state підключає Календар, з хибним чи без коду — 400", async () => {
 		const { agent } = fakeAgent();
 		expect((await handleFetch(call("/calendar/callback?code=c1&state=good"), env, agent)).status).toBe(200);
-		expect(await agent.calendarConnected()).toBe(true);
+		expect(await agent.loginConnected("calendar")).toBe(true);
 		expect((await handleFetch(call("/calendar/callback?code=c2&state=bad"), env, agent)).status).toBe(400);
 		expect((await handleFetch(call("/calendar/callback"), env, agent)).status).toBe(400);
 	});

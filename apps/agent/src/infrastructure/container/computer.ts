@@ -258,7 +258,7 @@ export class Computer {
 		const timing = stderr.split("\n").find((line) => line.startsWith("timing "));
 		if (timing) console.log(`latency session-prep ${folder}: ${timing.slice("timing ".length)}`);
 		const dir = new TextDecoder().decode(out.stdout).trim() || sessionDir(folder);
-		if (mcp.sure || mcp.silpo || mcp.calendar || mcp.cloudflare) await this.enableMcp(dir, mcp);
+		if (Object.keys(mcp).length) await this.enableMcp(dir, mcp);
 		return dir;
 	}
 

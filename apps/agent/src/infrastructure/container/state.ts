@@ -1,4 +1,4 @@
-import type { ImageRef, StartInput, WatchTarget } from "../../domain/agent";
+import type { ImageRef, McpFlags, StartInput, WatchTarget } from "../../domain/agent";
 import type { Choice } from "./activity";
 
 // Що Durable Object тримає у сховищі і за якими ключами. Усі ключі й форми записів — тут, щоб модулі не вгадували їх самі.
@@ -25,7 +25,7 @@ export type SavedSnapshot = { id: string; image: string; at: number };
 // Сесія агента в спільному контейнері: id сесії (наш ключ ідемпотентності) → сесія OpenCode і репозиторій.
 // folder: назва теки (і гілки agent/<folder>); у старих записів немає, тоді це сам id.
 // post: пост сесії в чаті, який агент оновлює на місці (стан, підсумок).
-export type Tracked = { ocId: string; repo?: string; folder?: string; model?: string; sure?: boolean; silpo?: boolean; calendar?: boolean; cloudflare?: boolean; post?: { postId: number; header: string; chatId?: number; url?: string; threadId?: number; title?: string } };
+export type Tracked = { ocId: string; repo?: string; folder?: string; model?: string; post?: { postId: number; header: string; chatId?: number; url?: string; threadId?: number; title?: string } } & McpFlags;
 export const SESSION_PREFIX = "session:";
 export const sessionKey = (id: string) => `${SESSION_PREFIX}${id}`;
 export const sessionId = (key: string) => key.slice(SESSION_PREFIX.length);
