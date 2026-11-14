@@ -596,9 +596,9 @@ export class AgentSession extends DurableObject<Env> {
 		let fresh = false;
 		if (!target.postId && post?.threadId && this.env.BOT_TOKEN && (await threadUi(this.env, true)).statusPerTurn) {
 			// Без клавіатури внизу (її мають лише нередаговані повідомлення): стан оновлюється на місці.
-			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, full.url, "none", undefined, undefined, post.threadId).catch((err) => (console.error("status message failed:", err), undefined));
+			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, undefined, "none", undefined, undefined, post.threadId).catch((err) => (console.error("status message failed:", err), undefined));
 			await this.posts.keys({ chatId: full.chatId, threadId: post.threadId }, "working").catch((err) => console.error("keys failed:", err));
-			if (statusId) (full = { ...full, postId: statusId, header: "" }), (fresh = true);
+			if (statusId) (full = { ...full, postId: statusId, header: "", turn: true }), (fresh = true);
 		}
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
 		if (previous?.postId && previous.postId !== full.postId) await this.posts.mark(previous, false); // реакція не лишається на старому пості

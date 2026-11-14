@@ -49,7 +49,7 @@ export class Posts {
 		const review = deploy?.runId && deploy.repo && !ui.approvalKeys ? { repo: deploy.repo, runId: deploy.runId } : undefined;
 		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
 		const text = deploy?.done ? this.text(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.text(w, deploy ? `${status}\n\n${deploy.text}` : status, final);
-		const shown = await editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.url, buttons, answers, review);
+		const shown = await editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.turn ? undefined : w.url, buttons, answers, review);
 		// Табло й іконка теми завжди збігаються: фінальний стан у пості (✅ / ❌ чи стадія деплою) тут же виставляє й іконку
 		// (повтор того ж стану в setTopicIcon пропускається); проміжні стани й питання іконку ставлять самі.
 		if (final && w.threadId) {

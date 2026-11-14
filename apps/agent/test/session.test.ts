@@ -1153,6 +1153,7 @@ describe("AgentSession", () => {
 				expect(fresh).toHaveLength(2);
 				expect(fresh[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Працює") });
 				expect(fresh[0].reply_markup?.keyboard).toBeUndefined();
+				expect(fresh[0].text).not.toContain("Відкрити сесію"); // посилання лише на закріпленому табло: інакше це схоже на нову сесію
 				expect(fresh[1].reply_markup.keyboard![0].map((b) => b.text)).toEqual(["⏹ Стоп", "🗑 Видалити"]);
 				expect(edits().filter((e) => e.message_id === 77)).toEqual([]); // початковий пост не редагується
 				t.opencode.lastText = "Друга відповідь";
@@ -1160,7 +1161,7 @@ describe("AgentSession", () => {
 				t.opencode.busy.clear();
 				t.opencode.info[ocId] = { outcome: "succeeded" };
 				await t.session.alarm();
-				expect(edits().some((e) => e.message_id !== 77 && e.text.includes("✅ Готово"))).toBe(true);
+				expect(edits().some((e) => e.message_id !== 77 && e.text.includes("✅ Готово") && !e.text.includes("Відкрити сесію"))).toBe(true);
 				expect(edits().some((e) => e.message_id === 77)).toBe(false);
 			});
 
