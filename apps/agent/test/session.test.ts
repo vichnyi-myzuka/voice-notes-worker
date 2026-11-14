@@ -17,7 +17,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execStderr: "", execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execStderr: "", execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], mcpPuts: [] as { path: string; query: string; body: unknown }[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -105,6 +105,10 @@ function fakeContainer() {
 				}
 				if (req.method === "POST" && /^\/api\/session\/[^/]+\/form\/[^/]+\/reply$/.test(path)) {
 					opencode.formReplies.push({ path, body: await req.json() });
+					return new Response(null, { status: 204 });
+				}
+				if (req.method === "PUT" && path.startsWith("/api/experimental/mcp/")) {
+					opencode.mcpPuts.push({ path, query: decodeURIComponent(new URL(req.url).search), body: await req.json() });
 					return new Response(null, { status: 204 });
 				}
 				if (path === "/api/model") return ok(opencode.connected && ++opencode.modelChecks > opencode.modelsAfter ? [{ id: "sonnet", providerID: "claude-agent" }, { id: "opus", providerID: "claude-agent" }] : []);
@@ -642,6 +646,30 @@ describe("AgentSession", () => {
 		await out.session.start(ID, { prompt: "Покажи воркери", cloudflare: true });
 		expect(out.opencode.execs.filter((e) => e.cmd[0] === "sh")).toEqual([]);
 		expect(JSON.stringify(out.opencode.prompts ?? out.opencode)).toContain("/cloudflare/login");
+	});
+
+	it("MCP: нове повідомлення передає свіжий токен Сільпо й Cloudflare у запущений OpenCode (PUT), збій не ламає уточнення", async () => {
+		const base = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "w", TG_OWNER_ID: "1", CHAT_ID: "-100", ACCESS_AUD: "aud", ACCESS_TEAM_DOMAIN: "t" };
+		const login = (access: string) => ({ client: { id: "cid", redirect: "r" }, tokens: { access, refresh: "ref", expiresAt: Date.now() + 3_600_000 } });
+		const t = setup(base);
+		t.store.set("silpo", login("silpo-1"));
+		t.store.set("cloudflare", login("cf-1"));
+		await t.session.start(ID, { prompt: "Привіт", silpo: true, cloudflare: true });
+		expect(t.opencode.mcpPuts).toEqual([]);
+		t.store.set("silpo", login("silpo-2"));
+		t.store.set("cloudflare", login("cf-2"));
+		await t.session.followUp(ID, "Ще");
+		expect(t.opencode.mcpPuts.map((p) => [p.path, p.query, p.body])).toEqual([
+			["/api/experimental/mcp/silpo", `?location[directory]=/workspace/sessions/${ID}`, { config: { type: "remote", url: "https://mcp.silpo.ua/mcp", oauth: false, headers: { Authorization: "Bearer silpo-2" } } }],
+			["/api/experimental/mcp/cloudflare", `?location[directory]=/workspace/sessions/${ID}`, { config: { type: "remote", url: "https://mcp.cloudflare.com/mcp", oauth: false, headers: { Authorization: "Bearer cf-2" } } }],
+		]);
+		expect(t.opencode.prompts.at(-1)?.text).toBe("Ще");
+
+		// Сесія без Сільпо/Cloudflare нічого не надсилає
+		const plain = setup(base);
+		await plain.session.start(ID, { prompt: "Привіт" });
+		await plain.session.followUp(ID, "Ще");
+		expect(plain.opencode.mcpPuts).toEqual([]);
 	});
 
 	it("MCP Google Calendar: токен у конфігу теки (права 600), окремий агент `calendar`; разом зі Sure — `assistant`; без входу — примітка в завданні", async () => {

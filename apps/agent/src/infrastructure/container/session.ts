@@ -9,20 +9,20 @@ import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
 import { requestedMcp } from "./mcp";
 import { settedRepo } from "./repo";
-import { MCP_PROMPTS, type McpWanted } from "./payload";
+import { MCP_PROMPTS, refreshableMcp, type McpWanted } from "./payload";
 import { stamp, stopwatch } from "../../timing";
 import { JOB_ATTEMPTS, JOB_RETRY_MS, JOB_STALE_MS, LIMIT_POLL_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { Forms } from "./forms";
 import { extractImages, loadImages, sendImages, type OutImage } from "./images";
 import { describeCall, narrate, remember } from "./narrate";
-import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
+import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, putMcp, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { DEPLOY_ICON, Posts } from "./posts";
 import { calendarLogin, cloudflareLogin, silpoLogin } from "./logins";
 import { retitle } from "./title";
 import { fetchQuota, isBlocked, isLimitError, resetTime } from "../quota";
 import { WebProxy } from "./proxy";
-import { FORM_PREFIX, LIMIT_PREFIX, WATCH_PREFIX, limitKey, type LimitWait, SESSION_PREFIX, deployKey, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
+import { sessionDir, FORM_PREFIX, LIMIT_PREFIX, WATCH_PREFIX, limitKey, type LimitWait, SESSION_PREFIX, deployKey, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -350,6 +350,19 @@ export class AgentSession extends DurableObject<Env> {
 		};
 	}
 
+	// Свіжі токени Сільпо й Cloudflare — у запущений OpenCode (PUT замінює сервер і одразу перепідключає його): файл конфігу він
+	// після старту не перечитує, тож без цього прострочений токен давав 401 до нової сесії. Збій не фатальний: лише лог.
+	private async refreshMcp(id: string, tracked: Tracked, directory?: string): Promise<void> {
+		if (!tracked.silpo && !tracked.cloudflare) return;
+		try {
+			const dir = directory ?? sessionDir(tracked.folder ?? id);
+			const servers = refreshableMcp(await this.mcpWanted({ silpo: tracked.silpo, cloudflare: tracked.cloudflare }));
+			for (const [name, config] of Object.entries(servers)) await putMcp(this.opencode(), name, dir, config);
+		} catch (err) {
+			console.error(`mcp refresh ${id} failed:`, err);
+		}
+	}
+
 	// Ідемпотентно за id: повторний виклик не створює другу сесію OpenCode й не готує теку вдруге.
 	async start(id: string, input: StartInput): Promise<{ sessionId: string }> {
 		const sw = stopwatch(`session ${id} start`);
@@ -395,6 +408,7 @@ export class AgentSession extends DurableObject<Env> {
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
 		}
+		await this.refreshMcp(id, tracked);
 		this.asks.set(id, text);
 		await this.ctx.storage.delete(limitKey(id)); // власник уже діє: чекати скидання лімітів заради цієї сесії не треба
 		await this.forms.cancel(id, text); // текст замість кнопки: відкрите питання не чекає далі
@@ -685,7 +699,8 @@ export class AgentSession extends DurableObject<Env> {
 			return "login";
 		}
 		await this.computer.ensureRunning();
-		await this.computer.serial(() => this.computer.prepare(tracked.folder ?? id, tracked.repo, wanted));
+		const directory = await this.computer.serial(() => this.computer.prepare(tracked.folder ?? id, tracked.repo, wanted));
+		await this.refreshMcp(id, { ...tracked, [name]: true }, directory); // файл OpenCode наживо не перечитує: сервер вносимо явно
 		await this.ctx.storage.put(sessionKey(id), { ...tracked, [name]: true } satisfies Tracked);
 		await this.tell(id, tracked, `The owner connected the ${name} MCP: its tools (names start with \`${name}_\`) are available from this step on. Continue the task. Instructions for this service:\n\n${MCP_PROMPTS[name]}`);
 		return "connected";
