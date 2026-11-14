@@ -11,16 +11,18 @@ export async function askJson<T>(env: LlmEnv, req: JsonRequest, parse: (text: st
 	];
 	for (const [model, ask] of models) {
 		let text = "";
+		const started = Date.now();
 		try {
 			text = await ask(env, req);
 			const result = parse(text);
-			console.log(`${req.name} by ${model}`);
+			console.log(`${req.name} by ${model}, ${Date.now() - started}ms`);
 			return result;
 		} catch (err) {
 			// У Workers console.error з Error друкує лише стек, без тексту: додаємо повідомлення явно.
-			console.error(`${req.name}: ${model} failed: ${err instanceof Error ? err.message : String(err)}`, err, text);
+			console.error(`${req.name}: ${model} failed after ${Date.now() - started}ms: ${err instanceof Error ? err.message : String(err)}`, err, text);
 		}
 	}
+	console.error(`${req.name}: all models failed`);
 	return null;
 }
 

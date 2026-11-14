@@ -28,11 +28,13 @@ export async function processEdit(env: Env, ports: Ports, key: string, noteId: s
 		return;
 	}
 
+	console.log(`edit ${key}: start for note ${noteId}, ${obj.contentType}, ${(obj.size / 1000).toFixed(0)} КБ`);
 	const instruction = await step("transcript", async () => {
 		await channel.setBusy(note.messageId, true);
 		// Текстова відповідь на нотатку — без Whisper.
 		return obj.contentType.startsWith("text/") ? (await obj.text()).trim() : await llm.transcribe(await obj.bytes(), obj.contentType);
 	});
+	console.log(`edit ${key}: instruction ${instruction.length} символів`);
 	// Команди налаштування Todoist — до правки, щоб модель уже бачила нові назви проєктів і міток.
 	const setup = await runSetup(llm, tracker, instruction, run);
 	// Крок зберігає meta і triage разом: triage пишемо в стан до збереження кроку.

@@ -25,6 +25,7 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 	const { contentType } = obj;
 	const isText = contentType.startsWith("text/"); // написаний текст: він і є транскриптом
 	const isPhoto = contentType.startsWith("image/"); // фото: «транскрипт» — підпис і текст із зображення
+	console.log(`note ${key}: start ${isText ? "text" : isPhoto ? "photo" : "audio"} ${contentType}, ${(obj.size / 1000).toFixed(0)} КБ, attempt ${lastAttempt ? "last" : "regular"}`);
 	const source = { blob: async () => new Blob([await obj.bytes()], { type: contentType }), metadata: obj.metadata };
 
 	// Задовгий для транскрипції в межах 15 хв: не ретраїмо, шлемо оригінал без транскрипту.
@@ -57,6 +58,7 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 				: await llm.transcribe(await obj.bytes(), contentType),
 	);
 	const meta = await step("meta", () => summarize(llm, transcript, recordedAt, lastAttempt));
+	console.log(`note ${key}: transcript ${transcript.length} символів, ideas=${meta.ideas.length} tasks=${meta.tasks.length} discard=${meta.discard ?? "none"}`);
 
 	// Тиша, шум або голосове «скасуй»: нічого не публікуємо, прибираємо все, включно з оригіналом у каналі.
 	if (meta.discard) {
@@ -74,6 +76,7 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 		const snap = meta.tasks.length ? await tracker.snapshot() : null;
 		return snap ? await tracker.triage(transcript, meta.tasks, snap, new Date(recordedTs(key))) : null;
 	});
+	if (meta.tasks.length) console.log(`note ${key}: triage ${triaged ? `${triaged.length} задач` : "не вдався, нотатка без кнопки"}`);
 	const noteId = await step("noteId", async () => crypto.randomUUID());
 	// Транскрипт у Telegram не шлемо, він потрібен лише для title/summary.
 	const messageId = await step("messageId", async () => {
@@ -139,4 +142,5 @@ export async function processNote(env: Env, ports: Ports, key: string, lastAttem
 	});
 
 	await recordings.remove(key);
+	console.log(`note ${key}: done`);
 }

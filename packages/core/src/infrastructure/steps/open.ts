@@ -8,11 +8,17 @@ export async function openSteps<S extends object>(env: { BUCKET: R2Bucket }, sta
 		type V = Exclude<S[typeof name], undefined>;
 		const done = state[name];
 		// TypeScript не зв'язує Partial<S>[K] з S[K] для узагальненого ключа; значення тут точно V.
-		if (done !== undefined) return done as V;
+		if (done !== undefined) {
+			console.log(`step ${String(name)}: already done, skipped`);
+			return done as V;
+		}
 		let value: V;
+		const started = Date.now();
 		try {
 			value = await fn();
+			console.log(`step ${String(name)}: ok, ${Date.now() - started}ms`);
 		} catch (err) {
+			console.error(`step ${String(name)}: failed after ${Date.now() - started}ms${lastAttempt ? " (last attempt)" : ""}: ${err instanceof Error ? err.message : String(err)}`);
 			if (!lastAttempt || !opts?.onFinalFailure) throw err;
 			console.error(`step ${String(name)} failed on the last attempt:`, err);
 			value = opts.onFinalFailure();
