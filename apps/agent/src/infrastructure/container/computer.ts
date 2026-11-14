@@ -2,7 +2,7 @@ import type { ComputerInfo, ConnectionsInfo, SnapshotInfo } from "../../domain/a
 import type { Env } from "../../env";
 import { stopwatch } from "../../timing";
 import { parseConnections } from "./connections";
-import { READY_ATTEMPTS, containerEnv, inactivityMs, snapshotIntervalMs } from "./config";
+import { FORM_HOLD_MS, READY_ATTEMPTS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "./config";
 import { IMAGE_MAX_BYTES } from "./images";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "./opencode";
 import { PAYLOAD, PAYLOAD_HASH, WRITER, mcpConfig, type McpWanted } from "./payload";
@@ -100,7 +100,10 @@ export class Computer {
 		await this.syncPayload(started);
 		sw.mark("payload");
 		// Лише справжні холодні старти: для вже працюючого контейнера це рядок про кожен виклик, без користі.
-		if (started) sw.log({ source: restored ? "snapshot" : "image" });
+		if (started) {
+			sw.log({ source: restored ? "snapshot" : "image" });
+			await this.markUsed(); // і лише відкрита вкладка після старту теж не триматиме контейнер довше за AGENT_IDLE_STOP_MS
+		}
 	}
 
 	// Розкладає в контейнер файли з payload/ (інструкції агента, publish, session-prep, git-хук): при кожному старті (знімок міг
@@ -153,23 +156,43 @@ export class Computer {
 	// Позначає активність і, якщо alarm ще не заплановано, планує перевірку знімка.
 	async markActive(): Promise<void> {
 		await this.ctx.storage.put("activeAt", Date.now());
+		await this.markUsed();
+	}
+
+	// Позначає, що контейнером користувались (старт, робота агента), але диск не змінився; лічильник для зупинки після простою.
+	// Читання з веб-інтерфейсу сюди не потрапляє: відкрита вкладка не має тримати контейнер.
+	async markUsed(): Promise<void> {
+		await this.ctx.storage.put("usedAt", Date.now());
 		if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + snapshotIntervalMs(this.env));
 	}
 
-	// Alarm зберігає диск контейнера, коли агенти вільні і з минулого знімка щось змінилось. Перепланує себе лише поки
-	// є що зберігати: постійний alarm не давав би контейнеру заснути.
-	async snapshotIfChanged(): Promise<void> {
-		if (!this.running) return; // контейнер уже спить: знімати нічого
-		const [activeAt = 0, saved] = await Promise.all([this.ctx.storage.get<number>("activeAt"), this.ctx.storage.get<SavedSnapshot>("snapshot")]);
-		if (saved && saved.at >= activeAt) return; // нових змін немає
+	// Alarm зберігає диск контейнера, коли агенти вільні і з минулого знімка щось змінилось, а після AGENT_IDLE_STOP_MS
+	// без роботи зупиняє контейнер. Перепланує себе, лише поки контейнер працює.
+	// formAt: коли поставлено останнє питання, що чекає відповіді (0, якщо немає).
+	async settle(formAt = 0): Promise<void> {
+		if (!this.running) return; // контейнер уже спить
+		const [activeAt = 0, usedAt = 0, saved] = await Promise.all([
+			this.ctx.storage.get<number>("activeAt"),
+			this.ctx.storage.get<number>("usedAt"),
+			this.ctx.storage.get<SavedSnapshot>("snapshot"),
+		]);
 		try {
-			if (await isAnyBusy(this.opencode())) throw new Error("an agent is busy");
-			await this.saveSnapshot();
+			if (!saved || saved.at < activeAt) {
+				if (await isAnyBusy(this.opencode())) throw new Error("an agent is busy");
+				await this.saveSnapshot();
+			}
 		} catch (err) {
 			// Зайнятий агент або тимчасова помилка: повторимо наступного разу.
 			console.error("snapshot skipped:", err);
 			await this.ctx.storage.setAlarm(Date.now() + snapshotIntervalMs(this.env));
+			return;
 		}
+		const stopAt = Math.max(Math.max(activeAt, usedAt) + idleStopMs(this.env), formAt ? formAt + FORM_HOLD_MS : 0);
+		if (Date.now() < stopAt) return void (await this.ctx.storage.setAlarm(stopAt));
+		// Знімок свіжий, агенти вільні: диск збережено, тож контейнер можна зупинити.
+		if (await isAnyBusy(this.opencode()).catch(() => true)) return void (await this.ctx.storage.setAlarm(Date.now() + snapshotIntervalMs(this.env)));
+		console.log("container stopped: idle");
+		await this.destroyContainer();
 	}
 
 	private async saveSnapshot(): Promise<SnapshotInfo> {

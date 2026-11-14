@@ -8,8 +8,9 @@ export type Job = { id: string; target: WatchTarget; attempts: number; queuedAt?
 export const jobKey = (id: string) => `job:${id}`;
 
 // Питання агента, на яке можна відповісти кнопкою: форма й варіанти (callback_data несе лише номер варіанта).
-export type PendingForm = { formId: string; ocId: string; key: string; choices: Choice[]; multiple?: boolean; selected: number[]; text: string; next?: { key: string; choices: Choice[]; multiple?: boolean; text: string }[]; answers?: Record<string, string | boolean | string[]> };
-export const formKey = (id: string) => `form:${id}`;
+export const FORM_PREFIX = "form:";
+export type PendingForm = { askedAt?: number; formId: string; ocId: string; key: string; choices: Choice[]; multiple?: boolean; selected: number[]; text: string; next?: { key: string; choices: Choice[]; multiple?: boolean; text: string }[]; answers?: Record<string, string | boolean | string[]> };
+export const formKey = (id: string) => `${FORM_PREFIX}${id}`;
 
 // За сесією стежать, щоб повідомити в чат про завершення. seenBusy: чи бачили ми її працюючою (щойно запущена сесія ще може
 // не з'явитись серед активних, тому без цього «вільна» означало б «ще не почала»).
