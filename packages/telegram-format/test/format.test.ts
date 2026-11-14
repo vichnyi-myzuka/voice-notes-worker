@@ -39,6 +39,7 @@ describe("chatHtml", () => {
 		expect(chatHtml("**Готово**: `npm run check` і [PR](https://github.com/me/app/pull/1)")).toBe('<b>Готово</b>: <code>npm run check</code> і <a href="https://github.com/me/app/pull/1">PR</a>');
 		expect(chatHtml("## Зміни\n- один\n* два")).toBe("<b>Зміни</b>\n• один\n• два");
 		expect(chatHtml("- **`handle.ts`**: у main")).toBe("• <b><code>handle.ts</code></b>: у main");
+		expect(chatHtml("**Профілювати `prepare`**\n- a `git clone` b")).toBe("<b>Профілювати <code>prepare</code></b>\n• a <code>git clone</code> b");
 		expect(chatHtml("`**не жирний** https://x.dev`")).toBe("<code>**не жирний** https://x.dev</code>");
 	});
 

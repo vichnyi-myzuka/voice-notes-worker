@@ -30,26 +30,20 @@ export const QUOTE_CLOSE = "\uE001";
 export const stripQuote = (s: string) => s.replace(/[\uE000\uE001]/g, "");
 
 function inline(text: string): string {
-	// **`код`**: жирний навколо коду переживає розбиття по бектиках, тож позначаємо його службовими символами.
-	return escapeHtml(text)
-		.replace(/\*\*(`[^`\n]+`)\*\*/g, "$1")
-		.split(/(`[^`\n]+`)/)
-		.map((part, i) => {
-			if (i % 2) return `<code>${part.slice(1, -1)}</code>`;
-			const marked = part
-				.replace(//g, "<b>")
-				.replace(//g, "</b>")
-				.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>")
-				.replace(/^(\s*)[-*]\s+/gm, "$1• ")
-				.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
-				.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
-			// Голі URL: уже готові <a>…</a> пропускаємо; крапка чи кома в кінці речення до адреси не належить.
-			return marked.replace(/(<a href="[^"]*">[^<]*<\/a>)|(https?:\/\/[^\s<>"]+)/g, (m, anchor: string | undefined, url: string | undefined) => {
-				if (anchor || !url) return m;
-				const clean = url.replace(/[.,;:!?)]+$/, "");
-				return `<a href="${clean}">${escapeHtml(label(clean.replace(/&amp;/g, "&")))}</a>${url.slice(clean.length)}`;
-			});
+	// Код виносимо в плейсхолдери (приватна зона \uE002…\uE003), щоб жирний/посилання могли охоплювати код: **Назва `x`**.
+	const codes: string[] = [];
+	const stashed = escapeHtml(text).replace(/`([^`\n]+)`/g, (_, c: string) => `\uE002${codes.push(c) - 1}\uE003`);
+	const marked = stashed
+		.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>")
+		.replace(/^(\s*)[-*]\s+/gm, "$1• ")
+		.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+		.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
+	// Голі URL: уже готові <a>…</a> пропускаємо; крапка чи кома в кінці речення до адреси не належить.
+	return marked
+		.replace(/(<a href="[^"]*">[^<]*<\/a>)|(https?:\/\/[^\s<>"\uE002]+)/g, (m, anchor: string | undefined, url: string | undefined) => {
+			if (anchor || !url) return m;
+			const clean = url.replace(/[.,;:!?)]+$/, "");
+			return `<a href="${clean}">${escapeHtml(label(clean.replace(/&amp;/g, "&")))}</a>${url.slice(clean.length)}`;
 		})
-		.join("");
+		.replace(/\uE002(\d+)\uE003/g, (_, i: string) => `<code>${codes[Number(i)]}</code>`);
 }
-
