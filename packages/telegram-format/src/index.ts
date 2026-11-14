@@ -30,11 +30,15 @@ export const QUOTE_CLOSE = "\uE001";
 export const stripQuote = (s: string) => s.replace(/[\uE000\uE001]/g, "");
 
 function inline(text: string): string {
+	// **`код`**: жирний навколо коду переживає розбиття по бектиках, тож позначаємо його службовими символами.
 	return escapeHtml(text)
+		.replace(/\*\*(`[^`\n]+`)\*\*/g, "$1")
 		.split(/(`[^`\n]+`)/)
 		.map((part, i) => {
 			if (i % 2) return `<code>${part.slice(1, -1)}</code>`;
 			const marked = part
+				.replace(//g, "<b>")
+				.replace(//g, "</b>")
 				.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>")
 				.replace(/^(\s*)[-*]\s+/gm, "$1• ")
 				.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
