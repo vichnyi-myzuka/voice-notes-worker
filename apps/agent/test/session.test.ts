@@ -335,7 +335,7 @@ describe("AgentSession", () => {
 			await session.start(ID, { prompt: "Задача" });
 			expect(opencode.syncs).toHaveLength(1);
 			const byPath = Object.fromEntries(opencode.syncs[0].map((f) => [f.path, f]));
-			expect(Object.keys(byPath).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/lib/git-hooks/pre-push"]);
+			expect(Object.keys(byPath).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/bin/set-repo", "/usr/local/lib/git-hooks/pre-push"]);
 			expect(byPath["/usr/local/bin/publish"].mode).toBe("755");
 			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("Publishing small static sites");
 			expect(byPath["/root/.claude/CLAUDE.md"].content).toBe(byPath["/root/.config/opencode/AGENTS.md"].content);
@@ -1169,6 +1169,22 @@ describe("AgentSession", () => {
 					await flush();
 					expect(edits()).toHaveLength(2); // дія й питання, без пропуску
 					expect(edits().at(-1)!.text).toContain("❓ Який стиль?\nСтиль\n• Мінімалізм");
+				});
+
+				describe("репозиторій, повідомлений агентом (set-repo)", () => {
+					const SID = "tg-1-1";
+					it("команда `set-repo owner/name` прив'язує сесію без репозиторію, а вже прив'язану не перезаписує", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача" });
+						await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1" });
+						expect(await t.session.pullTarget(SID)).toBeUndefined();
+						tool(t.opencode, "r1", "bash", { command: "set-repo acme/app" });
+						await flush();
+						expect(await t.session.pullTarget(SID)).toMatchObject({ repo: "acme/app" });
+						tool(t.opencode, "r2", "bash", { command: "set-repo acme/other" });
+						await flush();
+						expect(await t.session.pullTarget(SID)).toMatchObject({ repo: "acme/app" });
+					});
 				});
 
 				describe("запит MCP посеред сесії (request-mcp)", () => {
