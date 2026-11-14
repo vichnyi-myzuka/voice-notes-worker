@@ -1637,14 +1637,18 @@ describe("AgentSession", () => {
 			t.opencode.busy.clear();
 			return t;
 		}
+		// Простій минув: alarm знімає диск (якщо були зміни) і зупиняє контейнер.
+		const finishedIdle = (extraEnv: Record<string, string> = {}) => finishedTask({ AGENT_IDLE_STOP_MS: "1", ...extraEnv });
+		const idleStop = async (session: { alarm(): Promise<void> }) => {
+			await new Promise((r) => setTimeout(r, 5));
+			await session.alarm();
+		};
 
-		it("після знімка alarm перепланується на момент зупинки через простій, а тоді контейнер зупиняється й більше не будить alarm", async () => {
-			const { session, alarm, container, background } = await finishedTask({ AGENT_IDLE_STOP_MS: "60000" });
+		it("до простою alarm диск не знімає й лише чекає моменту зупинки; після простою знімає диск і зупиняє контейнер", async () => {
+			const { session, alarm, container } = await finishedTask({ AGENT_IDLE_STOP_MS: "60000" });
 			alarm.at = null;
-			await session.alarm(); // знімок іде у фоні, alarm одразу повертається
-			await Promise.all(background.splice(0));
-			alarm.at = null;
-			await session.alarm(); // знімок готовий: наступний alarm — на момент зупинки через простій
+			await session.alarm();
+			expect(container.snapshots.size).toBe(0);
 			expect(container.running).toBe(true);
 			expect(alarm.at).toBeGreaterThan(Date.now() + 30_000);
 			expect(alarm.at).toBeLessThanOrEqual(Date.now() + 60_000);
@@ -1653,6 +1657,7 @@ describe("AgentSession", () => {
 				vi.setSystemTime(Date.now() + 61_000);
 				alarm.at = null;
 				await session.alarm();
+				expect(container.snapshots.size).toBe(1);
 				expect(container.running).toBe(false);
 				expect(alarm.at).toBeNull();
 			} finally {
@@ -1693,29 +1698,31 @@ describe("AgentSession", () => {
 			}
 		});
 
-		it("alarm знімає диск, коли агент вільний, і зберігає handle разом з образом", async () => {
-			const { session, container, store } = await finishedTask();
-			await session.alarm();
+		it("перед зупинкою через простій alarm знімає диск і зберігає handle разом з образом", async () => {
+			const { session, container, store } = await finishedIdle();
+			await idleStop(session);
 			expect(container.snapshots.size).toBe(1);
 			expect(store.get("snapshot")).toMatchObject({ id: "snap1", image: "image" });
+			expect(container.running).toBe(false);
 		});
 
-		it("знімок іде у фоні: alarm не чекає його, а поки він триває, другий не стартує й контейнер не зупиняється", async () => {
-			const { container, alarm, background, rawAlarm } = await finishedTask({ AGENT_IDLE_STOP_MS: "1" });
+		it("поки знімок триває, другий alarm не знімає вдруге й не зупиняє контейнер; потім контейнер зупиняється", async () => {
+			const { session, container, alarm, rawAlarm } = await finishedIdle();
 			let release!: () => void;
 			const gate = new Promise<void>((r) => (release = r));
 			const original = container.snapshotContainer.bind(container);
 			container.snapshotContainer = async (...args: Parameters<typeof original>) => (await gate, original(...args));
+			await new Promise((r) => setTimeout(r, 5));
+			const first = session.alarm();
+			await new Promise((r) => setTimeout(r, 5));
 			alarm.at = null;
-			await rawAlarm(); // повертається, хоч знімок ще не завершився
-			expect(container.snapshots.size).toBe(0);
-			alarm.at = null;
-			await rawAlarm(); // знімок ще йде: нового немає, контейнер живий (навіть при простої)
+			await rawAlarm(); // знімок ще йде: нового немає, контейнер живий
 			expect(container.running).toBe(true);
 			expect(alarm.at).not.toBeNull();
 			release();
-			await Promise.all(background.splice(0));
+			await first;
 			expect(container.snapshots.size).toBe(1);
+			expect(container.running).toBe(false);
 		});
 
 		it("alarm нічого не знімає, поки агент працює, і чекає наступного разу", async () => {
@@ -1729,18 +1736,16 @@ describe("AgentSession", () => {
 		});
 
 		it("alarm не знімає вдруге, якщо змін після знімка не було, і не чіпає сплячий контейнер", async () => {
-			const { session, container } = await finishedTask();
-			await session.alarm();
-			await session.alarm();
+			const { session, container } = await finishedIdle();
+			await idleStop(session);
 			expect(container.snapshots.size).toBe(1);
-			container.sleep();
-			await session.alarm();
+			await session.alarm(); // контейнер спить
 			expect(container.snapshots.size).toBe(1);
 		});
 
 		it("після сну followUp відновлює контейнер зі знімка: та сама сесія OpenCode, без повторного підключення Claude Agent", async () => {
-			const { session, container, opencode } = await finishedTask({ CLAUDE_CODE_OAUTH_TOKEN: "tok" });
-			await session.alarm();
+			const { session, container, opencode } = await finishedIdle({ CLAUDE_CODE_OAUTH_TOKEN: "tok" });
+			await idleStop(session);
 			container.sleep();
 			await session.followUp(ID, "Продовжуй");
 			expect(container.starts).toHaveLength(2);
@@ -1764,12 +1769,11 @@ describe("AgentSession", () => {
 
 		it("snapshot(): примусово зберігає диск, навіть без активності через воркер (SSH)", async () => {
 			const { session, container, store } = await finishedTask();
-			await session.alarm();
-			expect(container.snapshots.size).toBe(1);
-			const info = await session.snapshot(); // alarm вдруге нічого б не зробив
-			expect(info).toMatchObject({ id: "snap2", bytes: 1 });
+			expect(await session.snapshot()).toMatchObject({ id: "snap1", bytes: 1 });
+			expect(await session.snapshot()).toMatchObject({ id: "snap2", bytes: 1 });
 			expect(container.snapshots.size).toBe(2);
 			expect(store.get("snapshot")).toMatchObject({ id: "snap2" });
+			expect(container.running).toBe(true);
 		});
 
 		it("snapshot(): помилка, поки агент працює або контейнер спить (і не будить його)", async () => {
@@ -1783,8 +1787,8 @@ describe("AgentSession", () => {
 		});
 
 		it("знімок від іншого образу теж відновлюється (історія не губиться); новий образ лише через resetComputer", async () => {
-			const { session, container, opencode } = await finishedTask();
-			await session.alarm();
+			const { session, container, opencode } = await finishedIdle();
+			await idleStop(session);
 			container.sleep();
 			container.images.base = "image2"; // деплой із новим образом
 			await session.followUp(ID, "Продовжуй");
@@ -1804,8 +1808,8 @@ describe("AgentSession", () => {
 		});
 
 		it("якщо знімок не відновився, видаляє його й стартує з чистого образу", async () => {
-			const { session, container, store } = await finishedTask();
-			await session.alarm();
+			const { session, container, store } = await finishedIdle();
+			await idleStop(session);
 			container.sleep();
 			container.failRestore = true;
 			await session.followUp(ID, "Продовжуй");

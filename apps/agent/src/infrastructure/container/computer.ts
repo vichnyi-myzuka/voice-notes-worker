@@ -154,7 +154,7 @@ export class Computer {
 		throw new Error("OpenCode did not become ready");
 	}
 
-	// Позначає активність і, якщо alarm ще не заплановано, планує перевірку знімка.
+	// Позначає активність (диск міг змінитись) і, якщо alarm ще не заплановано, планує перевірку.
 	async markActive(): Promise<void> {
 		await this.ctx.storage.put("activeAt", Date.now());
 		await this.markUsed();
@@ -175,8 +175,8 @@ export class Computer {
 		if (current === null || current > at) await this.ctx.storage.setAlarm(at);
 	}
 
-	// Alarm зберігає диск контейнера, коли агенти вільні і з минулого знімка щось змінилось, а після AGENT_IDLE_STOP_MS
-	// без роботи зупиняє контейнер. Перепланує себе, лише поки контейнер працює.
+	// Після AGENT_IDLE_STOP_MS без роботи alarm зберігає диск (якщо з минулого знімка щось змінилось) і зупиняє контейнер.
+	// Перепланує себе, лише поки контейнер працює.
 	// formAt: коли поставлено останнє питання, що чекає відповіді (0, якщо немає).
 	async settle(formAt = 0): Promise<void> {
 		if (!this.running) return; // контейнер уже спить
@@ -187,26 +187,15 @@ export class Computer {
 		]);
 		// Знімок уже йде у фоні: контейнер не чіпаємо (не зупиняємо), дивимось знову трохи згодом.
 		if (this.snapshotting) return void (await this.alarmNoLater(Date.now() + SNAPSHOT_CHECK_MS));
-		if (!saved || saved.at < activeAt) {
-			// Не частіше за інтервал: інакше робота під час знімка (він змінює activeAt) гнала б знімки один за одним.
-			const wait = saved ? saved.at + snapshotIntervalMs(this.env) - Date.now() : 0;
-			if (wait > 0) return void (await this.alarmNoLater(Date.now() + wait));
-			try {
-				if (await isAnyBusy(this.opencode())) throw new Error("an agent is busy");
-			} catch (err) {
-				// Зайнятий агент або тимчасова помилка: повторимо наступного разу.
-				console.error("snapshot skipped:", err);
-				await this.alarmNoLater(Date.now() + snapshotIntervalMs(this.env));
-				return;
-			}
-			// Знімок диска триває десятки секунд: іде у фоні, щоб alarm не стояв, а нові повідомлення виконувались одразу.
-			this.startSnapshot();
-			return void (await this.alarmNoLater(Date.now() + SNAPSHOT_CHECK_MS));
-		}
 		const stopAt = Math.max(Math.max(activeAt, usedAt) + idleStopMs(this.env), formAt ? formAt + FORM_HOLD_MS : 0);
 		if (Date.now() < stopAt) return void (await this.alarmNoLater(stopAt));
-		// Знімок свіжий, агенти вільні: диск збережено, тож контейнер можна зупинити.
 		if (await isAnyBusy(this.opencode()).catch(() => true)) return void (await this.alarmNoLater(Date.now() + snapshotIntervalMs(this.env)));
+		// Диск знімаємо лише перед зупинкою (і за запитом, див. snapshot()): Cloudflare не вміє видаляти старі знімки, тож кожен
+		// зайвий лишається на 30 днів. Якщо змін після минулого знімка не було, знімок уже актуальний.
+		if (!saved || saved.at < activeAt) {
+			if (!(await this.snapshotNow("idle"))) return void (await this.alarmNoLater(Date.now() + snapshotIntervalMs(this.env))); // контейнер живий, повторимо
+			return this.settle(formAt); // за час знімка могла з'явитись робота: тоді зупинка відкладається
+		}
 		console.log("container stopped: idle");
 		await this.destroyContainer();
 	}
@@ -214,22 +203,24 @@ export class Computer {
 	// Знімок, що зараз іде у фоні (в пам'яті екземпляра: після вивантаження порожній, і alarm просто запустить знімок знову).
 	private snapshotting: Promise<void> | undefined;
 
-	private startSnapshot(): void {
-		const job = this.saveSnapshot().then(
-			() => undefined,
-			(err) => console.error("snapshot failed:", err),
+	// Знімок на час, поки alarm чекає його (десятки секунд); false, якщо не вдався.
+	private snapshotNow(reason: string): Promise<boolean> {
+		const job = this.saveSnapshot(reason).then(
+			() => true,
+			(err) => (console.error("snapshot failed:", err), false),
 		);
-		this.snapshotting = job.finally(() => (this.snapshotting = undefined));
+		this.snapshotting = job.then(() => undefined).finally(() => (this.snapshotting = undefined));
 		this.ctx.waitUntil(this.snapshotting);
+		return job;
 	}
 
-	private async saveSnapshot(): Promise<SnapshotInfo> {
+	private async saveSnapshot(reason: string): Promise<SnapshotInfo> {
 		const container = this.ctx.container!;
 		const startedAt = Date.now();
 		const snapshot = await container.snapshotContainer({ name: "computer" });
 		await this.ctx.storage.put("snapshot", { id: snapshot.id, image: (await this.ctx.storage.get<string>("launchedImage")) ?? container.images.base, at: startedAt } satisfies SavedSnapshot);
 		const info = { id: snapshot.id, bytes: snapshot.size, ms: Date.now() - startedAt };
-		console.log(`snapshot saved: ${info.id}, ${info.bytes} bytes, ${info.ms} ms`);
+		console.log(`snapshot saved (${reason}): ${info.id}, ${info.bytes} bytes, ${info.ms} ms`);
 		return info;
 	}
 
@@ -238,7 +229,7 @@ export class Computer {
 		if (!this.running) throw new Error("container is not running");
 		if (this.snapshotting) throw new Error("a snapshot is already in progress");
 		if (await isAnyBusy(this.opencode())) throw new Error("an agent is busy");
-		return this.saveSnapshot();
+		return this.saveSnapshot("manual");
 	}
 
 	// Після деплою старий контейнер може ще працювати й зробити знімок старої файлової системи під новим образом;
