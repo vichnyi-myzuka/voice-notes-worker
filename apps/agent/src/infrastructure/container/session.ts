@@ -52,7 +52,7 @@ export class AgentSession extends DurableObject<Env> {
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.silpo = silpoLogin(ctx.storage);
 		this.calendar = calendarLogin(ctx.storage, { id: env.GOOGLE_CLIENT_ID, secret: env.GOOGLE_CLIENT_SECRET });
-		this.cloudflare = cloudflareLogin(ctx.storage, env.CLOUDFLARE_MCP_SCOPE);
+		this.cloudflare = cloudflareLogin(ctx.storage);
 		this.computer.applyInactivityTimeout();
 	}
 

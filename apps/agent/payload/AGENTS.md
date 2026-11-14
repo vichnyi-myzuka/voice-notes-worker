@@ -79,4 +79,4 @@ Before the final message, go through this checklist, do not skip steps:
 
 ## Cloudflare account
 
-If an MCP server named `cloudflare` is connected (its tools start with `cloudflare_`), it gives access to the owner's Cloudflare account through the official Cloudflare MCP (OAuth, with the permissions the owner approved). It is connected only when the owner asked for it. Read before you change, change resources only when the task explicitly asks, never delete production resources without being told to, and never print or store the access token or secret values. Account data is private: never in commits, pull requests, issues or public sites.
+If an MCP server named `cloudflare` is connected (its tools start with `cloudflare_`), it gives access to the owner's Cloudflare account through the official Cloudflare MCP (OAuth, read-only permissions). It is connected only when the owner asked for it. It is strictly read-only: never try to change anything in the account, and never print or store the access token or secret values. Account data is private: never in commits, pull requests, issues or public sites.

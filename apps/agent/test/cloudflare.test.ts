@@ -32,10 +32,4 @@ describe("Cloudflare (OAuth для MCP)", () => {
 		expect(calls[1].url).toBe("https://mcp.cloudflare.com/token");
 		expect(await login.accessToken()).toMatchObject({ access: "acc" });
 	});
-
-	it("права можна розширити через CLOUDFLARE_MCP_SCOPE", async () => {
-		fakeCloudflare();
-		const login = cloudflareLogin(memory().storage, "offline_access user:read workers-scripts.write");
-		expect(new URL(await login.loginUrl("https://agent.example")).searchParams.get("scope")).toBe("offline_access user:read workers-scripts.write");
-	});
 });
