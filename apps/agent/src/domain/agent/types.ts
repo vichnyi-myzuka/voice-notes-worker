@@ -52,6 +52,8 @@ export type SnapshotInfo = { id: string; bytes: number; ms: number };
 
 // Прибрана сесія і її пост у чаті (щоб прибрати й пост).
 export type RemovedSession = { id: string; chatId?: number; postId?: number };
+// Знайдена сесія гілки: де її пост у чаті (чат, тема), щоб надіслати туди повідомлення.
+export type FoundSession = { id: string; chatId?: number; threadId?: number };
 // Тема сесії видаляється разом із нею (у Durable Object, див. remove), тож викликачу про неї дбати не треба.
 
 // Пост чату, який потім треба оновити (запит на схвалення деплою → його результат); живе у сховищі воркера.
@@ -109,6 +111,8 @@ export type Sessions = {
 	remove(id: string): Promise<void>;
 	// Прибирає сесію, чия гілка agent/<folder> у репозиторії repo змерджена (PR у main). undefined, якщо такої сесії немає.
 	removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined>;
+	// Сесія гілки agent/<folder> у репозиторії repo без жодних змін (щоб написати їй про збій CI); undefined, якщо такої немає.
+	findByBranch(repo: string, folder: string): Promise<FoundSession | undefined>;
 	// Репозиторій і гілка сесії (agent/<тека>), щоб знайти її PR; undefined, якщо сесія без репозиторію чи невідома.
 	pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined>;
 	// Id сесії в OpenCode для прямого посилання на сесію; undefined, якщо такої сесії немає.

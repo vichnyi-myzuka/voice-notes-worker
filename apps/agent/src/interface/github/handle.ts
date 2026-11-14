@@ -13,7 +13,7 @@ type Payload = {
 	action?: string;
 	repository?: { full_name: string; default_branch: string };
 	workflow_job?: { run_id: number; head_sha?: string; name: string; workflow_name?: string; head_branch?: string; html_url: string };
-	workflow_run?: { id: number; name: string; head_branch: string; head_sha?: string; html_url: string; conclusion?: string | null };
+	workflow_run?: { id: number; name: string; head_branch: string; head_sha?: string; html_url: string; conclusion?: string | null; head_repository?: { full_name: string } };
 };
 
 const REPO = /^[\w.-]+\/[\w.-]+$/;
@@ -28,6 +28,7 @@ async function validSignature(body: string, header: string, secret: string): Pro
 
 // Вебхук GitHub (повз Access, як і Telegram: захищає підпис). Дві події:
 //  • workflow_job waiting (job чекає схвалення environment): надсилаємо в чат запит на схвалення деплою з кнопками (див. review.ts);
+//  • workflow_run completed (check на гілці agent/* впав): пост у чаті й завдання агенту сесії виправити CI (onCheckFailed);
 //  • workflow_run completed (deploy на головній гілці): результат деплою й PR; після успіху ще й прибирання сесії PR бота
 //    (сесія, worktree, локальна й віддалена гілка, пост у чаті).
 // GitHub отримує 200 одразу, робота йде у фоні.
@@ -47,7 +48,10 @@ export async function handleGithub(req: Request, env: Env, deps: GithubDeps): Pr
 	if (!repo || !REPO.test(repo)) return new Response("ok");
 	const event = req.headers.get("x-github-event");
 	if (event === "workflow_job") deps.defer(onReviewRequested(bot, env, deps, repo, payload).catch((err) => console.error("github review failed:", err)));
-	else if (event === "workflow_run") deps.defer(onDeployFinished(bot, env, deps, repo, payload).catch((err) => console.error("github deploy result failed:", err)));
+	else if (event === "workflow_run") {
+		deps.defer(onDeployFinished(bot, env, deps, repo, payload).catch((err) => console.error("github deploy result failed:", err)));
+		deps.defer(onCheckFailed(bot, env, deps, repo, payload).catch((err) => console.error("github check failed handler failed:", err)));
+	}
 	return new Response("ok");
 }
 
@@ -78,6 +82,25 @@ async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, re
 	const asked = await agent.takeRef(refKey(repo, run.id)).catch(() => undefined);
 	if (asked && (await tg(bot, "editMessageText", { chat_id: asked.chatId, message_id: asked.messageId, text: `${asked.text}\n\n${text}`, reply_markup, link_preview_options: { is_disabled: true } }).then(() => true, (err) => (console.error("edit approval post failed:", err), false)))) return;
 	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup, link_preview_options: { is_disabled: true } });
+}
+
+// Перевірка PR (workflow `check`) на гілці бота впала: пишемо про це в чат і даємо сесії завдання розібратись і виправити.
+const CHECK_WORKFLOW = "check";
+const CHECK_FAILED = ["failure", "timed_out"];
+
+export const ciFailedPrompt = (branch: string, url: string, conclusion: string) =>
+	`The CI check for your pull request (branch ${branch}) ${conclusion === "timed_out" ? "timed out" : "failed"}: ${url}\nFind out why (for example \`gh run view <run id> --log-failed\`, the run id is the last number in the URL), fix it, run \`npm run check\` locally, then commit and push to the same branch. If the failure is not caused by your changes (flaky test, infrastructure), say so instead of changing unrelated code. If the branch also has merge conflicts with the default branch, merge or rebase it and resolve them.`;
+
+async function onCheckFailed(bot: BotEnv, env: Env, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
+	const run = p.workflow_run;
+	if (p.action !== "completed" || !run || run.name !== CHECK_WORKFLOW || !CHECK_FAILED.includes(run.conclusion ?? "")) return;
+	// Лише гілки бота з цього ж репозиторію (не форки)
+	if (!run.head_branch.startsWith("agent/") || (run.head_repository && run.head_repository.full_name !== repo)) return;
+	const session = await agent.findByBranch(repo, run.head_branch.slice("agent/".length));
+	if (!session?.chatId) return; // сесія без поста в чаті (напр. з веб-інтерфейсу): нікому показувати
+	const text = `❌ CI не пройшов у ${run.head_branch}${run.conclusion === "timed_out" ? " (час вийшов)" : ""}. Агент береться виправляти.\n${run.html_url}`;
+	await tg(bot, "sendMessage", { chat_id: session.chatId, text, ...(session.threadId && { message_thread_id: session.threadId }), link_preview_options: { is_disabled: true } }).catch((err) => console.error("ci failed notice failed:", err));
+	await agent.resume(session.id, ciFailedPrompt(run.head_branch, run.html_url, run.conclusion!), { chatId: session.chatId, url: agent.url(session.id), ...(session.threadId && { threadId: session.threadId }) });
 }
 
 // Прибирає сесію гілки (як /delete) і віддалену гілку; пост у чаті видаляє, лише якщо він не показує результату (keepPost). true, якщо сесію знайдено.

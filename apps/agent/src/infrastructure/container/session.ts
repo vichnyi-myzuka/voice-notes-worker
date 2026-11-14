@@ -2,7 +2,7 @@ import { workersLlm } from "@voice-notes/core";
 import type { OAuthLogin } from "@voice-notes/oauth";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { MCP_LABELS, folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { MCP_LABELS, folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { removeTopic, renameTopic, sendChat, sendMcpQuestion, setTopicIcon, type Answers, type TopicState } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
@@ -720,6 +720,14 @@ export class AgentSession extends DurableObject<Env> {
 			if ((tracked.folder ?? id) !== folder || tracked.repo !== repo) continue;
 			await this.remove(id);
 			return { id, chatId: tracked.post?.chatId, postId: tracked.post?.postId };
+		}
+		return undefined;
+	}
+
+	// Сесія гілки agent/<folder> без змін (див. Sessions.findByBranch).
+	async findByBranch(repo: string, folder: string): Promise<FoundSession | undefined> {
+		for (const [key, tracked] of await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX })) {
+			if ((tracked.folder ?? sessionId(key)) === folder && tracked.repo === repo) return { id: sessionId(key), chatId: tracked.post?.chatId, threadId: tracked.post?.threadId };
 		}
 		return undefined;
 	}
