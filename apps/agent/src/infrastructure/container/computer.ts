@@ -80,7 +80,7 @@ export class Computer {
 			// Знімок відновлюємо завжди, навіть якщо образ відтоді змінився: він сам визначає файлову систему (старий образ піднімається
 			// з усією історією). Новий образ застосовується лише командою /update.
 			restored = !!saved;
-			await this.launch(restored ? saved : undefined);
+			await this.launch(restored ? saved : undefined, "no saved snapshot");
 		}
 		sw.mark("launch");
 		await container.setInactivityTimeout(inactivityMs(this.env));
@@ -92,7 +92,7 @@ export class Computer {
 			console.error("snapshot restore failed, starting from the image:", err);
 			await this.destroyContainer();
 			await this.ctx.storage.delete("snapshot");
-			await this.launch(undefined);
+			await this.launch(undefined, "snapshot restore failed");
 			await container.setInactivityTimeout(inactivityMs(this.env));
 			await this.waitReady(true);
 		}
@@ -117,9 +117,10 @@ export class Computer {
 	}
 
 	// Запускає контейнер зі знімка диска або з образу.
-	private async launch(snapshot: SavedSnapshot | undefined): Promise<void> {
+	// reason: чому знімка немає (для логу), щоб старт «з образу» не лишався без пояснення.
+	private async launch(snapshot: SavedSnapshot | undefined, reason: string): Promise<void> {
 		const container = this.ctx.container!;
-		console.log(snapshot ? `container start from snapshot ${snapshot.id}` : "container start from image");
+		console.log(snapshot ? `container start from snapshot ${snapshot.id}` : `container start from image (${reason})`);
 		await this.ctx.storage.put("launchedImage", snapshot ? snapshot.image : container.images.base); // з якого образу контейнер насправді
 		container.start({
 			...(snapshot ? { containerSnapshot: { id: snapshot.id } } : { image: container.images.base }),
@@ -244,6 +245,9 @@ export class Computer {
 	// це єдиний спосіб його позбутися без SSH: знімок видаляється, контейнер зупиняється.
 	async reset(unlessBusy = false): Promise<boolean> {
 		if (unlessBusy && this.running && (await isAnyBusy(this.opencode()).catch(() => true))) return false;
+		// Це єдине місце (крім невдалого відновлення), де ключ знімка зникає: у логах видно, хто саме скинув диск.
+		const saved = await this.ctx.storage.get<SavedSnapshot>("snapshot");
+		console.log(`snapshot dropped: reset (unlessBusy=${unlessBusy}, running=${this.running}, snapshot=${saved?.id ?? "none"})`);
 		await this.ctx.storage.delete("snapshot");
 		if (this.running) await this.destroyContainer();
 		return true;
