@@ -117,7 +117,7 @@ export class Progress {
 		}
 		const text = announcement ?? `${WORKING} · ${activity || describeActivity(tool, input)}`;
 		await this.posts.enqueue(async () => {
-			if (await this.store.watch(entry[0])) await this.posts.show(w, text, false, answers); // спостереження могло закінчитись, поки чекали в черзі
+			if (await this.store.watch(entry[0])) await this.posts.show(entry[0], w, text, false, answers); // спостереження могло закінчитись, поки чекали в черзі
 		});
 	}
 }

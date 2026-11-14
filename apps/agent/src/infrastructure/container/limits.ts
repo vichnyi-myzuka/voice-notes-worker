@@ -44,7 +44,7 @@ export class Limits {
 		}
 		for (const [id, w] of waiting) {
 			await this.store.dropLimit(id);
-			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", w.url, "retry", undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", { id, url: w.url }, "retry", undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
 		}
 		return undefined;
 	}

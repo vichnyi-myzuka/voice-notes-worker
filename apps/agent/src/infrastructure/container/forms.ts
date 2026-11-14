@@ -27,7 +27,7 @@ export class Forms {
 		await this.storage.delete(formKey(id));
 		await cancelForm(this.opencode(), form.ocId, form.formId, message).catch((err) => console.error("form cancel failed:", err));
 		const w = await this.storage.get<Watch>(watchKey(id));
-		if (w) await this.posts.show(w, `${WORKING} · відповідь: ${message.slice(0, 100)}`).catch(() => {});
+		if (w) await this.posts.show(id, w, `${WORKING} · відповідь: ${message.slice(0, 100)}`).catch(() => {});
 	}
 
 	// Відповідь кнопкою: передає вибраний варіант агентові й показує його в пості. undefined — питання вже неактуальне.
@@ -41,12 +41,12 @@ export class Forms {
 			if (step) {
 				// Далі ще питання форми: показуємо наступне з його кнопками, агентові відповідь піде після останнього.
 				await this.storage.put(formKey(id), { ...form, ...step, selected: [], next: rest, answers } satisfies PendingForm);
-				if (w) await this.posts.show(w, step.text, false, { labels: step.choices.map((c) => c.label), multiple: step.multiple }).catch(() => {});
+				if (w) await this.posts.show(id, w, step.text, false, { labels: step.choices.map((c) => c.label), multiple: step.multiple }).catch(() => {});
 				return `Відповідь: ${label}`;
 			}
 			await replyForm(this.opencode(), form.ocId, form.formId, answers);
 			await this.storage.delete(formKey(id));
-			if (w) await this.posts.show(w, `${WORKING} · відповідь: ${label}`).catch(() => {});
+			if (w) await this.posts.show(id, w, `${WORKING} · відповідь: ${label}`).catch(() => {});
 			return `Відповідь: ${label}`;
 		};
 		if (!form.multiple) {
@@ -63,7 +63,7 @@ export class Forms {
 		const selected = form.selected.includes(choice) ? form.selected.filter((i) => i !== choice) : [...form.selected, choice];
 		await this.storage.put(formKey(id), { ...form, selected } satisfies PendingForm);
 		const labels = form.choices.map((c, i) => `${selected.includes(i) ? "☑" : "☐"} ${c.label}`);
-		if (w) await this.posts.show(w, form.text, false, { labels, multiple: true }).catch(() => {});
+		if (w) await this.posts.show(id, w, form.text, false, { labels, multiple: true }).catch(() => {});
 		return selected.length ? `Вибрано: ${selected.sort((a, b) => a - b).map((i) => form.choices[i].label).join(", ")}` : "Нічого не вибрано";
 	}
 }

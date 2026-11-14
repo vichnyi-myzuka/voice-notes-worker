@@ -27,7 +27,7 @@
 - [x] HTTP: одна функція для маршрутів OAuth замість трьох копій; прибрано дубль `/sw.js`; веб-запити (`POST /api/sessions`, `…/messages`) йдуть через чергу завдань (`begin`/`resume` без чату), як у чаті.
 - [x] `Computer`: підготовку тек і MCP-конфігів (`prepare`, `enableMcp`) винесено в `Workspace` (`workspace.ts`); ключі сховища контейнера — `computerKey` у `state.ts`.
 - [x] `Env` розділено на групи (`AccessEnv`, `ContainerEnv`, `ChatEnv`, `GithubEnv`, `PublishEnv`, `McpEnv` у `env.ts`); модулі просять лише свою групу.
-- `chat`: id сесії в кнопках не з URL, а явно.
+- [x] `chat`: id сесії в кнопках передається явно (`SessionLink { id, url }`), а не добувається з URL.
 - `application/` для агента: вибір репозиторію, моделі й MCP з `interface/telegram/handle.ts`.
 - Правило лінтера на напрямок шарів (`interface` не імпортує `infrastructure` напряму).
 - Шаблон report-site — тека з файлами замість heredoc у `new-report-site.sh`.

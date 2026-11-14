@@ -174,6 +174,7 @@ function setup(extraEnv: Record<string, string> = {}) {
 }
 
 const ID = "session-0001";
+const CHAT_ID = "tg-5-1"; // id сесії, створеної з чату
 
 beforeEach(() => vi.stubGlobal("scheduler", { wait: async () => {} }));
 
@@ -907,8 +908,8 @@ describe("AgentSession", () => {
 			const quotaHeaders = (status: string, util: string) => ({ "anthropic-ratelimit-unified-status": status, "anthropic-ratelimit-unified-5h-utilization": util, "anthropic-ratelimit-unified-5h-reset": "4102444800" });
 			const limited = async () => {
 				const t = setup({ BOT_TOKEN: "bot", CLAUDE_CODE_OAUTH_TOKEN: "tok" });
-				await t.session.start(ID, { prompt: "Задача" });
-				await t.session.watch(ID, { chatId: 5, url: "https://agent.example/s/tg-5-1" }); // кнопки беруть id з адреси `tg-…`
+				await t.session.start(CHAT_ID, { prompt: "Задача" }); // кнопки є лише в сесій із чату (id `tg-…`)
+				await t.session.watch(CHAT_ID, { chatId: 5, url: "https://agent.example/s/tg-5-1" });
 				await t.session.alarm();
 				t.opencode.busy.clear();
 				t.opencode.info[ocId] = { outcome: "failed" };
@@ -963,9 +964,9 @@ describe("AgentSession", () => {
 				expect([...plain.store.keys()].some((k) => k.startsWith("limit:"))).toBe(false);
 
 				const t = await limited();
-				expect(t.store.has(`limit:${ID}`)).toBe(true);
-				await t.session.followUp(ID, "продовжуй");
-				expect(t.store.has(`limit:${ID}`)).toBe(false);
+				expect(t.store.has(`limit:${CHAT_ID}`)).toBe(true);
+				await t.session.followUp(CHAT_ID, "продовжуй");
+				expect(t.store.has(`limit:${CHAT_ID}`)).toBe(false);
 			});
 		});
 

@@ -49,7 +49,7 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
 	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", ...on.map((name) => MCP_LABELS[name])].filter(Boolean).join("\n");
 	const header = (file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n") : `${moved ? `${clipped}\n\n` : ""}${where}`).trim();
-	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
+	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), { id, url }, "working", undefined, undefined, thread);
 	sw?.mark("post");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
 	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...Object.fromEntries(on.map((name) => [name, true])), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });

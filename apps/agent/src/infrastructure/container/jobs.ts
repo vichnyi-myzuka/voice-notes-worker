@@ -87,7 +87,7 @@ export class Jobs {
 		if (job.queuedAt && job.attempts === 0) console.log(`latency job ${job.id}: queued=${Date.now() - job.queuedAt}ms accepted=${stamp(job.queuedAt)} at=${stamp()} kind=${"input" in job ? "new" : "follow-up"} cold=${!this.runner.running()}`);
 		try {
 			if ("input" in job) {
-				if (!this.runner.running() && job.target) await this.posts.show(job.target, "⏳ Запускаю контейнер").catch(() => {});
+				if (!this.runner.running() && job.target) await this.posts.show(job.id, job.target, "⏳ Запускаю контейнер").catch(() => {});
 				await this.runner.start(job.id, job.input);
 			} else {
 				await this.runner.followUp(job.id, job.text, job.images);
@@ -107,7 +107,7 @@ export class Jobs {
 		if (await this.isCurrent(job)) await this.store.dropJob(job.id); // запущено: далі повтор уточнення чи старту не потрібен
 		if (!job.target) return; // запит з веб-API: чату, куди писати підсумок, немає
 		await this.runner.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
-		if ("input" in job) await this.posts.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
+		if ("input" in job) await this.posts.show(job.id, job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
 	}
 
 	// Чи запис черги досі той самий, що виконувався (уточнення, яке прийшло під час виконання, замінює запис новим queuedAt).
@@ -120,7 +120,7 @@ export class Jobs {
 		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
 		if (!job.target) return console.error(`job ${job.id} dropped after ${JOB_ATTEMPTS} attempts (no chat to report to)`);
 		if (!this.env.BOT_TOKEN) return;
-		if (job.target.postId && (await this.posts.show(job.target, text, true))) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
+		if (job.target.postId && (await this.posts.show(job.id, job.target, text, true))) return;
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, { id: job.id, url: job.target.url }, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
 	}
 }

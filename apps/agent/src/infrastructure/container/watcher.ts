@@ -151,10 +151,10 @@ export class Watcher {
 		const mergeable = check.ok;
 		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
 		if (limit) await this.limits.wait(id, w);
-		const shown = await this.posts.show(w, text, true, undefined, mergeable, limit);
+		const shown = await this.posts.show(id, w, text, true, undefined, mergeable, limit);
 		await this.progress.retitle(id, w, text);
 		// Поста немає (чи його видалили): підсумок окремим повідомленням з тими самими кнопками.
-		if (!shown) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, limit ? "retry" : mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
+		if (!shown) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, { id, url: w.url }, limit ? "retry" : mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
 	}
 
@@ -171,7 +171,7 @@ export class Watcher {
 		await this.store.saveWatch(id, { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);
 		await this.posts.mark(full, true);
 		await this.progress.icon(full, "working");
-		if (!target.postId && post) await this.posts.show(full, WORKING); // уточнення: пост знову показує «Працює»
+		if (!target.postId && post) await this.posts.show(id, full, WORKING); // уточнення: пост знову показує «Працює»
 		this.listen();
 		await this.computer.alarmNoLater(Date.now() + WATCH_INTERVAL_MS);
 	}
