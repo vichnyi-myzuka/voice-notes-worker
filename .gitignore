@@ -5,3 +5,4 @@ node_modules/
 .env
 !test-audio/*.m4a
 dist/
+apps/docs/web/src/generated.json
