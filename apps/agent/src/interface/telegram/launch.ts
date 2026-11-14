@@ -1,6 +1,7 @@
 import { tg, tgSendMessage, type BotEnv } from "@voice-notes/core";
 import { folderFor, type Agent, type ImageRef } from "../../domain/agent";
 import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, removeMessage, sendChat } from "../../infrastructure/chat";
+import { type Stopwatch } from "../../timing";
 import type { KnownRepo, Route } from "./repo";
 
 const POST_MAX = 3500; // запас до ліміту повідомлення Telegram (4096): решта — посилання
@@ -25,7 +26,7 @@ export type Pending = {
 };
 
 // Створює пост і сесію (тему в приватному чаті, пост із ⏳, begin в агента). repo — вибраний чи розпізнаний репозиторій.
-export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo: string | undefined): Promise<void> {
+export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo: string | undefined, sw?: Stopwatch): Promise<void> {
 	const { id, chat, messageId, inChannel, threadId, voice: file, image: hasImage, prompt, route, model, sure, silpo, calendar, images } = p;
 	console.log(`telegram ${chat}/${messageId}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo} calendar=${calendar}`);
 	const url = agent.url(id);
@@ -34,6 +35,7 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 	// Назва теми — семантична (від моделі), далі її оновлює агент, коли напрям розмови змінюється.
 	const title = route.title ?? route.name ?? prompt.replace(/\s+/g, " ").slice(0, 60);
 	const created = !inChannel && !threadId ? await createTopic(env, chat, title) : undefined;
+	sw?.mark("topic");
 	const thread = created ?? threadId;
 	// У каналі й у новій темі оригінал замінюється постом із задачею (як у нотатках), у приваті без теми оригінал лишається, тож задачу не дублюємо.
 	// Фото теж замінюється постом (підпис до нього — текст задачі в пості), тому вважається «перенесеним».
@@ -49,8 +51,10 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 		: `${moved ? `${clipped}\n\n` : ""}${where}`
 	).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
+	sw?.mark("post");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
 	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
+	sw?.mark("begin");
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
 	if (moved || file) await removeMessage(env, chat, messageId);
 	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).

@@ -1,5 +1,6 @@
 import type { ComputerInfo, ConnectionsInfo, SnapshotInfo } from "../../domain/agent";
 import type { Env } from "../../env";
+import { stopwatch } from "../../timing";
 import { parseConnections } from "./connections";
 import { READY_ATTEMPTS, containerEnv, inactivityMs, snapshotIntervalMs } from "./config";
 import { IMAGE_MAX_BYTES } from "./images";
@@ -73,6 +74,7 @@ export class Computer {
 		const container = this.ctx.container!;
 		const started = !container.running;
 		let restored = false;
+		const sw = stopwatch("container");
 		if (started) {
 			const saved = await this.ctx.storage.get<SavedSnapshot>("snapshot");
 			// Знімок відновлюємо завжди, навіть якщо образ відтоді змінився: він сам визначає файлову систему (старий образ піднімається
@@ -80,6 +82,7 @@ export class Computer {
 			restored = !!saved;
 			await this.launch(restored ? saved : undefined);
 		}
+		sw.mark("launch");
 		await container.setInactivityTimeout(inactivityMs(this.env));
 		try {
 			await this.waitReady(started && !restored);
@@ -93,7 +96,11 @@ export class Computer {
 			await container.setInactivityTimeout(inactivityMs(this.env));
 			await this.waitReady(true);
 		}
+		sw.mark("ready");
 		await this.syncPayload(started);
+		sw.mark("payload");
+		// Лише справжні холодні старти: для вже працюючого контейнера це рядок про кожен виклик, без користі.
+		if (started) sw.log({ source: restored ? "snapshot" : "image" });
 	}
 
 	// Розкладає в контейнер файли з payload/ (інструкції агента, publish, session-prep, git-хук): при кожному старті (знімок міг
