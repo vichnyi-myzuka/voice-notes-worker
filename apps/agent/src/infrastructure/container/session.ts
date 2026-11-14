@@ -1,28 +1,25 @@
 import { workersLlm } from "@voice-notes/core";
-import type { OAuthLogin } from "@voice-notes/oauth";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { MCP_LABELS, folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { removeTopic, renameTopic, sendChat, sendMcpQuestion, setTopicIcon, type Answers, type TopicState } from "../chat";
+import { folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { removeTopic, renameTopic, sendChat, setTopicIcon, type Answers, type TopicState } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
-import { requestedMcp } from "./mcp";
+import { Mcp, requestedMcp } from "./mcp";
 import { settedRepo } from "./repo";
-import { MCP_PROMPTS, refreshableMcp, type McpWanted } from "./payload";
 import { stamp, stopwatch } from "../../timing";
 import { JOB_ATTEMPTS, JOB_RETRY_MS, JOB_STALE_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { Forms } from "./forms";
 import { extractImages, loadImages, sendImages, type OutImage } from "./images";
 import { describeCall, narrate, remember } from "./narrate";
-import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, putMcp, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
+import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { DEPLOY_ICON, Posts } from "./posts";
-import { calendarLogin, cloudflareLogin, silpoLogin } from "./logins";
 import { retitle } from "./title";
 import { isLimitError } from "../quota";
 import { WebProxy } from "./proxy";
-import { sessionDir, FORM_PREFIX, deployKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
+import { FORM_PREFIX, deployKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
 import { SessionStore } from "./store";
 import { Limits } from "./limits";
 
@@ -39,9 +36,7 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly store: SessionStore;
 	private readonly limits: Limits;
 	private readonly proxy: WebProxy;
-	private readonly silpo: OAuthLogin;
-	private readonly calendar: OAuthLogin;
-	private readonly cloudflare: OAuthLogin;
+	private readonly mcp: Mcp;
 	// Підписка на події OpenCode, поки за якоюсь сесією стежать (див. listen).
 	private events: AbortController | undefined;
 	// Назви інструментів за id виклику й час останнього оновлення поста сесії.
@@ -52,8 +47,6 @@ export class AgentSession extends DurableObject<Env> {
 	private narration = new Map<string, string>();
 	// Останнє уточнення власника за id сесії: з ним модель вирішує, чи змінився напрям розмови (назва теми).
 	private asks = new Map<string, string>();
-	// Запити MCP, на які власник ще не відповів («<id сесії>:<сервіс>»): повторний запит агента не дублює кнопки.
-	private mcpAsked = new Set<string>();
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -63,9 +56,7 @@ export class AgentSession extends DurableObject<Env> {
 		this.posts = new Posts(ctx.storage, env, this.store);
 		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
 		this.proxy = new WebProxy(ctx, env, this.computer);
-		this.silpo = silpoLogin(ctx.storage);
-		this.calendar = calendarLogin(ctx.storage, { id: env.GOOGLE_CLIENT_ID, secret: env.GOOGLE_CLIENT_SECRET });
-		this.cloudflare = cloudflareLogin(ctx.storage);
+		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, (id, tracked, text) => this.tell(id, tracked, text));
 		this.computer.applyInactivityTimeout();
 	}
 
@@ -197,39 +188,39 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Контейнер: знімки, скидання, діагностика (див. Computer).
 	silpoLoginUrl(origin: string): Promise<string> {
-		return this.silpo.loginUrl(origin);
+		return this.mcp.silpo.loginUrl(origin);
 	}
 
 	silpoCallback(code: string, state: string): Promise<boolean> {
-		return this.silpo.callback(code, state);
+		return this.mcp.silpo.callback(code, state);
 	}
 
 	silpoConnected(): Promise<boolean> {
-		return this.silpo.connected();
+		return this.mcp.silpo.connected();
 	}
 
 	calendarLoginUrl(origin: string): Promise<string> {
-		return this.calendar.loginUrl(origin);
+		return this.mcp.calendar.loginUrl(origin);
 	}
 
 	calendarCallback(code: string, state: string): Promise<boolean> {
-		return this.calendar.callback(code, state);
+		return this.mcp.calendar.callback(code, state);
 	}
 
 	calendarConnected(): Promise<boolean> {
-		return this.calendar.connected();
+		return this.mcp.calendar.connected();
 	}
 
 	cloudflareLoginUrl(origin: string): Promise<string> {
-		return this.cloudflare.loginUrl(origin);
+		return this.mcp.cloudflare.loginUrl(origin);
 	}
 
 	cloudflareCallback(code: string, state: string): Promise<boolean> {
-		return this.cloudflare.callback(code, state);
+		return this.mcp.cloudflare.callback(code, state);
 	}
 
 	cloudflareConnected(): Promise<boolean> {
-		return this.cloudflare.connected();
+		return this.mcp.cloudflare.connected();
 	}
 
 	snapshot(): Promise<SnapshotInfo> {
@@ -326,38 +317,6 @@ export class AgentSession extends DurableObject<Env> {
 		}
 	}
 
-	// Токени запитаних сервісів для конфігу теки (без входу токена немає: сервер не підключається). Короткі, тож беремо свіжі щоразу.
-	private async mcpWanted(flags: Partial<Record<McpName, boolean>>): Promise<McpWanted> {
-		return {
-			sure: flags.sure,
-			silpo: flags.silpo ? (await this.silpo.accessToken())?.access : undefined,
-			calendar: flags.calendar ? await this.calendar.accessToken() : undefined,
-			cloudflare: flags.cloudflare ? (await this.cloudflare.accessToken())?.access : undefined,
-		};
-	}
-
-	// Свіжі токени Сільпо й Cloudflare — у запущений OpenCode (PUT замінює сервер і одразу перепідключає його): файл конфігу він
-	// після старту не перечитує, тож без цього прострочений токен давав 401 до нової сесії. Збій не фатальний: лише лог.
-	private readonly pushedMcp = new Map<string, string>(); // що вже передано в OpenCode: тека:сервер → конфіг (у пам'яті; після вивантаження один зайвий PUT нешкідливий)
-
-	private async refreshMcp(id: string, tracked: Tracked, directory?: string): Promise<void> {
-		if (!tracked.silpo && !tracked.cloudflare) return;
-		try {
-			const dir = directory ?? sessionDir(tracked.folder ?? id);
-			const servers = refreshableMcp(await this.mcpWanted({ silpo: tracked.silpo, cloudflare: tracked.cloudflare }));
-			for (const [name, config] of Object.entries(servers)) {
-				// Токен живе близько години, а оновлюється за 5 хвилин до кінця: більшість повідомлень лишаються з тим самим, тоді PUT не потрібен.
-				const key = `${dir}:${name}`;
-				const body = JSON.stringify(config);
-				if (this.pushedMcp.get(key) === body) continue;
-				await putMcp(this.opencode(), name, dir, config);
-				this.pushedMcp.set(key, body);
-			}
-		} catch (err) {
-			console.error(`mcp refresh ${id} failed:`, err);
-		}
-	}
-
 	// Ідемпотентно за id: повторний виклик не створює другу сесію OpenCode й не готує теку вдруге.
 	async start(id: string, input: StartInput): Promise<{ sessionId: string }> {
 		const sw = stopwatch(`session ${id} start`);
@@ -369,19 +328,14 @@ export class AgentSession extends DurableObject<Env> {
 			const again = await this.store.session(id);
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
-			const { silpo, calendar, cloudflare } = await this.mcpWanted(input);
+			const { silpo, calendar, cloudflare } = await this.mcp.wanted(input);
 			sw.mark("queue");
 			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar, cloudflare });
 			sw.mark("prepare");
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
 			sw.mark("create");
 			await this.store.saveSession(id, { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(silpo && { silpo: true }), ...(calendar && { calendar: true }), ...(cloudflare && { cloudflare: true }) } satisfies Tracked);
-			// Сільпо просили, а входу немає (чи токен не оновився): агент скаже про це власнику замість мовчазної відсутності інструментів.
-			const notes = [
-				input.silpo && !silpo && "MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.",
-				input.calendar && !calendar && "MCP Google Calendar не підключено, бо власник ще не ввійшов у Google. Скажи йому відкрити сторінку /calendar/login на адресі агента (де веб-інтерфейс), увійти й повторити задачу. Не вигадуй подій.",
-				input.cloudflare && !cloudflare && "MCP Cloudflare не підключено, бо власник ще не ввійшов у Cloudflare. Скажи йому відкрити сторінку /cloudflare/login на адресі агента (де веб-інтерфейс), увійти й повторити задачу. Не вигадуй стану акаунта.",
-			].filter(Boolean);
+			const notes = Mcp.missing(input, { silpo, calendar, cloudflare });
 			await prompt(this.opencode(), ocId, notes.length ? `${input.prompt}\n\n(Системна примітка: ${notes.join(" ")})` : input.prompt, await this.images(input.images));
 			sw.mark("prompt");
 			sw.log({ repo: input.repo ?? "-" });
@@ -398,12 +352,12 @@ export class AgentSession extends DurableObject<Env> {
 		let ocId = tracked.ocId;
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, await this.mcpWanted(tracked));
+				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, await this.mcp.wanted(tracked));
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.store.saveSession(id, { ...tracked, ocId } satisfies Tracked);
 		}
-		await this.refreshMcp(id, tracked);
+		await this.mcp.refresh(id, tracked);
 		this.asks.set(id, text);
 		await this.limits.forget(id);
 		await this.forms.cancel(id, text); // текст замість кнопки: відкрите питання не чекає далі
@@ -591,7 +545,7 @@ export class AgentSession extends DurableObject<Env> {
 			const tool = this.toolNames.get(event.data.id) ?? "";
 			if (tool) this.recent.set(ocId, remember(this.recent.get(ocId) ?? [], describeCall(tool, event.data.input)));
 			const wanted = (tool === "bash" || tool === "shell") ? requestedMcp(event.data.input) : undefined;
-			if (wanted) await this.requestMcp(ocId, wanted).catch((err) => console.error("mcp request failed:", err));
+			if (wanted) await this.mcp.request(ocId, wanted).catch((err) => console.error("mcp request failed:", err));
 			const repo = (tool === "bash" || tool === "shell") ? settedRepo(event.data.input) : undefined;
 			if (repo) await this.adoptRepo(ocId, repo).catch((err) => console.error("set-repo failed:", err));
 			return this.progress(ocId, tool, event.data.input);
@@ -623,44 +577,9 @@ export class AgentSession extends DurableObject<Env> {
 		await this.store.saveSession(found[0], { ...found[1], repo });
 	}
 
-	// Агент просить підключити MCP (команда request-mcp): власнику йдуть кнопки в тему сесії. Підключене вже, невідоме чи без поста в чаті — ігноруємо.
-	private async requestMcp(ocId: string, name: McpName): Promise<void> {
-		if (!this.env.BOT_TOKEN) return;
-		const found = await this.store.sessionByOc(ocId);
-		const post = found?.[1].post;
-		if (!found || !post?.chatId || found[1][name]) return;
-		const [id] = found;
-		if (this.mcpAsked.has(`${id}:${name}`)) return;
-		this.mcpAsked.add(`${id}:${name}`);
-		await sendMcpQuestion({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, id, name, `🔌 Агентові потрібен доступ до ${MCP_LABELS[name]}. Підключити до цієї сесії?`);
-	}
-
-	// Відповідь власника на запит MCP. Підключення — це запис сервера в конфіг теки сесії: OpenCode підхоплює його наживо (перевірено:
-	// сервер з'являється в /api/mcp за кілька секунд без перезапуску), тож сесія й її історія лишаються. Агента про результат
-	// повідомляє нове повідомлення в сесію (як уточнення; для підключеного — разом з інструкціями сервісу).
-	async answerMcp(id: string, name: McpName, allow: boolean): Promise<McpAnswer> {
-		const tracked = await this.store.session(id);
-		if (!tracked) throw new Error(`unknown session ${id}`);
-		this.mcpAsked.delete(`${id}:${name}`);
-		if (!allow) {
-			await this.tell(id, tracked, `The owner declined to connect the ${name} MCP. Continue without it and do not invent data from it.`);
-			return "declined";
-		}
-		if (name === "sure" && !(this.env.SURE_MCP_URL && this.env.SURE_MCP_TOKEN)) {
-			await this.tell(id, tracked, "The sure MCP is not configured on the worker, so it cannot be connected. Continue without it and do not invent data from it.");
-			return "unavailable";
-		}
-		const wanted = await this.mcpWanted({ ...tracked, [name]: true });
-		if (name !== "sure" && !wanted[name]) {
-			await this.tell(id, tracked, `The ${name} MCP is not connected because the owner has not logged in to it yet. Tell them to open /${name}/login on the agent address, log in, and repeat the request. Do not invent data.`);
-			return "login";
-		}
-		await this.computer.ensureRunning();
-		const directory = await this.computer.serial(() => this.computer.prepare(tracked.folder ?? id, tracked.repo, wanted));
-		await this.refreshMcp(id, { ...tracked, [name]: true }, directory); // файл OpenCode наживо не перечитує: сервер вносимо явно
-		await this.store.saveSession(id, { ...tracked, [name]: true } satisfies Tracked);
-		await this.tell(id, tracked, `The owner connected the ${name} MCP: its tools (names start with \`${name}_\`) are available from this step on. Continue the task. Instructions for this service:\n\n${MCP_PROMPTS[name]}`);
-		return "connected";
+	// Відповідь власника на запит MCP (див. Mcp.answer).
+	answerMcp(id: string, name: McpName, allow: boolean): Promise<McpAnswer> {
+		return this.mcp.answer(id, name, allow);
 	}
 
 	// Повідомлення агентові від воркера: як уточнення від власника (job: сесія прокидається, а пост знову показує «Працює»).
