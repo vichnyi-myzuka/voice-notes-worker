@@ -112,7 +112,16 @@ export class AgentSession extends DurableObject<Env> {
 
 		for (const ocId of active) {
 			if (!byOc.has(ocId)) await this.watchPrompted(ocId).catch((err) => console.error("rewatch failed:", err)); // працює без стеження (страховка до подій)
-			const info = await getSession(oc, ocId);
+			// Сесія ще в списку активних, але її вже немає: пропускаємо, інакше кожен alarm падав би в 404 і повторювався.
+			const info = await getSession(oc, ocId).catch((err) => {
+				if (!String(err).includes("SessionNotFoundError")) throw err;
+				console.error(`active session ${ocId} is gone, skipping`);
+				return undefined;
+			});
+			if (!info) {
+				active.delete(ocId); // нижче її стеження знімається через summary (там теж 404)
+				continue;
+			}
 			const tokens = totalTokens(info);
 			const over = (info.cost ?? 0) > maxCost ? `вартість $${(info.cost ?? 0).toFixed(2)} (ліміт $${maxCost})` : tokens > tokenLimit ? `${tokens} токенів (ліміт ${tokenLimit})` : "";
 			const watched = byOc.get(ocId);
