@@ -1,4 +1,5 @@
 import { workersLlm } from "@voice-notes/core";
+import type { OAuthLogin } from "@voice-notes/oauth";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import { folderFor, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
@@ -13,8 +14,7 @@ import { extractImages, loadImages, sendImages, type OutImage } from "./images";
 import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./posts";
-import { Calendar } from "./calendar";
-import { Silpo } from "./silpo";
+import { calendarLogin, silpoLogin } from "./logins";
 import { retitle } from "./title";
 import { WebProxy } from "./proxy";
 import { WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
@@ -30,8 +30,8 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly posts: Posts;
 	private readonly forms: Forms;
 	private readonly proxy: WebProxy;
-	private readonly silpo: Silpo;
-	private readonly calendar: Calendar;
+	private readonly silpo: OAuthLogin;
+	private readonly calendar: OAuthLogin;
 	// Підписка на події OpenCode, поки за якоюсь сесією стежать (див. listen).
 	private events: AbortController | undefined;
 	// Назви інструментів за id виклику й час останнього оновлення поста сесії.
@@ -49,8 +49,8 @@ export class AgentSession extends DurableObject<Env> {
 		this.posts = new Posts(ctx.storage, env);
 		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
 		this.proxy = new WebProxy(ctx, env, this.computer);
-		this.silpo = new Silpo(ctx.storage);
-		this.calendar = new Calendar(ctx.storage, { id: env.GOOGLE_CLIENT_ID, secret: env.GOOGLE_CLIENT_SECRET });
+		this.silpo = silpoLogin(ctx.storage);
+		this.calendar = calendarLogin(ctx.storage, { id: env.GOOGLE_CLIENT_ID, secret: env.GOOGLE_CLIENT_SECRET });
 		this.computer.applyInactivityTimeout();
 	}
 
@@ -269,7 +269,7 @@ export class AgentSession extends DurableObject<Env> {
 			const again = await this.ctx.storage.get<Tracked>(sessionKey(id));
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
-			const silpo = input.silpo ? await this.silpo.accessToken() : undefined;
+			const silpo = input.silpo ? (await this.silpo.accessToken())?.access : undefined;
 			const calendar = input.calendar ? await this.calendar.accessToken() : undefined;
 			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar });
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
@@ -293,7 +293,7 @@ export class AgentSession extends DurableObject<Env> {
 		let ocId = tracked.ocId;
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
-				const silpo = tracked.silpo ? await this.silpo.accessToken() : undefined;
+				const silpo = tracked.silpo ? (await this.silpo.accessToken())?.access : undefined;
 				const calendar = tracked.calendar ? await this.calendar.accessToken() : undefined;
 				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo, calendar });
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));

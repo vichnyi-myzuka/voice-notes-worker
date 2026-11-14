@@ -1,5 +1,5 @@
 import type { BotEnv, TelegramEnv } from "./env";
-import { tg, tgSendMessage } from "./api";
+import { downloadTelegramFile, tg, tgSendMessage } from "./api";
 import type { StoreMessage, TgMessage } from "./types";
 
 export const DOWNLOAD_MAX_BYTES = 20_000_000; // ліміт Bot API на getFile
@@ -68,16 +68,14 @@ export async function receiveTelegramMessage(
 	}
 
 	try {
-		const info = await tg(env, "getFile", { file_id: file.file_id });
-		const res = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${info.file_path}`);
-		if (!res.ok) throw new Error(`download ${res.status}`);
+		const { data, path } = await downloadTelegramFile(env, file.file_id);
 		const kind = photo ? "photo" : msg.voice ? "voice" : "audio";
 		// Фото в Telegram завжди JPEG.
 		const contentType = photo ? "image/jpeg" : (file.mime_type ?? (kind === "voice" ? "audio/ogg" : "audio/mp4"));
-		const ext = photo ? "jpg" : kind === "voice" ? "ogg" : (info.file_path.split(".").pop() ?? "audio");
+		const ext = photo ? "jpg" : kind === "voice" ? "ogg" : (path.split(".").pop() ?? "audio");
 		// Ключ починається з часу запису (msg.date), як і для шорткату.
 		const key = `${msg.date * 1000}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
-		const accepted = await store(key, await res.arrayBuffer(), {
+		const accepted = await store(key, data, {
 			contentType,
 			fileId: file.file_id,
 			kind,

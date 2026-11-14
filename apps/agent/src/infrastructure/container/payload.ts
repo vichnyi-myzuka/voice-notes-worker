@@ -8,8 +8,8 @@ import reportSiteSkill from "../../../payload/report-site-skill.md";
 import sessionPrep from "../../../payload/session-prep.sh";
 import silpoAgent from "../../../payload/silpo-agent.md";
 import sureAgent from "../../../payload/sure-agent.md";
-import type { CalendarToken } from "./calendar";
-import { SILPO_MCP_URL } from "./silpo";
+import type { OAuthToken } from "@voice-notes/oauth";
+import { SILPO_MCP_URL } from "./logins";
 
 // Файли, які воркер розкладає в контейнер сам (а не кладе в образ): вони змінюються часто, і від цього не мають скидатися знімки
 // та історія сесій. Нові сесії одразу працюють з актуальними версіями; старі сесії зберігають своє.
@@ -60,18 +60,18 @@ export const PAYLOAD_HASH = (() => {
 export const WRITER = `const fs=require("fs"),path=require("path");for(const f of JSON.parse(process.env.PAYLOAD)){fs.mkdirSync(path.dirname(f.path),{recursive:true});fs.writeFileSync(f.path,f.content);fs.chmodSync(f.path,parseInt(f.mode,8))}`;
 
 // MCP-сервери, які сесії підключає власник (див. prepare у computer.ts): sure — фінанси, silpo — покупки в Сільпо, calendar — Google Calendar.
-// silpo і calendar — короткі access-токени (їх видають Silpo.accessToken і Calendar.accessToken); без токена сервер не підключається.
-export type McpWanted = { sure?: boolean; silpo?: string; calendar?: CalendarToken };
+// silpo і calendar — короткі access-токени (їх видають OAuthLogin.accessToken); без токена сервер не підключається.
+export type McpWanted = { sure?: boolean; silpo?: string; calendar?: OAuthToken };
 
 // Google Calendar: готовий відкритий MCP-сервер (nspady/google-calendar-mcp, MIT), який OpenCode запускає в контейнері по stdio.
 // Версія збігається з ARG CALENDAR_MCP_VERSION в container/Dockerfile; у образі пакет уже встановлено, а в старому (знімок до оновлення
-// образу) сервер тягнеться через npx. Вхід у Google робить воркер (calendar.ts): сервер отримує лише access-токен у `tokens.json`
+// образу) сервер тягнеться через npx. Вхід у Google робить воркер (logins.ts): сервер отримує лише access-токен у `tokens.json`
 // і заглушку замість client id/secret (без refresh-токена він сам нічого не оновлює). `manage-accounts` вимкнено: входом керує воркер.
 export const CALENDAR_MCP_VERSION = "2.8.1";
 const CALENDAR_TOOLS = "list-calendars,list-events,search-events,get-event,list-colors,create-event,create-events,update-event,delete-event,get-freebusy,get-current-time,respond-to-event";
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
 
-function calendarFiles(dir: string, token: CalendarToken): { server: unknown; files: PayloadFile[] } {
+function calendarFiles(dir: string, token: OAuthToken): { server: unknown; files: PayloadFile[] } {
 	const base = `${dir}/.opencode/calendar`;
 	const keys = { installed: { client_id: "managed-by-worker", client_secret: "unused", redirect_uris: ["http://localhost:3000/oauth2callback"] } };
 	const tokens = { normal: { access_token: token.access, token_type: "Bearer", scope: CALENDAR_SCOPE, expiry_date: token.expiresAt } };

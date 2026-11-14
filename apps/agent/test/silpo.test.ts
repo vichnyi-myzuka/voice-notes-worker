@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Silpo } from "../src/infrastructure/container/silpo";
+import { silpoLogin } from "../src/infrastructure/container/logins";
 
 function memory() {
 	const store = new Map<string, unknown>();
@@ -22,7 +22,7 @@ describe("Silpo (OAuth для MCP)", () => {
 	it("вхід: реєструє клієнта, дає адресу з PKCE; повернення з чужим state відхиляється, зі своїм — зберігає токени", async () => {
 		const calls = fakeSilpo(() => Response.json({ access_token: "acc", refresh_token: "ref", expires_in: 3600 }));
 		const { storage } = memory();
-		const silpo = new Silpo(storage);
+		const silpo = silpoLogin(storage);
 		const url = new URL(await silpo.loginUrl("https://agent.example"));
 		expect(url.origin + url.pathname).toBe("https://mcp.silpo.ua/authorize");
 		expect(url.searchParams.get("client_id")).toBe("cid");
@@ -36,13 +36,13 @@ describe("Silpo (OAuth для MCP)", () => {
 		const exchange = new URLSearchParams(calls[1].body);
 		expect(exchange.get("grant_type")).toBe("authorization_code");
 		expect(exchange.get("code_verifier")).toBeTruthy();
-		expect(await silpo.accessToken()).toBe("acc");
+		expect(await silpo.accessToken()).toMatchObject({ access: "acc" });
 		expect(await silpo.callback("code", url.searchParams.get("state")!)).toBe(false); // state одноразовий
 	});
 
 	it("клієнта не реєструє повторно, поки адреса воркера та сама", async () => {
 		const calls = fakeSilpo(() => Response.json({}));
-		const silpo = new Silpo(memory().storage);
+		const silpo = silpoLogin(memory().storage);
 		await silpo.loginUrl("https://agent.example");
 		await silpo.loginUrl("https://agent.example");
 		expect(calls.filter((c) => c.url.endsWith("/register"))).toHaveLength(1);
@@ -53,22 +53,22 @@ describe("Silpo (OAuth для MCP)", () => {
 	it("токен, що скоро спливе, оновлює через refresh_token і зберігає новий; без входу чи при збої refresh — undefined", async () => {
 		let reply = () => Response.json({ access_token: "acc1", refresh_token: "ref1", expires_in: 60 });
 		const calls = fakeSilpo(() => reply());
-		const silpo = new Silpo(memory().storage);
+		const silpo = silpoLogin(memory().storage);
 		expect(await silpo.accessToken()).toBeUndefined();
 		const state = new URL(await silpo.loginUrl("https://agent.example")).searchParams.get("state")!;
 		await silpo.callback("c", state); // expires_in 60 с: уже в межах запасу
 
 		reply = () => Response.json({ access_token: "acc2", expires_in: 3600 }); // refresh_token не ротується
-		expect(await silpo.accessToken()).toBe("acc2");
+		expect(await silpo.accessToken()).toMatchObject({ access: "acc2" });
 		expect(new URLSearchParams(calls.at(-1)!.body).get("refresh_token")).toBe("ref1");
-		expect(await silpo.accessToken()).toBe("acc2"); // свіжий: без нового запиту
+		expect(await silpo.accessToken()).toMatchObject({ access: "acc2" }); // свіжий: без нового запиту
 		expect(calls.filter((c) => c.url.endsWith("/token"))).toHaveLength(2);
 	});
 
 	it("збій refresh дає undefined, а не виняток", async () => {
 		let reply = () => Response.json({ access_token: "a", refresh_token: "r", expires_in: 1 });
 		fakeSilpo(() => reply());
-		const silpo = new Silpo(memory().storage);
+		const silpo = silpoLogin(memory().storage);
 		await silpo.callback("c", new URL(await silpo.loginUrl("https://agent.example")).searchParams.get("state")!);
 		reply = () => new Response("no", { status: 400 });
 		vi.spyOn(console, "error").mockImplementation(() => {});

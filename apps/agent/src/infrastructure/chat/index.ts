@@ -1,57 +1,10 @@
-import { tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes/core";
+import { NO_PREVIEW, tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes/core";
+import { chatHtml, escapeHtml, stripQuote, tablesToCards } from "@voice-notes/telegram-format";
 import { callback } from "./callback";
-import { tablesToCards } from "./tables";
 
+export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
 export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
 export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
-
-const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-// Короткий підпис для посилання: GitHub PR/issue → `owner/repo#13`, решта — адреса без протоколу, слеша й надто довгого хвоста.
-function label(url: string): string {
-	const gh = /^https?:\/\/github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)/.exec(url);
-	if (gh) return `${gh[1]}#${gh[2]}`;
-	const bare = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
-	return bare.length > 40 ? `${bare.slice(0, 39)}…` : bare;
-}
-
-// Текст агента (звичайний Markdown) → HTML Telegram: **жирний**, `код`, [текст](url), заголовки, списки; голі URL стають
-// клікабельними з коротким підписом; таблиці (їх Telegram не вміє) стають списками-картками (див. tables.ts).
-// Усе інше екранується, тож HTML від моделі не потрапляє в розмітку.
-export function chatHtml(text: string): string {
-	// Фрагменти між QUOTE_OPEN і QUOTE_CLOSE — згорнута цитата (розшифровка голосового); решта — звичайний текст.
-	return tablesToCards(text)
-		.split(/\uE000([^\uE001]*)\uE001/)
-		.map((part, i) => (i % 2 ? `<blockquote expandable>${inline(part)}</blockquote>` : inline(part)))
-		.join("");
-}
-
-// Маркери згорнутої цитати в тексті шапки (символи приватної зони Unicode, у тексті агента не трапляються).
-export const QUOTE_OPEN = "\uE000";
-export const QUOTE_CLOSE = "\uE001";
-const stripQuote = (s: string) => s.replace(/[\uE000\uE001]/g, "");
-
-function inline(text: string): string {
-	return escape(text)
-		.split(/(`[^`\n]+`)/)
-		.map((part, i) => {
-			if (i % 2) return `<code>${part.slice(1, -1)}</code>`;
-			const marked = part
-				.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>")
-				.replace(/^(\s*)[-*]\s+/gm, "$1• ")
-				.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
-				.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2">$1</a>');
-			// Голі URL: уже готові <a>…</a> пропускаємо; крапка чи кома в кінці речення до адреси не належить.
-			return marked.replace(/(<a href="[^"]*">[^<]*<\/a>)|(https?:\/\/[^\s<>"]+)/g, (m, anchor: string | undefined, url: string | undefined) => {
-				if (anchor || !url) return m;
-				const clean = url.replace(/[.,;:!?)]+$/, "");
-				return `<a href="${clean}">${escape(label(clean.replace(/&amp;/g, "&")))}</a>${url.slice(clean.length)}`;
-			});
-		})
-		.join("");
-}
-
-const NO_PREVIEW = { is_disabled: true }; // без карток сторінок (вони за Access)
 
 // Кнопки під постом сесії: поки агент працює — «Стоп» і «Видалити», після завершення — лише «Видалити». Id сесії береться з її
 // посилання (…/s/<id>), у callback_data лежить `<дія>:<id>` (обробляє interface/telegram). Редагування без reply_markup кнопки
@@ -82,7 +35,7 @@ function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, 
 // Текст повідомлення в двох видах: HTML і простий (запасний, якщо Telegram відхилить розмітку). Внизу, за потреби,
 // посилання на сесію («🔗 Відкрити сесію»).
 function render(text: string, sessionUrl?: string): { html: string; plain: string } {
-	const tail = (html: boolean) => (sessionUrl ? `${text ? "\n\n" : ""}🔗 ${html ? `<a href="${escape(sessionUrl)}">Відкрити сесію</a>` : sessionUrl}` : "");
+	const tail = (html: boolean) => (sessionUrl ? `${text ? "\n\n" : ""}🔗 ${html ? `<a href="${escapeHtml(sessionUrl)}">Відкрити сесію</a>` : sessionUrl}` : "");
 	return { html: `${chatHtml(text)}${tail(true)}`, plain: `${stripQuote(tablesToCards(text))}${tail(false)}` };
 }
 

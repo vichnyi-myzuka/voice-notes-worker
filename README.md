@@ -17,6 +17,8 @@ Telegram ──відповідь (голос/текст) на нотатку─
 ```
 packages/core/        спільне ядро, імпортується як `@voice-notes/core` (лише через `src/index.ts`):
                        порти Channel і Llm, JSON-типи, адаптери Telegram і Llm (Workers AI / OpenAI), openSteps, safeEqual
+packages/oauth/       `@voice-notes/oauth`: вхід OAuth 2.0 (code + PKCE, статичний чи динамічний клієнт, оновлення токена) з токенами в Durable Object; використовує агент (Сільпо, Google Calendar)
+packages/telegram-format/  `@voice-notes/telegram-format`: Markdown → HTML Telegram (chatHtml), таблиці → картки, згорнута цитата; чиста логіка без мережі
 apps/agent/            воркер агента (прототип): сесії OpenCode у контейнерах Cloudflare, див. [docs/agent.md](docs/agent.md)
 apps/notes/            воркер нотаток (цей бот); команди wrangler запускай із цієї теки
 apps/notes/wrangler.toml  bindings: R2, Queue producer/consumer, DLQ, AI; vars TIMEZONE

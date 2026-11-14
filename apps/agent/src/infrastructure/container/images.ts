@@ -1,4 +1,4 @@
-import { tg, type BotEnv } from "@voice-notes/core";
+import { downloadTelegramFile, tg, type BotEnv } from "@voice-notes/core";
 import type { ImageRef } from "../../domain/agent";
 import type { PromptFile } from "./opencode";
 
@@ -20,11 +20,9 @@ function toBase64(buf: ArrayBuffer): string {
 export async function loadImages(env: BotEnv, refs: ImageRef[]): Promise<PromptFile[]> {
 	const files: PromptFile[] = [];
 	for (const [i, ref] of refs.entries()) {
-		const info = await tg(env, "getFile", { file_id: ref.fileId });
-		const res = await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${info.file_path}`);
-		if (!res.ok) throw new Error(`image download ${res.status}`);
+		const { data } = await downloadTelegramFile(env, ref.fileId);
 		const ext = ref.mime.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
-		files.push({ uri: `data:${ref.mime};base64,${toBase64(await res.arrayBuffer())}`, name: `telegram-${i + 1}.${ext}` });
+		files.push({ uri: `data:${ref.mime};base64,${toBase64(data)}`, name: `telegram-${i + 1}.${ext}` });
 	}
 	return files;
 }
