@@ -1,9 +1,11 @@
 import { tg } from "@voice-notes/core";
 import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../domain/agent";
 import type { Env } from "../../env";
-import { QUOTE_CLOSE, QUOTE_OPEN, editChat, sendChat, setTopicIcon, showKeys, threadUi, type Answers, type KeyState, type Buttons, type TopicState } from "../chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, editChat, sendChat, setTopicIcon, showKeys, threadUi, type Answers, type KeySet, type KeyState, type KeyView, type Buttons, type TopicState } from "../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "./config";
 import { SESSION_PREFIX, deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
+
+type KeysShown = { state: KeyState; view?: KeyView; messageId?: number };
 
 // Іконка теми за стадією деплою.
 export const DEPLOY_ICON: Record<DeployStage, TopicState> = { approval: "approval", deploying: "deploying", deployed: "deployed", failed: "deployFailed" };
@@ -50,15 +52,29 @@ export class Posts {
 		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.url, buttons, answers, review);
 	}
 
-	// Клавіші внизу теми за станом сесії (лише режим messages; повтор того ж стану нічого не шле). Збій не критичний.
+	// Клавіші внизу теми за станом сесії (лише режим messages; повтор того ж стану нічого не шле, але з екрана команд повертає до дій сесії).
+	// Збій не критичний.
 	async keys(w: { chatId: number; threadId?: number }, state: KeyState): Promise<void> {
 		const set = w.threadId && this.env.BOT_TOKEN ? (await threadUi(this.env, true)).keys(state) : undefined;
 		if (!set || !w.threadId) return;
-		const key = `keys:${w.chatId}:${w.threadId}`;
-		const last = await this.storage.get<{ state: KeyState; messageId?: number }>(key);
-		if (last?.state === state) return;
+		const last = await this.storage.get<KeysShown>(`keys:${w.chatId}:${w.threadId}`);
+		if (last?.state === state && last.view !== "commands") return;
+		await this.drawKeys({ chatId: w.chatId, threadId: w.threadId }, set, state, "session", last);
+	}
+
+	// Перемикає клавіші внизу теми між діями сесії й екраном загальних команд («⚙️ Команди» / «← Назад»).
+	async keyView(w: { chatId: number; threadId?: number }, view: KeyView): Promise<void> {
+		if (!w.threadId || !this.env.BOT_TOKEN) return;
+		const ui = await threadUi(this.env, true);
+		const last = await this.storage.get<KeysShown>(`keys:${w.chatId}:${w.threadId}`);
+		const state = last?.state ?? "done";
+		const set = view === "commands" ? ui.commands() : ui.keys(state);
+		if (set) await this.drawKeys({ chatId: w.chatId, threadId: w.threadId }, set, state, view, last);
+	}
+
+	private async drawKeys(w: { chatId: number; threadId: number }, set: KeySet, state: KeyState, view: KeyView, last?: KeysShown): Promise<void> {
 		const messageId = await showKeys({ BOT_TOKEN: this.env.BOT_TOKEN! }, w.chatId, w.threadId, set, last?.messageId);
-		await this.storage.put(key, { state, ...(messageId && { messageId }) });
+		await this.storage.put(`keys:${w.chatId}:${w.threadId}`, { state, view, ...(messageId && { messageId }) } satisfies KeysShown);
 	}
 
 	// Ставить правку в чергу після попередніх; спостереження могло закінчитись, поки чекали, тож працю виконує викликач.

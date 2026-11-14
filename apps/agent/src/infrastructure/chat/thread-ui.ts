@@ -6,9 +6,12 @@ import type { Buttons } from "./index";
 
 // Стан сесії для клавіш внизу теми: працює, завершилась, завершилась і є PR для мерджу, впала на лімітах.
 export type KeyState = "working" | "done" | "mergeable" | "retry" | "approval";
-export type SessionKey = "stop" | "merge" | "retry" | "del" | "approve" | "reject";
+export type SessionKey = "stop" | "merge" | "retry" | "del" | "approve" | "reject" | "commands" | "back" | "quota" | "status" | "update";
+// Рядки клавіш одного набору.
+export type KeySet = { label: string; keys: SessionKey[][] };
+export type KeyView = "session" | "commands";
 // Підписи клавіш: їх натискання надходить у тему як звичайний текст (див. interface/telegram/keys.ts).
-export const KEYS: Record<SessionKey, string> = { stop: "⏹ Стоп", merge: "🔀 Змерджити", retry: "🔄 Повторити", del: "🗑 Видалити", approve: "✅ Схвалити", reject: "❌ Відхилити" };
+export const KEYS: Record<SessionKey, string> = { stop: "⏹ Стоп", merge: "🔀 Змерджити", retry: "🔄 Повторити", del: "🗑 Видалити", approve: "✅ Схвалити", reject: "❌ Відхилити", commands: "⚙️ Команди", back: "← Назад", quota: "📊 Ліміти", status: "ℹ️ Стан", update: "🔄 Оновити контейнер" };
 export const keyAction = (text: string | undefined): SessionKey | undefined => (Object.keys(KEYS) as SessionKey[]).find((k) => KEYS[k] === text?.trim());
 
 export type ThreadUi = {
@@ -27,7 +30,9 @@ export type ThreadUi = {
 	// Чи схвалення деплою живе в клавішах внизу теми (тоді під постом його кнопок немає).
 	approvalKeys: boolean;
 	// Клавіші внизу теми за станом сесії (undefined — режим їх не використовує).
-	keys(state: KeyState): { label: string; keys: SessionKey[] } | undefined;
+	keys(state: KeyState): KeySet | undefined;
+	// Екран загальних команд (кнопка «⚙️ Команди»): ліміти, стан, оновлення контейнера й «← Назад» до дій сесії.
+	commands(): KeySet | undefined;
 };
 
 // Класичний вигляд: один пост, який оновлюється на місці, з кнопками керування під ним; підсумок усередині поста.
@@ -39,18 +44,21 @@ export const classicUi: ThreadUi = {
 	topicOnlyStart: false,
 	approvalKeys: false,
 	keys: () => undefined,
+	commands: () => undefined,
 };
 
 // Вигляд «messages»: пост лишається коротким станом без кнопок керування; керують клавіші внизу теми, які змінюються за станом
 // сесії (працює — «Стоп», є PR — «Змерджити», ліміти — «Повторити»); підсумок приходить окремим повідомленням (з «Змерджити»/«Повторити»).
 const STATUS = (text: string, limit: boolean) => (limit ? "⏳ Ліміти Claude вичерпано" : text.startsWith("✅") ? "✅ Готово" : text.startsWith("⏹") ? "⏹ Зупинено" : "❌ Збій");
-const KEYSETS: Record<KeyState, { label: string; keys: SessionKey[] }> = {
-	working: { label: "⏳ Працює", keys: ["stop", "del"] },
-	done: { label: "✅ Готово", keys: ["del"] },
-	mergeable: { label: "✅ Готово, можна мерджити", keys: ["merge", "del"] },
-	retry: { label: "⏳ Ліміти Claude", keys: ["retry", "del"] },
-	approval: { label: "🚀 Деплой чекає схвалення", keys: ["approve", "reject", "del"] },
+const MORE: SessionKey[] = ["commands"];
+const KEYSETS: Record<KeyState, KeySet> = {
+	working: { label: "⏳ Працює", keys: [["stop", "del"], MORE] },
+	done: { label: "✅ Готово", keys: [["del"], MORE] },
+	mergeable: { label: "✅ Готово, можна мерджити", keys: [["merge", "del"], MORE] },
+	retry: { label: "⏳ Ліміти Claude", keys: [["retry", "del"], MORE] },
+	approval: { label: "🚀 Деплой чекає схвалення", keys: [["approve", "reject", "del"], MORE] },
 };
+const COMMANDS_SET: KeySet = { label: "⚙️ Команди", keys: [["quota", "status"], ["update"], ["back"]] };
 export const messagesUi: ThreadUi = {
 	postButtons: () => "none",
 	summary: ({ text, limit, mergeable }) => ({ post: STATUS(text, limit), separate: true, buttons: limit ? "retry" : mergeable ? "mergeable" : "none" }),
@@ -59,6 +67,7 @@ export const messagesUi: ThreadUi = {
 	topicOnlyStart: true,
 	approvalKeys: true,
 	keys: (state) => KEYSETS[state],
+	commands: () => COMMANDS_SET,
 };
 
 // Режим: прапорець `thread-ui` у Cloudflare Flagship ("classic" | "messages"; міняється в дашборді без деплою), якщо підключено
@@ -79,9 +88,9 @@ export async function sendNewSessionKeyboard(env: BotEnv, chat: number, text: st
 
 // Показує клавіші внизу теми: Telegram міняє reply-клавіатуру лише новим повідомленням, тож шлемо коротке (з підписом стану), а
 // попереднє таке повідомлення (previous) прибираємо, щоб тема не заростала. Повертає id нового повідомлення.
-export async function showKeys(env: BotEnv, chat: number, thread: number, set: { label: string; keys: SessionKey[] }, previous?: number): Promise<number | undefined> {
+export async function showKeys(env: BotEnv, chat: number, thread: number, set: KeySet, previous?: number): Promise<number | undefined> {
 	try {
-		const sent = await tg(env, "sendMessage", { chat_id: chat, message_thread_id: thread, text: set.label, reply_markup: { keyboard: [set.keys.map((k) => ({ text: KEYS[k] }))], resize_keyboard: true, is_persistent: true } } as never);
+		const sent = await tg(env, "sendMessage", { chat_id: chat, message_thread_id: thread, text: set.label, reply_markup: { keyboard: set.keys.map((row) => row.map((k) => ({ text: KEYS[k] }))), resize_keyboard: true, is_persistent: true } } as never);
 		if (previous) await tg(env, "deleteMessage", { chat_id: chat, message_id: previous }).catch(() => {});
 		return sent.message_id;
 	} catch (err) {

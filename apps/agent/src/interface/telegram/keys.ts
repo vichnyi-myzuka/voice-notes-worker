@@ -7,6 +7,7 @@ import { KEYS, createTopic, removeMessage, removeOriginal, sayTemporarily, type 
 import { mergeSession } from "../github/review";
 import { reviewDeployments } from "../../infrastructure/github";
 import { RETRY_TEXT } from "./buttons";
+import { quotaText, sessionCommand, updateContainer } from "./commands";
 import { parseRepos } from "./repo";
 
 // Клавіша внизу теми (режим THREAD_UI=messages): діє на сесію цієї теми, відповідь — коротке повідомлення, що саме зникає.
@@ -26,6 +27,17 @@ export async function handleKey(bot: BotEnv, env: Env, msg: TgMessage, key: Sess
 		await agent.remove(id);
 		await removeOriginal(bot, chat, id);
 		return; // тему разом із повідомленнями прибрано
+	}
+	if (key === "commands" || key === "back") {
+		await agent.keyView(id, key === "commands" ? "commands" : "session");
+		return void (await removeMessage(bot, chat, msg.message_id));
+	}
+	if (key === "quota" || key === "update" || key === "status") {
+		if (key === "quota") await say(await quotaText(env.CLAUDE_CODE_OAUTH_TOKEN));
+		else if (key === "update") await updateContainer(say, agent, false);
+		else await sessionCommand(bot, chat, agent, say, id, "/status");
+		await removeMessage(bot, chat, msg.message_id);
+		return void (await Promise.all(cleanups));
 	}
 	const working = (await agent.report(id)).status === "working";
 	if (key === "stop") {

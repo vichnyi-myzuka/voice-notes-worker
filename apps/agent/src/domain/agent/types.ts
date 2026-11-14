@@ -146,6 +146,8 @@ export type Deploys = {
 	setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean>;
 	setDeployByPost(postId: number, deploy: DeployInfo, force?: boolean): Promise<boolean>;
 	// Запам'ятовує пост за ключем і віддає його один раз (take забирає): так результат деплою редагує пост зі схваленням.
+	// Клавіші внизу теми сесії: дії сесії чи екран загальних команд (режим messages).
+	keyView(id: string, view: "session" | "commands"): Promise<void>;
 	// Деплой сесії, що чекає схвалення (для клавіш «Схвалити/Відхилити» внизу теми); undefined — такого немає.
 	pendingReview(id: string): Promise<{ postId: number; repo: string; runId: number } | undefined>;
 	saveRef(key: string, ref: PostRef): Promise<void>;

@@ -18,6 +18,7 @@ describe("durableAgent", () => {
 			pullTarget: vi.fn(async () => undefined),
 			setDeploy: vi.fn(async () => false),
 			setDeployByPost: vi.fn(async () => false),
+			keyView: vi.fn(async () => {}),
 			pendingReview: vi.fn(async () => undefined),
 			saveRef: vi.fn(async () => {}),
 			takeRef: vi.fn(async () => undefined),

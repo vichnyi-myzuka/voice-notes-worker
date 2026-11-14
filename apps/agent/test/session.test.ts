@@ -1098,6 +1098,20 @@ describe("AgentSession", () => {
 				expect(edits().some((e) => e.message_id === 77)).toBe(false);
 			});
 
+			it("THREAD_UI=messages: «⚙️ Команди» показує загальні команди, «← Назад» повертає дії сесії; зміна стану теж повертає до дій", async () => {
+				const t = setup({ BOT_TOKEN: "bot", THREAD_UI: "messages" });
+				const SID = "tg-1-1";
+				await t.session.start(SID, { prompt: "Задача" });
+				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 });
+				await t.session.begin("tg-2-2", { prompt: "Інша" }, { chatId: 5, url: "u", threadId: 9 }); // стан «працює» у темі 9
+				const rows = () => (sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup).at(-1) as unknown as { reply_markup: { keyboard: { text: string }[][] } }).reply_markup.keyboard.map((r) => r.map((b) => b.text));
+				expect(rows()).toEqual([["⏹ Стоп", "🗑 Видалити"], ["⚙️ Команди"]]);
+				await t.session.keyView(SID, "commands");
+				expect(rows()).toEqual([["📊 Ліміти", "ℹ️ Стан"], ["🔄 Оновити контейнер"], ["← Назад"]]);
+				await t.session.keyView(SID, "session");
+				expect(rows()).toEqual([["⏹ Стоп", "🗑 Видалити"], ["⚙️ Команди"]]);
+			});
+
 			it("THREAD_UI=messages: у темі пост без кнопок керування лишається станом, а підсумок іде окремим повідомленням; без прапорця — як раніше", async () => {
 				const finish = async (extra: Record<string, string>) => {
 					sent.length = 0;

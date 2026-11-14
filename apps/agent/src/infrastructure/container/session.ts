@@ -3,7 +3,7 @@ import type { OAuthLogin } from "@voice-notes/oauth";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import { MCP_LABELS, folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { removeTopic, renameTopic, sendChat, sendMcpQuestion, setTopicIcon, threadUi, type Answers, type TopicState } from "../chat";
+import { removeTopic, renameTopic, sendChat, sendMcpQuestion, setTopicIcon, threadUi, type Answers, type KeyView, type TopicState } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
@@ -173,6 +173,12 @@ export class AgentSession extends DurableObject<Env> {
 
 	setDeployByPost(postId: number, deploy: DeployInfo, force = false): Promise<boolean> {
 		return this.posts.setDeployByPost(postId, deploy, force);
+	}
+
+	// Клавіші внизу теми сесії: дії сесії чи екран загальних команд.
+	async keyView(id: string, view: KeyView): Promise<void> {
+		const post = (await this.ctx.storage.get<Tracked>(sessionKey(id)))?.post;
+		if (post?.chatId) await this.posts.keyView({ chatId: post.chatId, ...(post.threadId && { threadId: post.threadId }) }, view);
 	}
 
 	async pendingReview(id: string): Promise<{ postId: number; repo: string; runId: number } | undefined> {

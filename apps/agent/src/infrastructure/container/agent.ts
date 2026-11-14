@@ -20,6 +20,7 @@ export type SessionObject = {
 	byThread(chatId: number, threadId: number): Promise<string | undefined>;
 	setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean>;
 	setDeployByPost(postId: number, deploy: DeployInfo, force?: boolean): Promise<boolean>;
+	keyView(id: string, view: "session" | "commands"): Promise<void>;
 	pendingReview(id: string): Promise<{ postId: number; repo: string; runId: number } | undefined>;
 	saveRef(key: string, ref: PostRef): Promise<void>;
 	takeRef(key: string): Promise<PostRef | undefined>;
@@ -71,6 +72,7 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		pullTarget: (id) => computer().pullTarget(id),
 		setDeploy: (repo, folder, deploy) => computer().setDeploy(repo, folder, deploy),
 		setDeployByPost: (postId, deploy, force) => computer().setDeployByPost(postId, deploy, force),
+		keyView: (id, view) => computer().keyView(id, view),
 		pendingReview: (id) => computer().pendingReview(id),
 		saveRef: (key, ref) => computer().saveRef(key, ref),
 		takeRef: (key) => computer().takeRef(key),

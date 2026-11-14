@@ -4,7 +4,7 @@ import type { McpName } from "../../domain/agent";
 import { callback } from "./callback";
 
 export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
-export { KEYS, NEW_SESSION, keyAction, sendNewSessionKeyboard, showKeys, threadUi, type KeyState, type SessionKey, type ThreadUi } from "./thread-ui";
+export { KEYS, NEW_SESSION, keyAction, sendNewSessionKeyboard, showKeys, threadUi, type KeySet, type KeyState, type KeyView, type SessionKey, type ThreadUi } from "./thread-ui";
 export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
 export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
 

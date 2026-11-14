@@ -662,6 +662,19 @@ describe("вебхук Telegram", () => {
 			expect(t.sessions.has(SID)).toBe(false);
 		});
 
+		it("клавіші «⚙️ Команди» / «← Назад» перемикають вигляд, «📊 Ліміти» показує ліміти й не стає уточненням", async () => {
+			const t = setup();
+			t.topics.id = THREAD;
+			await t.send(msg({ text: "Поправ README" }));
+			t.calls.length = 0;
+			await t.send(msg({ text: "⚙️ Команди", message_thread_id: THREAD }, 8));
+			await t.send(msg({ text: "📊 Ліміти", message_thread_id: THREAD }, 9));
+			await t.send(msg({ text: "← Назад", message_thread_id: THREAD }, 10));
+			expect(t.keyViews).toEqual([`tg-${OWNER}-7:commands`, `tg-${OWNER}-7:session`]);
+			expect(t.sessions.get(`tg-${OWNER}-7`)?.messages).toEqual(["Поправ README"]);
+			expect(t.calls.filter((c) => c.method === "sendMessage").map((c) => String(c.body.text))).toEqual([expect.stringContaining("Ліміти")]);
+		});
+
 		it("THREAD_UI=messages: уточнення в темі лишається в історії (не видаляється), у classic — видаляється", async () => {
 			for (const ui of [undefined, "messages"]) {
 				const t = setup();
