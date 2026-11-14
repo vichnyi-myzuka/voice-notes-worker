@@ -1,6 +1,6 @@
 import type { BotEnv } from "@voice-notes/core";
 import type { Computer, SessionReport, Sessions } from "../../domain/agent";
-import { removeMessage, removeOriginal, sendChat } from "../../infrastructure/chat";
+import { removeMessage, removeOriginal } from "../../infrastructure/chat";
 import { describeQuota, fetchQuota } from "../../infrastructure/quota";
 
 export type Say = (text: string) => Promise<unknown>;
@@ -41,14 +41,6 @@ export async function sessionCommand(env: BotEnv, chat: number, agent: Sessions,
 		return void (await say("⏹ Зупинено. Відповідь на пост із сесією продовжить роботу."));
 	}
 	await say(describe(report));
-}
-
-// «⚙️ Меню сесії» (кнопка внизу теми): панель з кнопками керування цією сесією. Склад залежить від стану: працює — «Стоп»;
-// завершилась успішно й має репозиторій — «Змерджити» (якщо PR немає, натискання пояснить причину); інакше лише «Видалити».
-export async function sessionMenu(env: BotEnv, chat: number, threadId: number | undefined, agent: Sessions, id: string): Promise<void> {
-	const report = await agent.report(id);
-	const buttons = report.status === "working" ? "working" : report.outcome === "succeeded" && (await agent.pullTarget(id)) ? "mergeable" : "done";
-	await sendChat(env, chat, `⚙️ Меню сесії\n${describe(report)}`, agent.url(id), buttons, undefined, undefined, threadId);
 }
 
 // Стан сесії для людини: працює / чекає / завершила / помилка / зупинена / контейнер спить.

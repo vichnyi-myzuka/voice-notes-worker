@@ -2,9 +2,10 @@ import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendM
 import { MCP_WRITES, type Agent, type ImageRef, type McpName } from "../../domain/agent";
 import type { Env } from "../../env";
 import { stamp, stopwatch } from "../../timing";
-import { MENU_BUTTON, removeMessage, sayTemporarily } from "../../infrastructure/chat";
+import { keyAction, removeMessage, sayTemporarily } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
-import { quotaText, sessionCommand, sessionMenu, updateContainer, type Say } from "./commands";
+import { handleKey } from "./keys";
+import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
 import { askRepo, proceed, type Pending } from "./launch";
 import { routeTask, type KnownRepo } from "./repo";
 
@@ -70,6 +71,12 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	console.log(
 		`telegram message ${msg.chat.id}/${msg.message_id}: chat=${msg.chat.type} from=${msg.from?.id ?? "-"} kind=${msg.voice ? "voice" : msg.audio ? "audio" : msg.photo ? "photo" : msg.document ? "document" : msg.text ? "text" : "other"} reply=${msg.reply_to_message?.message_id ?? "-"} route=${inChannel ? "channel" : inPrivate ? "private" : "DROPPED"}${!inChannel && !inPrivate ? ` (CHAT_ID set: ${!!env.CHAT_ID}, TG_OWNER_ID set: ${!!env.TG_OWNER_ID})` : ""}`,
 	);
+	// Клавіші внизу теми (режим THREAD_UI=messages): «⏹ Стоп», «🔀 Змерджити»… надходять текстом у тему сесії.
+	const key = inPrivate && msg.message_thread_id && !msg.voice && !msg.audio ? keyAction(msg.text) : undefined;
+	if (key) {
+		deps.defer(handleKey(bot, env, msg, key, deps).catch((err) => console.error("telegram key failed:", err)));
+		return new Response("ok");
+	}
 	if (inChannel || inPrivate) {
 		deps.defer(
 			handleMessage(bot, msg, inChannel, deps, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
@@ -173,14 +180,6 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const cleanups: Promise<unknown>[] = [];
 	const sayTemp: Say = (t) => sayTemporarily(env, chat, t, sleep, cleanups, threadId);
 
-	// Кнопка «⚙️ Меню сесії» внизу теми: панель керування сесією цієї теми; саме повідомлення з кнопки прибираємо.
-	if (!voiced && !image && text === MENU_BUTTON) {
-		if (threadSession) await sessionMenu(env, chat, threadId, agent, threadSession);
-		else await sayTemp("Меню працює в темі сесії.");
-		await removeMessage(env, chat, msg.message_id);
-		await Promise.all(cleanups);
-		return;
-	}
 	if (!voiced && !image && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
 		console.log(`telegram ${chat}/${msg.message_id}: command=${command ?? "(empty)"} reply-to-session=${replied?.[1] ?? "-"}`);

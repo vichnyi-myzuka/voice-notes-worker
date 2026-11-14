@@ -1,7 +1,7 @@
 import { tg } from "@voice-notes/core";
 import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../domain/agent";
 import type { Env } from "../../env";
-import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, threadUi, type Answers, type Buttons, type TopicState } from "../chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, showKeys, threadUi, type Answers, type KeyState, type Buttons, type TopicState } from "../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "./config";
 import { SESSION_PREFIX, deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
 
@@ -42,11 +42,22 @@ export class Posts {
 		// щоб вебхук GitHub міг перемалювати пост (див. applyDeploy).
 		const deploy = await this.storage.get<DeployInfo>(deployKey(w.postId));
 		await this.storage.put(lastKey(w.postId), { status, final, mergeable } satisfies LastShown);
-		const buttons: Buttons = threadUi(this.env, !!w.threadId).postButtons({ final, retry, mergeable: mergeable && !deploy, deployDone: !!deploy?.done });
+		const buttons: Buttons = (await threadUi(this.env, !!w.threadId)).postButtons({ final, retry, mergeable: mergeable && !deploy, deployDone: !!deploy?.done });
 		const review = deploy?.runId && deploy.repo ? { repo: deploy.repo, runId: deploy.runId } : undefined;
 		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
 		const text = deploy?.done ? this.text(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.text(w, deploy ? `${status}\n\n${deploy.text}` : status, final);
 		return editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.url, buttons, answers, review);
+	}
+
+	// Клавіші внизу теми за станом сесії (лише режим messages; повтор того ж стану нічого не шле). Збій не критичний.
+	async keys(w: { chatId: number; threadId?: number }, state: KeyState): Promise<void> {
+		const set = w.threadId && this.env.BOT_TOKEN ? (await threadUi(this.env, true)).keys(state) : undefined;
+		if (!set || !w.threadId) return;
+		const key = `keys:${w.chatId}:${w.threadId}`;
+		const last = await this.storage.get<{ state: KeyState; messageId?: number }>(key);
+		if (last?.state === state) return;
+		const messageId = await showKeys({ BOT_TOKEN: this.env.BOT_TOKEN! }, w.chatId, w.threadId, set, last?.messageId);
+		await this.storage.put(key, { state, ...(messageId && { messageId }) });
 	}
 
 	// Ставить правку в чергу після попередніх; спостереження могло закінчитись, поки чекали, тож працю виконує викликач.
@@ -65,6 +76,7 @@ export class Posts {
 	private async applyDeploy(post: NonNullable<Tracked["post"]>, deploy: DeployInfo): Promise<boolean> {
 		if (!post.chatId || !post.url) return false;
 		await this.storage.put(deployKey(post.postId), deploy);
+		if (post.threadId) await this.keys({ chatId: post.chatId, threadId: post.threadId }, "done").catch((err) => console.error("keys failed:", err));
 		if (post.threadId && deploy.stage && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, DEPLOY_ICON[deploy.stage]);
 		const last = (await this.storage.get<LastShown>(lastKey(post.postId))) ?? { status: "✅ Готово", final: true, mergeable: false };
 		return this.show({ chatId: post.chatId, url: post.url, postId: post.postId, header: post.header }, last.status, last.final);

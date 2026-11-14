@@ -285,9 +285,10 @@ export class AgentSession extends DurableObject<Env> {
 		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
 		if (limit) await this.waitForLimits(watchId(key), w);
 		// Що писати в пості й чи слати підсумок окремим повідомленням, вирішує вигляд сесії (THREAD_UI, див. chat/thread-ui.ts)
-		const summary = threadUi(this.env, !!w.threadId).summary({ text, limit, mergeable });
+		const summary = (await threadUi(this.env, !!w.threadId)).summary({ text, limit, mergeable });
 		const shown = await this.posts.show(w, summary.post, true, undefined, mergeable, limit);
 		await this.retitle(watchId(key), w, text);
+		await this.posts.keys(w, limit ? "retry" : mergeable ? "mergeable" : "done").catch((err) => console.error("keys failed:", err));
 		if (!shown || summary.separate) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, summary.buttons, undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
 	}
@@ -402,13 +403,13 @@ export class AgentSession extends DurableObject<Env> {
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
 	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
 		if (await this.link(id)) return;
-		// Нова тема, створена ботом: показуємо внизу кнопку «⚙️ Меню сесії» (повтор begin сюди не доходить: сесія вже є).
-		if (target.threadId && target.title && this.env.BOT_TOKEN) await threadUi(this.env, true).topicCreated({ BOT_TOKEN: this.env.BOT_TOKEN }, target.chatId, target.threadId);
+		await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
 		await this.enqueue({ id, input, target, attempts: 0 });
 	}
 
 	// Те саме для уточнення; контейнер може спати.
 	async resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
+		await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
 		await this.enqueue({ id, text, target, attempts: 0, ...(images?.length && { images }) });
 	}
 

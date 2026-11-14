@@ -27,6 +27,8 @@ export interface Env {
 	// Вигляд теми сесії в Telegram: `classic` (типово) — пост з кнопками, що оновлюється на місці; `messages` — кнопка «⚙️ Меню сесії»
 	// внизу теми, пост без кнопок керування, підсумок окремим повідомленням. Перемикається змінною у wrangler.toml.
 	THREAD_UI?: string;
+	// Cloudflare Flagship (binding `[[flagship]]` у wrangler.toml, див. docs/agent-chat.md): прапорець `thread-ui` перекриває THREAD_UI без деплою
+	FLAGS?: { getStringValue(key: string, fallback: string): Promise<string> };
 	AGENT_PROGRESS_MS?: string; // мінімальний інтервал оновлення поста з прогресом (мс; типово 4000)
 	// Чат з агентом у Telegram (окремий бот): токен, секрет вебхука, єдиний дозволений користувач. Whisper — через Workers AI.
 	BOT_TOKEN?: string;

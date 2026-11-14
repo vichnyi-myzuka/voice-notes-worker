@@ -56,3 +56,15 @@ describe("callback_data MCP", () => {
 		expect(parseCallback(`mcpl:${id}:bank:y`)).toBeUndefined();
 	});
 });
+
+describe("режим теми: Flagship і THREAD_UI", () => {
+	it("прапорець Flagship перекриває THREAD_UI, збій чи відсутність binding — запасна змінна, поза темою завжди classic", async () => {
+		const { threadUi, messagesUi, classicUi } = await import("../src/infrastructure/chat/thread-ui");
+		expect(await threadUi({ THREAD_UI: "classic", FLAGS: { getStringValue: async () => "messages" } }, true)).toBe(messagesUi);
+		expect(await threadUi({ THREAD_UI: "messages", FLAGS: { getStringValue: async () => "classic" } }, true)).toBe(classicUi);
+		expect(await threadUi({ THREAD_UI: "messages", FLAGS: { getStringValue: async () => Promise.reject(new Error("down")) } }, true)).toBe(messagesUi);
+		expect(await threadUi({ THREAD_UI: "messages" }, true)).toBe(messagesUi);
+		expect(await threadUi({}, true)).toBe(classicUi);
+		expect(await threadUi({ THREAD_UI: "messages", FLAGS: { getStringValue: async () => "messages" } }, false)).toBe(classicUi);
+	});
+});

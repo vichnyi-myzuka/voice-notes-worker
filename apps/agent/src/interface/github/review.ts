@@ -19,7 +19,16 @@ export const publishPrompt = (site: string, branch: string, number: number) =>
 // «🔀 Змерджити» під постом сесії (власник уже перевірений): знаходить відкритий PR гілки сесії й мерджить його. Підсумок — спливаюча
 // підказка; після успіху кнопка зникає з поста (лишається «Видалити»), сесію прибере вебхук після успішного деплою.
 export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env: Env, agent: Sessions & Deploys, id: string, sites: (repo: string) => string | undefined = () => undefined): Promise<void> {
+	const message = query.message!;
 	const answer = (text: string) => tg(bot, "answerCallbackQuery", { callback_query_id: query.id, text: text.slice(0, 200) }).catch((err) => console.error("answer failed:", err));
+	await mergeSession(bot, env, agent, id, { chatId: message.chat.id, messageId: message.message_id, ...(message.message_thread_id && { threadId: message.message_thread_id }), answer }, sites);
+}
+
+// Мердж PR сесії. Викликається і кнопкою під повідомленням (messageId — це повідомлення), і клавішею внизу теми (messageId немає:
+// стан деплою тоді показується в пості за гілкою сесії). answer — відповідь користувачу (спливаюча підказка чи коротке повідомлення).
+export type MergeCtx = { chatId: number; threadId?: number; messageId?: number; answer: (text: string) => Promise<unknown> };
+export async function mergeSession(bot: BotEnv, env: Env, agent: Sessions & Deploys, id: string, ctx: MergeCtx, sites: (repo: string) => string | undefined = () => undefined): Promise<void> {
+	const answer = (text: string) => ctx.answer(text.slice(0, 200));
 	const token = env.GITHUB_TOKEN;
 	const target = await agent.pullTarget(id);
 	if (!token || !target) return void (await answer(token ? "Сесія без репозиторію." : "Не налаштовано GITHUB_TOKEN."));
@@ -28,14 +37,14 @@ export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env
 		number = await openPullNumber(token, target.repo, target.branch);
 		if (!number) return void (await answer("Відкритого PR не знайдено."));
 		await mergePull(token, target.repo, number);
-		const message = query.message!;
 		// Пост одразу показує, що PR змерджено і йде деплой (кнопка «Змерджити» зникає); далі рядок замінить вебхук GitHub
-		const shown = await agent.setDeployByPost(message.message_id, { text: `🔀 PR #${number} змерджено, чекаємо на деплой`, stage: "deploying" }, true).catch(() => false);
-		if (!shown) await tg(bot, "editMessageReplyMarkup", { chat_id: message.chat.id, message_id: message.message_id, reply_markup: { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: callback.del(id) }]] } }).catch((err) => console.error("edit failed:", err));
+		const deploy = { text: `🔀 PR #${number} змерджено, чекаємо на деплой`, stage: "deploying" } as const;
+		const shown = await (ctx.messageId ? agent.setDeployByPost(ctx.messageId, deploy, true) : agent.setDeploy(target.repo, target.branch.replace(/^agent\//, ""), deploy)).catch(() => false);
+		if (!shown && ctx.messageId) await tg(bot, "editMessageReplyMarkup", { chat_id: ctx.chatId, message_id: ctx.messageId, reply_markup: { inline_keyboard: [[{ text: "🗑 Видалити", callback_data: callback.del(id) }]] } }).catch((err) => console.error("edit failed:", err));
 		await answer(`🔀 PR #${number} змерджено`);
 		// Репозиторій-сайт: агент сам оновлює публічний сайт з main і прибирає прев'ю (збій тут не скасовує мерж)
 		const site = sites(target.repo);
-		if (site) await agent.resume(id, publishPrompt(site, target.branch, number), { chatId: message.chat.id, url: agent.url(id) }).catch((err) => console.error("publish resume failed:", err));
+		if (site) await agent.resume(id, publishPrompt(site, target.branch, number), { chatId: ctx.chatId, url: agent.url(id), ...(ctx.threadId && { threadId: ctx.threadId }) }).catch((err) => console.error("publish resume failed:", err));
 	} catch (err) {
 		console.error("merge failed:", err);
 		const detail = err instanceof Error ? err.message : String(err);
@@ -43,11 +52,8 @@ export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env
 		const reasons = number && err instanceof MergeRefused ? await mergeBlockers(token, target.repo, number).catch((e) => (console.error("blockers failed:", e), [])) : [];
 		if (!reasons.length) return void (await answer(`Не вдалося змерджити: ${detail}`));
 		await answer(`Не вдалося змерджити PR #${number}: ${reasons.join("; ")}`);
-		const message = query.message;
-		if (message) {
-			const text = `🚫 PR #${number} не змерджено:\n${reasons.map((r) => `• ${r}`).join("\n")}\n\nGitHub: ${detail}`;
-			await tg(bot, "sendMessage", { chat_id: message.chat.id, text, ...(message.message_thread_id && { message_thread_id: message.message_thread_id }), link_preview_options: { is_disabled: true } }).catch((e) => console.error("reasons send failed:", e));
-		}
+		const text = `🚫 PR #${number} не змерджено:\n${reasons.map((r) => `• ${r}`).join("\n")}\n\nGitHub: ${detail}`;
+		await tg(bot, "sendMessage", { chat_id: ctx.chatId, text, ...(ctx.threadId && { message_thread_id: ctx.threadId }), link_preview_options: { is_disabled: true } }).catch((e) => console.error("reasons send failed:", e));
 	}
 }
 

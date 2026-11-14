@@ -1077,9 +1077,12 @@ describe("AgentSession", () => {
 				expect(edits().at(-1)!.text).toContain("✅ Готово");
 				expect(edits().at(-1)!.text).not.toContain("Готово: ok");
 				expect(JSON.stringify((edits().at(-1) as { reply_markup?: unknown }).reply_markup ?? null)).not.toContain("del:");
-				const summary = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c)) as unknown as { message_thread_id: number; text: string }[];
+				const summary = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {}))) as unknown as { message_thread_id: number; text: string }[];
 				expect(summary).toHaveLength(1);
 				expect(summary[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Готово: <b>ok</b>") });
+				// клавіші внизу теми за станом: після завершення лише 🗑 Видалити (⏹ Стоп показує begin/resume)
+				const keyboards = sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup) as unknown as { reply_markup: { keyboard: { text: string }[][] } }[];
+				expect(keyboards.map((k) => k.reply_markup.keyboard[0].map((b) => b.text))).toEqual([["🗑 Видалити"]]);
 			});
 
 			it("деплой PR сесії дописується в її пост: запит на схвалення з кнопками, потім результат лише з «Видалити»", async () => {
