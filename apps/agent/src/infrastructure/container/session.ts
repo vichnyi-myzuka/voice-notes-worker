@@ -281,7 +281,9 @@ export class AgentSession extends DurableObject<Env> {
 		await this.posts.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
 		// Якщо PR сесії вже в деплої, іконку лишає стадія деплою, а не «готово»
-		const deploy = w.postId ? await this.ctx.storage.get<DeployInfo>(deployKey(w.postId)) : undefined;
+		// Деплой PR записано на початковий пост сесії, а не на повідомлення стану ходу (воно може бути іншим).
+		const sessionPost = (await this.ctx.storage.get<Tracked>(sessionKey(watchId(key))))?.post?.postId ?? w.postId;
+		const deploy = sessionPost ? await this.ctx.storage.get<DeployInfo>(deployKey(sessionPost)) : undefined;
 		await this.icon(w, deploy?.stage ? DEPLOY_ICON[deploy.stage] : /^[❌⛔⚠]/u.test(text) ? "failed" : "done");
 		// Підсумок успішної роботи: якщо агент відкрив PR, додаємо «Змерджити» (зупинену чи невдалу сесію не мерджимо з чату)
 		const check = text.startsWith("✅") ? await this.pullCheck(watchId(key)) : { ok: false };
@@ -528,13 +530,20 @@ export class AgentSession extends DurableObject<Env> {
 		// Пост сесії: новий (з першого виклику) запам'ятовується, у наступних (уточнення) береться зі сховища.
 		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }), ...(target.title && { title: target.title }) } : tracked.post;
 		if (target.postId) await this.ctx.storage.put(sessionKey(id), { ...tracked, post } satisfies Tracked);
-		const full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
+		let full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
+		// Уточнення в темі (режим messages): хід агента отримує власне повідомлення зі станом (без шапки завдання), яке оновлюється до підсумку;
+		// початковий пост лишається як є (на ньому деплой, ідентичність сесії).
+		let fresh = false;
+		if (!target.postId && post?.threadId && this.env.BOT_TOKEN && (await threadUi(this.env, true)).statusPerTurn) {
+			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, full.url, "none", undefined, undefined, post.threadId).catch((err) => (console.error("status message failed:", err), undefined));
+			if (statusId) (full = { ...full, postId: statusId, header: "" }), (fresh = true);
+		}
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
 		if (previous?.postId && previous.postId !== full.postId) await this.posts.mark(previous, false); // реакція не лишається на старому пості
 		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);
 		await this.posts.mark(full, true);
 		await this.icon(full, "working");
-		if (!target.postId && post) await this.posts.show(full, WORKING); // уточнення: пост знову показує «Працює»
+		if (!target.postId && post && !fresh) await this.posts.show(full, WORKING); // уточнення: пост знову показує «Працює»
 		this.listen();
 		await this.scheduleSoon();
 	}

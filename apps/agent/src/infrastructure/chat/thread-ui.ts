@@ -17,6 +17,10 @@ export type ThreadUi = {
 	// Підсумок ходу агента: що писати в пості (post) і чи слати підсумок ще й окремим повідомленням (separate; без поста він іде завжди)
 	// з якими кнопками (buttons).
 	summary(s: { text: string; limit: boolean; mergeable: boolean }): { post: string; separate: boolean; buttons: Buttons };
+	// Чи кожен хід агента після уточнення починається новим повідомленням зі станом (воно оновлюється до підсумку), а не редагує початковий пост.
+	statusPerTurn: boolean;
+	// Чи лишати в темі повідомлення-уточнення власника (історія розмови), а не видаляти їх після прийняття.
+	keepFollowUps: boolean;
 	// Чи схвалення деплою живе в клавішах внизу теми (тоді під постом його кнопок немає).
 	approvalKeys: boolean;
 	// Клавіші внизу теми за станом сесії (undefined — режим їх не використовує).
@@ -27,6 +31,8 @@ export type ThreadUi = {
 export const classicUi: ThreadUi = {
 	postButtons: ({ final, retry, mergeable, deployDone }) => (deployDone ? "dismiss" : final ? (retry ? "retry" : mergeable ? "mergeable" : "done") : "working"),
 	summary: ({ text, limit, mergeable }) => ({ post: text, separate: false, buttons: limit ? "retry" : mergeable ? "mergeable" : "done" }),
+	statusPerTurn: false,
+	keepFollowUps: false,
 	approvalKeys: false,
 	keys: () => undefined,
 };
@@ -44,6 +50,8 @@ const KEYSETS: Record<KeyState, { label: string; keys: SessionKey[] }> = {
 export const messagesUi: ThreadUi = {
 	postButtons: () => "none",
 	summary: ({ text, limit, mergeable }) => ({ post: STATUS(text, limit), separate: true, buttons: limit ? "retry" : mergeable ? "mergeable" : "none" }),
+	statusPerTurn: true,
+	keepFollowUps: true,
 	approvalKeys: true,
 	keys: (state) => KEYSETS[state],
 };

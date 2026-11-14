@@ -2,7 +2,7 @@ import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendM
 import { MCP_WRITES, type Agent, type ImageRef, type McpName } from "../../domain/agent";
 import type { Env } from "../../env";
 import { stamp, stopwatch } from "../../timing";
-import { keyAction, removeMessage, sayTemporarily } from "../../infrastructure/chat";
+import { keyAction, removeMessage, sayTemporarily, threadUi } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
 import { handleKey } from "./keys";
 import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
@@ -14,7 +14,7 @@ export const TELEGRAM_PATH = "/telegram";
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
 // repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. repo.ts); без них репозиторій задає лише префікс.
 // syncCommands: виставляти меню `/`-команд (див. syncCommands); у тестах вимкнено.
-export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean };
+export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean; keepFollowUps?: boolean };
 
 // Меню `/`-команд у приваті. Єдине місце, де вони перелічені: додаєш команду в обробник — додай і сюди.
 export const COMMANDS = [
@@ -79,7 +79,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	}
 	if (inChannel || inPrivate) {
 		deps.defer(
-			handleMessage(bot, msg, inChannel, deps, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
+			handleMessage(bot, msg, inChannel, { ...deps, keepFollowUps: inPrivate && !!msg.message_thread_id && (await threadUi(env, true)).keepFollowUps }, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
 				console.error("telegram message failed:", err);
 				await tgSendMessage(bot, msg.chat.id, "⚠️ Не вдалося створити сесію, спробуй ще раз.", msg.message_thread_id).catch(() => {});
 			}),
@@ -162,7 +162,7 @@ function parsePrefixes(transcript: string): { task: string; model?: string; sure
 }
 
 // spoken — уже розшифроване голосове (запис із Shortcut): задача йде як голосова, але Whisper не викликається.
-async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string, spoken?: string): Promise<void> {
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], keepFollowUps = false, sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string, spoken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const voiced = !!file || spoken !== undefined;
@@ -225,7 +225,8 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		sw.mark("resume");
 		sw.log({ flow: "follow-up", kind, "lag-s": lag, sent: stamp(msg.date * 1000) });
 		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), стан видно в пості сесії (він оновлюється на місці) і за 👨‍💻.
-		await removeMessage(env, chat, msg.message_id);
+		// (режим messages: повідомлення-уточнення лишається в темі як історія розмови)
+		if (!keepFollowUps) await removeMessage(env, chat, msg.message_id);
 		return;
 	}
 

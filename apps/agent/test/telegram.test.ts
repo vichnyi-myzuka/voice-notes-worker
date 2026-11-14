@@ -18,6 +18,7 @@ const CHANNEL = -1001;
 function setup(transcript = "Поправ README", pick?: (user: string) => { repo?: string; type?: string; name?: string; title?: string; model?: string; unsure?: boolean } | null) {
 	const agent = fakeAgent();
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
+	const mode = { ui: undefined as string | undefined }; // THREAD_UI воркера
 	const topics = { id: 0 }; // id теми, яку «створює» Telegram; 0 — теми не підтримуються (як у чаті без режиму тем)
 	vi.stubGlobal(
 		"fetch",
@@ -40,7 +41,7 @@ function setup(transcript = "Поправ README", pick?: (user: string) => { re
 	const deps = { agent: agent.agent, llm, repos: parseRepos(JSON.stringify([{ repo: "me/bot", about: "our bot" }, { repo: "me/site", about: "the website" }])), defer: (w: Promise<unknown>) => void pending.push(w), sleep };
 	const send = async (message: unknown, headers: HeadersInit = { "x-telegram-bot-api-secret-token": "secret" }) => {
 		const channel = (message as { chat: { type: string } }).chat.type === "channel";
-		const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers, body: JSON.stringify({ update_id: 1, ...(channel ? { channel_post: message } : { message }) }) }), env, deps);
+		const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers, body: JSON.stringify({ update_id: 1, ...(channel ? { channel_post: message } : { message }) }) }), { ...env, THREAD_UI: mode.ui } as Env, deps);
 		await Promise.all(pending.splice(0)); // фонова робота до кінця
 		return res;
 	};
@@ -52,7 +53,7 @@ function setup(transcript = "Поправ README", pick?: (user: string) => { re
 	};
 	const answers = () => calls.filter((c) => c.method === "answerCallbackQuery").map((c) => c.body.text);
 	const replies = () => calls.filter((c) => c.method === "sendMessage").map((c) => (c.body.text as string).replace(/ 💨$/, ""));
-	return { ...agent, llm, sleep, send, press, answers, calls, replies, topics };
+	return { ...agent, llm, sleep, send, press, answers, calls, replies, topics, mode };
 }
 
 const post = (extra: Record<string, unknown>, id = 9) => ({ message_id: id, date: 1, chat: { id: CHANNEL, type: "channel" }, ...extra });
@@ -659,6 +660,19 @@ describe("вебхук Telegram", () => {
 			expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 8)).toBe(true);
 			await t.send(msg({ text: "🗑 Видалити", message_thread_id: THREAD }, 9));
 			expect(t.sessions.has(SID)).toBe(false);
+		});
+
+		it("THREAD_UI=messages: уточнення в темі лишається в історії (не видаляється), у classic — видаляється", async () => {
+			for (const ui of [undefined, "messages"]) {
+				const t = setup();
+				t.mode.ui = ui;
+				t.topics.id = THREAD;
+				await t.send(msg({ text: "Поправ README" }));
+				t.calls.length = 0;
+				await t.send(msg({ text: "Ще й CHANGELOG", message_thread_id: THREAD }, 8));
+				expect(t.sessions.get(`tg-${OWNER}-7`)?.messages).toEqual(["Поправ README", "Ще й CHANGELOG"]);
+				expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 8)).toBe(ui !== "messages");
+			}
 		});
 
 		it("повідомлення в темі, що не належить сесії, стартує сесію в ній без нової теми", async () => {

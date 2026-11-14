@@ -1073,6 +1073,26 @@ describe("AgentSession", () => {
 				expect(await t.session.pendingReview(SID)).toEqual({ postId: 77, repo: "me/app", runId: 9 });
 			});
 
+			it("THREAD_UI=messages: уточнення відкриває нове повідомлення зі станом, воно оновлюється до підсумку; початковий пост не чіпається", async () => {
+				const t = setup({ BOT_TOKEN: "bot", THREAD_UI: "messages" });
+				const SID = "tg-1-1";
+				await t.session.start(SID, { prompt: "Задача" });
+				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 });
+				sent.length = 0;
+				await t.session.watch(SID, { chatId: 5, url: "https://agent.example/s/tg-1-1" }); // уточнення: без postId
+				const fresh = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {}))) as unknown as { message_thread_id: number; text: string }[];
+				expect(fresh).toHaveLength(1);
+				expect(fresh[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Працює") });
+				expect(edits().filter((e) => e.message_id === 77)).toEqual([]); // початковий пост не редагується
+				t.opencode.lastText = "Друга відповідь";
+				await t.session.alarm();
+				t.opencode.busy.clear();
+				t.opencode.info[ocId] = { outcome: "succeeded" };
+				await t.session.alarm();
+				expect(edits().some((e) => e.message_id !== 77 && e.text.includes("✅ Готово"))).toBe(true);
+				expect(edits().some((e) => e.message_id === 77)).toBe(false);
+			});
+
 			it("THREAD_UI=messages: у темі пост без кнопок керування лишається станом, а підсумок іде окремим повідомленням; без прапорця — як раніше", async () => {
 				const finish = async (extra: Record<string, string>) => {
 					sent.length = 0;
