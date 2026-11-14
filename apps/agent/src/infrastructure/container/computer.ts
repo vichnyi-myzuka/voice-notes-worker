@@ -5,8 +5,8 @@ import { parseConnections } from "./connections";
 import { FORM_HOLD_MS, READY_ATTEMPTS, SNAPSHOT_CHECK_MS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "./config";
 import { IMAGE_MAX_BYTES } from "./images";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "./opencode";
-import { PAYLOAD, PAYLOAD_HASH, WRITER, mcpConfig, type McpWanted } from "./payload";
-import { sessionDir, type SavedSnapshot } from "./state";
+import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
+import { computerKey, type SavedSnapshot } from "./state";
 
 // Спільний комп'ютер агента: єдиний контейнер з OpenCode. Тут його життєвий цикл (старт зі знімка чи образу, очікування
 // готовності, розкладання payload, знімки диска, скидання) і доступ до OpenCode. Про сесії, пости й чат модуль нічого не знає.
@@ -76,7 +76,7 @@ export class Computer {
 		let restored = false;
 		const sw = stopwatch("container");
 		if (started) {
-			const saved = await this.ctx.storage.get<SavedSnapshot>("snapshot");
+			const saved = await this.ctx.storage.get<SavedSnapshot>(computerKey.snapshot);
 			// Знімок відновлюємо завжди, навіть якщо образ відтоді змінився: він сам визначає файлову систему (старий образ піднімається
 			// з усією історією). Новий образ застосовується лише командою /update.
 			restored = !!saved;
@@ -91,7 +91,7 @@ export class Computer {
 			// Знімок не відновився (наприклад, минув термін зберігання): стартуємо з чистого образу.
 			console.error("snapshot restore failed, starting from the image:", err);
 			await this.destroyContainer();
-			await this.ctx.storage.delete("snapshot");
+			await this.ctx.storage.delete(computerKey.snapshot);
 			await this.launch(undefined, "snapshot restore failed");
 			await container.setInactivityTimeout(inactivityMs(this.env));
 			await this.waitReady(true);
@@ -109,11 +109,11 @@ export class Computer {
 	// Розкладає в контейнер файли з payload/ (інструкції агента, publish, session-prep, git-хук): при кожному старті (знімок міг
 	// бути зроблений до останнього деплою) і для працюючого контейнера, якщо вміст змінився. Образ при цьому не чіпається.
 	private async syncPayload(force: boolean): Promise<void> {
-		if (!force && (await this.ctx.storage.get<string>("payloadHash")) === PAYLOAD_HASH) return;
+		if (!force && (await this.ctx.storage.get<string>(computerKey.payloadHash)) === PAYLOAD_HASH) return;
 		const proc = await this.ctx.container!.exec(["node", "-e", WRITER], { cwd: "/", env: { HOME: "/root", PAYLOAD: JSON.stringify(PAYLOAD) } });
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`payload sync failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
-		await this.ctx.storage.put("payloadHash", PAYLOAD_HASH);
+		await this.ctx.storage.put(computerKey.payloadHash, PAYLOAD_HASH);
 	}
 
 	// Запускає контейнер зі знімка диска або з образу.
@@ -121,7 +121,7 @@ export class Computer {
 	private async launch(snapshot: SavedSnapshot | undefined, reason: string): Promise<void> {
 		const container = this.ctx.container!;
 		console.log(snapshot ? `container start from snapshot ${snapshot.id}` : `container start from image (${reason})`);
-		await this.ctx.storage.put("launchedImage", snapshot ? snapshot.image : container.images.base); // з якого образу контейнер насправді
+		await this.ctx.storage.put(computerKey.launchedImage, snapshot ? snapshot.image : container.images.base); // з якого образу контейнер насправді
 		container.start({
 			...(snapshot ? { containerSnapshot: { id: snapshot.id } } : { image: container.images.base }),
 			instance: "standard-1",
@@ -156,14 +156,14 @@ export class Computer {
 
 	// Позначає активність (диск міг змінитись) і, якщо alarm ще не заплановано, планує перевірку.
 	async markActive(): Promise<void> {
-		await this.ctx.storage.put("activeAt", Date.now());
+		await this.ctx.storage.put(computerKey.activeAt, Date.now());
 		await this.markUsed();
 	}
 
 	// Позначає, що контейнером користувались (старт, робота агента), але диск не змінився; лічильник для зупинки після простою.
 	// Читання з веб-інтерфейсу сюди не потрапляє: відкрита вкладка не має тримати контейнер.
 	async markUsed(): Promise<void> {
-		await this.ctx.storage.put("usedAt", Date.now());
+		await this.ctx.storage.put(computerKey.usedAt, Date.now());
 		if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + snapshotIntervalMs(this.env));
 	}
 
@@ -181,9 +181,9 @@ export class Computer {
 	async settle(formAt = 0): Promise<void> {
 		if (!this.running) return; // контейнер уже спить
 		const [activeAt = 0, usedAt = 0, saved] = await Promise.all([
-			this.ctx.storage.get<number>("activeAt"),
-			this.ctx.storage.get<number>("usedAt"),
-			this.ctx.storage.get<SavedSnapshot>("snapshot"),
+			this.ctx.storage.get<number>(computerKey.activeAt),
+			this.ctx.storage.get<number>(computerKey.usedAt),
+			this.ctx.storage.get<SavedSnapshot>(computerKey.snapshot),
 		]);
 		// Знімок уже йде у фоні: контейнер не чіпаємо (не зупиняємо), дивимось знову трохи згодом.
 		if (this.snapshotting) return void (await this.alarmNoLater(Date.now() + SNAPSHOT_CHECK_MS));
@@ -218,7 +218,7 @@ export class Computer {
 		const container = this.ctx.container!;
 		const startedAt = Date.now();
 		const snapshot = await container.snapshotContainer({ name: "computer" });
-		await this.ctx.storage.put("snapshot", { id: snapshot.id, image: (await this.ctx.storage.get<string>("launchedImage")) ?? container.images.base, at: startedAt } satisfies SavedSnapshot);
+		await this.ctx.storage.put(computerKey.snapshot, { id: snapshot.id, image: (await this.ctx.storage.get<string>(computerKey.launchedImage)) ?? container.images.base, at: startedAt } satisfies SavedSnapshot);
 		const info = { id: snapshot.id, bytes: snapshot.size, ms: Date.now() - startedAt };
 		console.log(`snapshot saved (${reason}): ${info.id}, ${info.bytes} bytes, ${info.ms} ms`);
 		return info;
@@ -237,41 +237,11 @@ export class Computer {
 	async reset(unlessBusy = false): Promise<boolean> {
 		if (unlessBusy && this.running && (await isAnyBusy(this.opencode()).catch(() => true))) return false;
 		// Це єдине місце (крім невдалого відновлення), де ключ знімка зникає: у логах видно, хто саме скинув диск.
-		const saved = await this.ctx.storage.get<SavedSnapshot>("snapshot");
+		const saved = await this.ctx.storage.get<SavedSnapshot>(computerKey.snapshot);
 		console.log(`snapshot dropped: reset (unlessBusy=${unlessBusy}, running=${this.running}, snapshot=${saved?.id ?? "none"})`);
-		await this.ctx.storage.delete("snapshot");
+		await this.ctx.storage.delete(computerKey.snapshot);
 		if (this.running) await this.destroyContainer();
 		return true;
-	}
-
-	// Готує теку сесії в контейнері (клон + worktree або порожня тека) і повертає її шлях. exec не успадковує env контейнера,
-	// тому токен передаємо явно. Викликається лише всередині serial().
-	async prepare(folder: string, repo: string | undefined, mcp: McpWanted = {}): Promise<string> {
-		const proc = await this.ctx.container!.exec(["session-prep", folder, ...(repo ? [repo] : [])], {
-			cwd: "/workspace",
-			env: { HOME: "/root", ...(this.env.GITHUB_TOKEN && { GITHUB_TOKEN: this.env.GITHUB_TOKEN }) },
-		});
-		const out = await proc.output();
-		const stderr = new TextDecoder().decode(out.stderr);
-		if (out.exitCode !== 0) throw new Error(`session-prep failed (${out.exitCode}): ${stderr.trim()}`);
-		// З решти stderr (шум git і npm) беремо лише рядок секундоміра: з яких кроків складається підготовка теки.
-		const timing = stderr.split("\n").find((line) => line.startsWith("timing "));
-		if (timing) console.log(`latency session-prep ${folder}: ${timing.slice("timing ".length)}`);
-		const dir = new TextDecoder().decode(out.stdout).trim() || sessionDir(folder);
-		if (Object.keys(mcp).length) await this.enableMcp(dir, mcp);
-		return dir;
-	}
-
-	// MCP (Sure, Сільпо, Календар, Cloudflare) лише для цієї сесії: .opencode/opencode.json (і файли токенів Календаря) у її теці (OpenCode підхоплює його сам), а з git він виключений,
-	// щоб не потрапив у коміт. Власний .opencode/opencode.json репозиторію не перезаписуємо. Без налаштованих серверів нічого не робить.
-	private async enableMcp(dir: string, mcp: McpWanted): Promise<void> {
-		const files = mcpConfig(this.env, dir, mcp);
-		if (!files) return;
-		// Файл репозиторію (під git) не чіпаємо; свій, з попереднього запуску, перезаписуємо: у ньому міг застаріти токен Сільпо.
-		const script = `git -C "${dir}" ls-files --error-unmatch .opencode/opencode.json >/dev/null 2>&1 && exit 0; node -e '${WRITER}' && { x=$(git -C "${dir}" rev-parse --git-path info/exclude 2>/dev/null) && echo '/.opencode/' >> "$(cd "${dir}" && realpath "$x")"; true; }`;
-		const proc = await this.ctx.container!.exec(["sh", "-c", script], { cwd: "/", env: { HOME: "/root", PAYLOAD: JSON.stringify(files) } });
-		const out = await proc.output();
-		if (out.exitCode !== 0) throw new Error(`mcp setup failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
 	}
 
 	// Виконує у теці /workspace команду з env для публікації сайтів (exec не успадковує env контейнера). Повертає код і stderr.
@@ -292,9 +262,9 @@ export class Computer {
 	// Стан для діагностики: чому контейнер не засинає, коли був знімок. streams додає той, хто веде потоки.
 	async info(streams: ComputerInfo["streams"]): Promise<ComputerInfo> {
 		const [activeAt, alarmAt, snapshot] = await Promise.all([
-			this.ctx.storage.get<number>("activeAt"),
+			this.ctx.storage.get<number>(computerKey.activeAt),
 			this.ctx.storage.getAlarm(),
-			this.ctx.storage.get<SavedSnapshot>("snapshot"),
+			this.ctx.storage.get<SavedSnapshot>(computerKey.snapshot),
 		]);
 		return { running: this.running, activeAt: activeAt ?? null, alarmAt, snapshot: snapshot ? { id: snapshot.id, at: snapshot.at } : null, streams };
 	}

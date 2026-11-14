@@ -41,3 +41,6 @@ export const refKey = (key: string) => `ref:${key}`;
 export type LimitWait = WatchTarget & { since: number };
 export const LIMIT_PREFIX = "limit:";
 export const limitKey = (id: string) => `${LIMIT_PREFIX}${id}`;
+
+// Ключі стану контейнера (Computer): знімок диска, відбиток розкладеного payload, образ, з якого він запущений, і мітки активності.
+export const computerKey = { snapshot: "snapshot", payloadHash: "payloadHash", launchedImage: "launchedImage", activeAt: "activeAt", usedAt: "usedAt" } as const;

@@ -3,6 +3,7 @@ import { MCP_LABELS, MCP_NAMES, MCP_SERVICES, OAUTH_MCP_NAMES, type McpAnswer, t
 import type { Env } from "../../env";
 import { sendMcpQuestion } from "../chat";
 import type { Computer } from "./computer";
+import type { Workspace } from "./workspace";
 import { mcpLogins } from "./logins";
 import { putMcp } from "./opencode";
 import { MCP_PROMPTS, REFRESHABLE_MCP, refreshableMcp, type McpWanted } from "./payload";
@@ -32,6 +33,7 @@ export class Mcp {
 		private readonly env: Env,
 		private readonly store: SessionStore,
 		private readonly computer: Computer,
+		private readonly workspace: Workspace,
 		// Повідомлення агентові від воркера (як уточнення від власника).
 		private readonly tell: (id: string, tracked: Tracked, text: string) => Promise<void>,
 	) {
@@ -114,7 +116,7 @@ export class Mcp {
 			return "login";
 		}
 		await this.computer.ensureRunning();
-		const directory = await this.computer.serial(() => this.computer.prepare(tracked.folder ?? id, tracked.repo, wanted));
+		const directory = await this.computer.serial(() => this.workspace.prepare(tracked.folder ?? id, tracked.repo, wanted));
 		await this.refresh(id, { ...tracked, [name]: true }, directory); // файл OpenCode наживо не перечитує: сервер вносимо явно
 		await this.store.saveSession(id, { ...tracked, [name]: true });
 		await this.tell(id, tracked, `The owner connected the ${name} MCP: its tools (names start with \`${name}_\`) are available from this step on. Continue the task. Instructions for this service:\n\n${MCP_PROMPTS[name]}`);

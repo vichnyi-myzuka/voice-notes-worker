@@ -5,6 +5,7 @@ import { stopwatch } from "../../timing";
 import { removeTopic } from "../chat";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
+import { Workspace } from "./workspace";
 import { JOB_RETRY_MS, WATCH_INTERVAL_MS, publishEnv } from "./config";
 import { Forms } from "./forms";
 import { loadImages } from "./images";
@@ -25,10 +26,11 @@ import { Watcher } from "./watcher";
 //
 // Сам клас — фасад: публічні методи — RPC-вхід порту Agent, alarm і складання модулів; тут же старт, уточнення й видалення сесії.
 // Решту роблять модулі поруч: SessionStore (записи сховища), Jobs (черга прийнятих завдань), Watcher (стеження до підсумку),
-// Progress (опис дії, питання, іконка й назва теми), Limits (ліміти Claude), Mcp (сервіси власника), Computer (контейнер і знімки),
+// Progress (опис дії, питання, іконка й назва теми), Limits (ліміти Claude), Mcp (сервіси власника), Computer (контейнер і знімки), Workspace (теки сесій і конфіг MCP),
 // Posts (пост у чаті й деплой), Forms (питання агента), WebProxy (веб-інтерфейс).
 export class AgentSession extends DurableObject<Env> {
 	private readonly computer: Computer;
+	private readonly workspace: Workspace;
 	private readonly posts: Posts;
 	private readonly forms: Forms;
 	private readonly store: SessionStore;
@@ -41,12 +43,13 @@ export class AgentSession extends DurableObject<Env> {
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.computer = new Computer(ctx, env);
+		this.workspace = new Workspace(ctx, env);
 		this.store = new SessionStore(ctx.storage);
 		this.limits = new Limits(env, this.store, (at) => this.computer.alarmNoLater(at));
 		this.posts = new Posts(ctx.storage, env, this.store);
 		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
 		this.proxy = new WebProxy(ctx, env, this.computer);
-		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, (id, tracked, text) => this.tell(id, tracked, text));
+		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, this.workspace, (id, tracked, text) => this.tell(id, tracked, text));
 		this.progress = new Progress(env, this.store, this.posts, this.forms);
 		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp);
 		this.jobs = new Jobs(ctx, env, this.store, this.posts, {
@@ -159,7 +162,7 @@ export class AgentSession extends DurableObject<Env> {
 			const folder = folderFor(id, input.name);
 			const wanted = await this.mcp.wanted(input);
 			sw.mark("queue");
-			const directory = await this.computer.prepare(folder, input.repo, wanted);
+			const directory = await this.workspace.prepare(folder, input.repo, wanted);
 			sw.mark("prepare");
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
 			sw.mark("create");
@@ -181,7 +184,7 @@ export class AgentSession extends DurableObject<Env> {
 		let ocId = tracked.ocId;
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, await this.mcp.wanted(tracked));
+				const directory = await this.workspace.prepare(tracked.folder ?? id, tracked.repo, await this.mcp.wanted(tracked));
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.store.saveSession(id, { ...tracked, ocId } satisfies Tracked);

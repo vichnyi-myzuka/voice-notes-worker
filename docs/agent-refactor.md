@@ -25,7 +25,7 @@
 - [x] Єдиний реєстр MCP-сервісів (`domain/agent/mcp.ts`, `MCP_SERVICES`; решта шарів тримає дані як `Record<McpName, …>`): назва, підпис, промпт, вхід, «вміє змінювати дані». Зараз сервіс додається в ~10 місцях
   (`McpName`, `Tracked`, `StartInput`, `parsePrefixes`, `mcpConfig`, `start`, логіни, HTTP-маршрути).
 - [x] HTTP: одна функція для маршрутів OAuth замість трьох копій; прибрано дубль `/sw.js`; веб-запити (`POST /api/sessions`, `…/messages`) йдуть через чергу завдань (`begin`/`resume` без чату), як у чаті.
-- `Computer`: винести підготовку тек і MCP-конфігів (`prepare`, `enableMcp`) у `Workspace`; ключі сховища — у `state.ts`.
+- [x] `Computer`: підготовку тек і MCP-конфігів (`prepare`, `enableMcp`) винесено в `Workspace` (`workspace.ts`); ключі сховища контейнера — `computerKey` у `state.ts`.
 - `Env`: розділити на групи (контейнер, чат, публікація, MCP).
 - `chat`: id сесії в кнопках не з URL, а явно.
 - `application/` для агента: вибір репозиторію, моделі й MCP з `interface/telegram/handle.ts`.
