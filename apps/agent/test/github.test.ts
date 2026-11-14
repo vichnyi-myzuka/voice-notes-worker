@@ -183,7 +183,7 @@ describe("вебхук GitHub", () => {
 			expect(s.calls.find((c) => c.url.includes("/pulls?state=open"))?.url).toContain("head=me%3Aagent%2Ffix-7");
 			expect(s.calls.find((c) => c.method === "PUT")).toMatchObject({ url: "https://api.github.com/repos/me/bot/pulls/5/merge", body: { merge_method: "merge" } });
 			// пост одразу показує «змерджено, чекаємо на деплой» (без очікування вебхука)
-			expect(s.deploys).toEqual([{ postId: 77, deploy: { text: "🔀 PR #5 змерджено, чекаємо на деплой" } }]);
+			expect(s.deploys).toEqual([{ postId: 77, deploy: { text: "🔀 PR #5 змерджено, чекаємо на деплой", stage: "deploying" } }]);
 			expect(s.tgCalls("answerCallbackQuery")[0].text).toBe("🔀 PR #5 змерджено");
 		});
 

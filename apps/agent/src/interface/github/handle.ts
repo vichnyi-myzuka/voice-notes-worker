@@ -67,7 +67,7 @@ async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, re
 	let cleaned = 0;
 	for (const pr of pulls) {
 		if (pr.repo !== repo || !pr.branch.startsWith("agent/")) continue;
-		const inPost = await agent.setDeploy(repo, pr.branch.slice("agent/".length), { text: `${title}\n${run.html_url}`, done: run.conclusion === "success" }).catch((err) => (console.error("show deploy in post failed:", err), false));
+		const inPost = await agent.setDeploy(repo, pr.branch.slice("agent/".length), { text: `${title}\n${run.html_url}`, done: run.conclusion === "success", stage: run.conclusion === "success" ? "deployed" : "failed" }).catch((err) => (console.error("show deploy in post failed:", err), false));
 		shown ||= inPost;
 		if (run.conclusion === "success") cleaned += (await cleanup(bot, env, agent, repo, pr.branch, inPost).catch((err) => (console.error("cleanup failed:", err), false))) ? 1 : 0;
 	}
@@ -103,7 +103,7 @@ async function onReviewRequested(bot: BotEnv, env: Env, { agent }: GithubDeps, r
 	const pulls = env.GITHUB_TOKEN && job.head_sha ? await commitPulls(env.GITHUB_TOKEN, repo, job.head_sha).catch((err) => (console.error("commit pulls failed:", err), [])) : [];
 	for (const pr of pulls) {
 		if (pr.repo !== repo || !pr.branch.startsWith("agent/")) continue;
-		if (await agent.setDeploy(repo, pr.branch.slice("agent/".length), { text: `🚀 Деплой чекає схвалення\n${job.html_url}`, repo, runId: job.run_id }).catch(() => false)) return;
+		if (await agent.setDeploy(repo, pr.branch.slice("agent/".length), { text: `🚀 Деплой чекає схвалення\n${job.html_url}`, repo, runId: job.run_id, stage: "approval" }).catch(() => false)) return;
 	}
 	const sent = await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup: reviewButtons(repo, job.run_id), link_preview_options: { is_disabled: true } });
 	await agent.saveRef(refKey(repo, job.run_id), { chatId: chat, messageId: sent.message_id, text }).catch((err) => console.error("save approval post failed:", err));

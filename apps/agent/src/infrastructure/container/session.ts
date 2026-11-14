@@ -16,11 +16,11 @@ import { Forms } from "./forms";
 import { extractImages, loadImages, sendImages, type OutImage } from "./images";
 import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
-import { Posts } from "./posts";
+import { DEPLOY_ICON, Posts } from "./posts";
 import { calendarLogin, cloudflareLogin, silpoLogin } from "./logins";
 import { retitle } from "./title";
 import { WebProxy } from "./proxy";
-import { FORM_PREFIX, WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
+import { FORM_PREFIX, WATCH_PREFIX, SESSION_PREFIX, deployKey, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -253,7 +253,9 @@ export class AgentSession extends DurableObject<Env> {
 		await this.posts.settled(); // проміжна правка вже в дорозі: підсумок іде після неї
 		await this.posts.mark(w, false);
 		if (!this.env.BOT_TOKEN) return;
-		await this.icon(w, /^[❌⛔⚠]/u.test(text) ? "failed" : "done");
+		// Якщо PR сесії вже в деплої, іконку лишає стадія деплою, а не «готово»
+		const deploy = w.postId ? await this.ctx.storage.get<DeployInfo>(deployKey(w.postId)) : undefined;
+		await this.icon(w, deploy?.stage ? DEPLOY_ICON[deploy.stage] : /^[❌⛔⚠]/u.test(text) ? "failed" : "done");
 		// Підсумок успішної роботи: якщо агент відкрив PR, додаємо «Змерджити» (зупинену чи невдалу сесію не мерджимо з чату)
 		const check = text.startsWith("✅") ? await this.pullCheck(watchId(key)) : { ok: false };
 		const mergeable = check.ok;

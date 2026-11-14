@@ -31,15 +31,26 @@ export const renameTopic = (env: BotEnv, chat: number, threadId: number, name: s
 
 // Емодзі теми за станом сесії. Telegram дозволяє лише іконки зі свого набору (getForumTopicIconStickers), тому для кожного
 // стану є запасні варіанти: береться перший, що є в наборі.
-export type TopicState = "working" | "question" | "done" | "failed";
+// Стани деплою PR сесії: approval — чекає схвалення, deploying — змерджено/виконується, deployed — успіх, deployFailed — збій чи відхилення.
+export type TopicState = "working" | "question" | "done" | "failed" | "approval" | "deploying" | "deployed" | "deployFailed";
 const TOPIC_EMOJI: Record<TopicState, string[]> = {
 	working: ["⚡", "🔥"],
 	question: ["❓", "❗"],
 	done: ["✅", "👍"],
 	failed: ["❗", "❌"],
+	approval: ["👀", "🙏", "❓"],
+	deploying: ["🚀", "🔥", "⚡"],
+	deployed: ["🎉", "🏆", "✅"],
+	deployFailed: ["❌", "❗"],
 };
 let iconIds: Promise<Map<string, string>> | undefined;
 const lastIcon = new Map<string, TopicState>(); // щоб не слати однаковий стан двічі
+
+// Для тестів: забуває набір іконок і останній стан тем.
+export function resetTopicIcons(): void {
+	iconIds = undefined;
+	lastIcon.clear();
+}
 
 // Ставить темі іконку стану; збій (немає прав, чат без тем, емодзі немає в наборі) не критичний.
 export async function setTopicIcon(env: BotEnv, chat: number, threadId: number, state: TopicState): Promise<void> {

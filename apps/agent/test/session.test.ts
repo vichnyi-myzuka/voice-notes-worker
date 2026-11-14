@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetTopicIcons } from "../src/infrastructure/chat/messages";
 
 // У Node немає модуля cloudflare:workers: підставляємо мінімальний DurableObject.
 vi.mock("cloudflare:workers", () => ({
@@ -395,6 +396,26 @@ describe("AgentSession", () => {
 		await session.start(ID, { prompt: "Задача" });
 		await session.watch(ID, { chatId: 901, url: "u", postId: 7, header: "h", threadId: 902 });
 		expect(edits).toEqual([{ chat_id: 901, message_thread_id: 902, icon_custom_emoji_id: "bolt" }]);
+		vi.unstubAllGlobals();
+	});
+
+	it("іконка теми за стадіями деплою: схвалення, виконання, успіх; підсумок ходу її не затирає", async () => {
+		resetTopicIcons();
+		const { session, opencode } = setup({ BOT_TOKEN: "bot" });
+		const edits: { icon_custom_emoji_id?: string }[] = [];
+		vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+			const method = String(url).split("/").pop()!;
+			if (method === "getForumTopicIconStickers") return Response.json({ ok: true, result: [{ emoji: "⚡️", custom_emoji_id: "bolt" }, { emoji: "👀", custom_emoji_id: "eyes" }, { emoji: "🚀", custom_emoji_id: "rocket" }, { emoji: "🎉", custom_emoji_id: "party" }, { emoji: "✅", custom_emoji_id: "check" }] });
+			if (method === "editForumTopic") edits.push(JSON.parse(init.body as string));
+			return Response.json({ ok: true, result: true });
+		});
+		await session.start("tg-1-1", { prompt: "Задача", repo: "me/app", name: "card" });
+		await session.watch("tg-1-1", { chatId: 901, url: "u", postId: 7, header: "h", threadId: 902 });
+		await session.setDeploy("me/app", "card-1", { text: "чекає", repo: "me/app", runId: 1, stage: "approval" });
+		await session.setDeployByPost(7, { text: "схвалено", stage: "deploying" });
+		await session.setDeploy("me/app", "card-1", { text: "готово", done: true, stage: "deployed" });
+		expect(edits.map((e) => e.icon_custom_emoji_id)).toEqual(["bolt", "eyes", "rocket", "party"]);
+		opencode.busy.clear();
 		vi.unstubAllGlobals();
 	});
 

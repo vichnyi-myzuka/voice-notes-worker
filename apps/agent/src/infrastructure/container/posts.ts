@@ -1,9 +1,12 @@
 import { tg } from "@voice-notes/core";
-import type { DeployInfo, PostRef, WatchTarget } from "../../domain/agent";
+import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../domain/agent";
 import type { Env } from "../../env";
-import { QUOTE_CLOSE, QUOTE_OPEN, editChat, type Answers, type Buttons } from "../chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, type Answers, type Buttons, type TopicState } from "../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "./config";
 import { SESSION_PREFIX, deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
+
+// Іконка теми за стадією деплою.
+export const DEPLOY_ICON: Record<DeployStage, TopicState> = { approval: "approval", deploying: "deploying", deployed: "deployed", failed: "deployFailed" };
 
 // Пост сесії в чаті: шапка (завдання) і поточний стан чи підсумок, який агент оновлює на місці, плюс стан деплою PR цієї сесії.
 export class Posts {
@@ -62,6 +65,7 @@ export class Posts {
 	private async applyDeploy(post: NonNullable<Tracked["post"]>, deploy: DeployInfo): Promise<boolean> {
 		if (!post.chatId || !post.url) return false;
 		await this.storage.put(deployKey(post.postId), deploy);
+		if (post.threadId && deploy.stage && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, DEPLOY_ICON[deploy.stage]);
 		const last = (await this.storage.get<LastShown>(lastKey(post.postId))) ?? { status: "✅ Готово", final: true, mergeable: false };
 		return this.show({ chatId: post.chatId, url: post.url, postId: post.postId, header: post.header }, last.status, last.final);
 	}
