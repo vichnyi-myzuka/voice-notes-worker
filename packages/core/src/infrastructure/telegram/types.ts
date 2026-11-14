@@ -77,7 +77,7 @@ export type TgMethods = {
 };
 
 // Натискання inline-кнопки: хто натиснув, під яким повідомленням і що було в callback_data.
-export type TgCallbackQuery = { id: string; from: { id: number }; message?: { message_id: number; chat: { id: number; type: string }; text?: string }; data?: string };
+export type TgCallbackQuery = { id: string; from: { id: number }; message?: { message_id: number; chat: { id: number; type: string }; text?: string; message_thread_id?: number }; data?: string };
 
 // Оновлення з вебхука: повідомлення (приват), дописи каналу й натискання кнопок.
 export type TgUpdate = { message?: TgMessage; channel_post?: TgMessage; callback_query?: TgCallbackQuery };

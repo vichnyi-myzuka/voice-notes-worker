@@ -2,7 +2,7 @@ import { tg, type BotEnv, type TgCallbackQuery } from "@voice-notes/core";
 import type { Env } from "../../env";
 import type { Deploys, Sessions } from "../../domain/agent";
 import { callback } from "../../infrastructure/chat";
-import { mergePull, openPullNumber, reviewDeployments } from "../../infrastructure/github";
+import { MergeRefused, mergeBlockers, mergePull, openPullNumber, reviewDeployments } from "../../infrastructure/github";
 
 // Кнопки «Схвалити/Відхилити» під запитом на деплой (формат callback_data — у infrastructure/chat/callback.ts).
 export const reviewButtons = (repo: string, runId: number) => ({
@@ -23,8 +23,9 @@ export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env
 	const token = env.GITHUB_TOKEN;
 	const target = await agent.pullTarget(id);
 	if (!token || !target) return void (await answer(token ? "Сесія без репозиторію." : "Не налаштовано GITHUB_TOKEN."));
+	let number: number | undefined;
 	try {
-		const number = await openPullNumber(token, target.repo, target.branch);
+		number = await openPullNumber(token, target.repo, target.branch);
 		if (!number) return void (await answer("Відкритого PR не знайдено."));
 		await mergePull(token, target.repo, number);
 		const message = query.message!;
@@ -37,7 +38,16 @@ export async function handleMergeButton(bot: BotEnv, query: TgCallbackQuery, env
 		if (site) await agent.resume(id, publishPrompt(site, target.branch, number), { chatId: message.chat.id, url: agent.url(id) }).catch((err) => console.error("publish resume failed:", err));
 	} catch (err) {
 		console.error("merge failed:", err);
-		await answer(`Не вдалося змерджити: ${err instanceof Error ? err.message : err}`);
+		const detail = err instanceof Error ? err.message : String(err);
+		// Відмова GitHub: з'ясовуємо причини (конфлікти, CI…) і пишемо їх у чат повністю (підказка обмежена 200 символами)
+		const reasons = number && err instanceof MergeRefused ? await mergeBlockers(token, target.repo, number).catch((e) => (console.error("blockers failed:", e), [])) : [];
+		if (!reasons.length) return void (await answer(`Не вдалося змерджити: ${detail}`));
+		await answer(`Не вдалося змерджити PR #${number}: ${reasons.join("; ")}`);
+		const message = query.message;
+		if (message) {
+			const text = `🚫 PR #${number} не змерджено:\n${reasons.map((r) => `• ${r}`).join("\n")}\n\nGitHub: ${detail}`;
+			await tg(bot, "sendMessage", { chat_id: message.chat.id, text, ...(message.message_thread_id && { message_thread_id: message.message_thread_id }), link_preview_options: { is_disabled: true } }).catch((e) => console.error("reasons send failed:", e));
+		}
 	}
 }
 
