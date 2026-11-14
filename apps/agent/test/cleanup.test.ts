@@ -1,9 +1,9 @@
 /// <reference types="node" />
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { tmpDir } from "./tmp";
 import { CLEANUP } from "../src/infrastructure/container/cleanup";
 
 // Справжній git: «GitHub» (bare), спільний клон і worktree сесії в /workspace/sessions-подібній теці. Хуки вимкнено: системний pre-push (агент) забороняє пуш у main, а тест пушить у власний тимчасовий bare-репозиторій.
@@ -12,7 +12,7 @@ const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, env: cleanEnv(), stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 
 function setup() {
-	const root = mkdtempSync(join(tmpdir(), "cleanup-"));
+	const root = tmpDir("cleanup-");
 	const origin = join(root, "origin.git");
 	const base = join(root, "repos/me/app");
 	mkdirSync(base, { recursive: true });

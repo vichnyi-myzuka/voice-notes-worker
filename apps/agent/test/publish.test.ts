@@ -1,9 +1,10 @@
 /// <reference types="node" />
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
+import { tmpDir } from "./tmp";
 
 // `publish` викликає rclone: підставляємо фейковий, що лише записує аргументи й змінні віддаленого сховища.
 const SCRIPT = join(import.meta.dirname, "../payload/publish.sh");
@@ -11,7 +12,7 @@ let bin: string;
 let log: string;
 
 beforeAll(() => {
-	const root = mkdtempSync(join(tmpdir(), "publish-"));
+	const root = tmpDir("publish-");
 	bin = join(root, "bin");
 	log = join(root, "rclone.log");
 	mkdirSync(bin);
@@ -37,7 +38,7 @@ function run(args: string[], extra: Record<string, string> = {}, cwd?: string) {
 }
 
 const site = (files: Record<string, string> = { "index.html": "<h1>hi</h1>" }) => {
-	const dir = mkdtempSync(join(tmpdir(), "site-"));
+	const dir = tmpDir("site-");
 	for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
 	return dir;
 };
@@ -108,7 +109,7 @@ describe("publish", () => {
 		});
 
 		it("публічний сайт не належить сесії: /delete його не зачепить", () => {
-			const root = realpathSync(mkdtempSync(join(tmpdir(), "pub-")));
+			const root = realpathSync(tmpDir("pub-"));
 			const sessions = join(root, "sessions");
 			const published = join(root, "published");
 			mkdirSync(join(sessions, "docs-1"), { recursive: true });
@@ -120,7 +121,7 @@ describe("publish", () => {
 	describe("кому належить сайт (для /delete сесії)", () => {
 		// Тека сесій і список належності підміняються змінними, як /workspace у контейнері.
 		const world = () => {
-			const root = realpathSync(mkdtempSync(join(tmpdir(), "own-"))); // справжній шлях: на macOS /var є посиланням на /private/var, а sh бере cwd без посилань
+			const root = realpathSync(tmpDir("own-")); // справжній шлях: на macOS /var є посиланням на /private/var, а sh бере cwd без посилань
 			const sessions = join(root, "sessions");
 			const published = join(root, "published");
 			for (const s of ["docs-1", "feat-2"]) mkdirSync(join(sessions, s, "site"), { recursive: true });
