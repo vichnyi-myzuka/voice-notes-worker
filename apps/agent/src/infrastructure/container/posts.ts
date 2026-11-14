@@ -1,7 +1,7 @@
 import { tg } from "@voice-notes/core";
 import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../domain/agent";
 import type { Env } from "../../env";
-import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, showKeys, threadUi, type Answers, type KeyState, type Buttons, type TopicState } from "../chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, editChat, sendChat, setTopicIcon, showKeys, threadUi, type Answers, type KeyState, type Buttons, type TopicState } from "../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "./config";
 import { SESSION_PREFIX, deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
 
@@ -76,7 +76,12 @@ export class Posts {
 	// Дописує в пост сесії її деплой (запит на схвалення, результат) і перемальовує пост на місці. false — поста немає чи правка не вдалась.
 	private async applyDeploy(post: NonNullable<Tracked["post"]>, deploy: DeployInfo): Promise<boolean> {
 		if (!post.chatId || !post.url) return false;
+		const before = await this.storage.get<DeployInfo>(deployKey(post.postId));
 		await this.storage.put(deployKey(post.postId), deploy);
+		// Режим messages: зміна стану деплою ще й дописується новим повідомленням унизу теми (перший пост теж оновлюється нижче).
+		if (post.threadId && this.env.BOT_TOKEN && before?.text !== deploy.text && (await threadUi(this.env, true)).statusPerTurn) {
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, deploy.text, post.url, "none", undefined, undefined, post.threadId).catch((err) => console.error("deploy message failed:", err));
+		}
 		if (post.threadId) await this.keys({ chatId: post.chatId, threadId: post.threadId }, deploy.stage === "approval" ? "approval" : "done").catch((err) => console.error("keys failed:", err));
 		if (post.threadId && deploy.stage && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, DEPLOY_ICON[deploy.stage]);
 		const last = (await this.storage.get<LastShown>(lastKey(post.postId))) ?? { status: "✅ Готово", final: true, mergeable: false };

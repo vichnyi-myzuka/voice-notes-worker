@@ -1071,6 +1071,11 @@ describe("AgentSession", () => {
 				const keyboard = sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup) as unknown as { reply_markup: { keyboard: { text: string }[][] } }[];
 				expect(keyboard.at(-1)!.reply_markup.keyboard[0].map((b) => b.text)).toEqual(["✅ Схвалити", "❌ Відхилити", "🗑 Видалити"]);
 				expect(await t.session.pendingReview(SID)).toEqual({ postId: 77, repo: "me/app", runId: 9 });
+				// стан деплою ще й окремим повідомленням унизу теми (повтор того самого тексту нового не шле)
+				const below = () => sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {})) && String(c.text).includes("Деплой чекає схвалення"));
+				expect(below()).toHaveLength(1);
+				await t.session.setDeploy("me/app", "card-1", { text: "🚀 Деплой чекає схвалення", repo: "me/app", runId: 9, stage: "approval" });
+				expect(below()).toHaveLength(1);
 			});
 
 			it("THREAD_UI=messages: уточнення відкриває нове повідомлення зі станом, воно оновлюється до підсумку; початковий пост не чіпається", async () => {
