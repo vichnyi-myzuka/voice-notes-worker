@@ -469,6 +469,13 @@ export class AgentSession extends DurableObject<Env> {
 			await this.ctx.storage.setAlarm(Date.now());
 			return;
 		}
+		// Старт ще не почався: уточнення дописується до задачі старту (інакше нове завдання з тим самим ключем стерло б сам старт).
+		if (queued && "input" in queued && !queued.startedAt) {
+			const merged = [...(queued.input.images ?? []), ...(images ?? [])];
+			await this.ctx.storage.put(jobKey(id), { ...queued, input: { ...queued.input, prompt: `${queued.input.prompt}\n\n${text}`, ...(merged.length && { images: merged }) } } satisfies Job);
+			await this.ctx.storage.setAlarm(Date.now());
+			return;
+		}
 		await this.enqueue({ id, text, target, attempts: 0, ...(images?.length && { images }) });
 	}
 
@@ -591,21 +598,17 @@ export class AgentSession extends DurableObject<Env> {
 		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }), ...(target.title && { title: target.title }) } : tracked.post;
 		if (target.postId) await this.ctx.storage.put(sessionKey(id), { ...tracked, post } satisfies Tracked);
 		let full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
-		// Уточнення в темі (режим messages): хід агента отримує власне повідомлення зі станом (без шапки завдання), яке оновлюється до підсумку;
-		// початковий пост лишається як є (на ньому деплой, ідентичність сесії).
-		let fresh = false;
+		// Уточнення в темі (режим messages): окремого повідомлення стану немає, прогрес показує табло (пост сесії, редагується на місці),
+		// а клавіші «працює» міняє єдине повідомлення-носій.
 		if (!target.postId && post?.threadId && this.env.BOT_TOKEN && (await threadUi(this.env, true)).statusPerTurn) {
-			// Без клавіатури внизу (її мають лише нередаговані повідомлення): стан оновлюється на місці.
-			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, full.url, "none", undefined, undefined, post.threadId).catch((err) => (console.error("status message failed:", err), undefined));
 			await this.posts.keys({ chatId: full.chatId, threadId: post.threadId }, "working").catch((err) => console.error("keys failed:", err));
-			if (statusId) (full = { ...full, postId: statusId, header: "" }), (fresh = true);
 		}
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
 		if (previous?.postId && previous.postId !== full.postId) await this.posts.mark(previous, false); // реакція не лишається на старому пості
 		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);
 		await this.posts.mark(full, true);
 		await this.icon(full, "working");
-		if (!target.postId && post && !fresh) await this.posts.show(full, WORKING); // уточнення: пост знову показує «Працює»
+		if (!target.postId && post) await this.posts.show(full, WORKING); // уточнення: пост знову показує «Працює»
 		this.listen();
 		await this.scheduleSoon();
 	}
@@ -798,6 +801,11 @@ export class AgentSession extends DurableObject<Env> {
 	async byThread(chatId: number, threadId: number): Promise<string | undefined> {
 		for (const [key, tracked] of await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX })) {
 			if (tracked.post?.threadId === threadId && tracked.post.chatId === chatId) return sessionId(key);
+		}
+		// Сесія, що ще не запустилась (холодний старт, клон): її тема відома лише із завдання в черзі. Без цього повідомлення,
+		// надіслане в цей час, стартувало б у тій самій темі нову сесію.
+		for (const [key, job] of await this.ctx.storage.list<Job>({ prefix: jobKey("") })) {
+			if (job.target.threadId === threadId && job.target.chatId === chatId) return key.slice(jobKey("").length);
 		}
 		return undefined;
 	}

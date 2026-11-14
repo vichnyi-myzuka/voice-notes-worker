@@ -404,6 +404,16 @@ describe("AgentSession", () => {
 		vi.unstubAllGlobals();
 	});
 
+	it("тема сесії, що ще не запустилась (завдання в черзі): byThread її знаходить, щоб повідомлення не стартувало нову сесію", async () => {
+		const { session, store } = setup({});
+		await session.begin(ID, { prompt: "Задача" }, { chatId: 42, url: "u", postId: 7, header: "h", threadId: 555 });
+		expect(await session.byThread(42, 555)).toBe(ID);
+		expect(await session.byThread(42, 556)).toBeUndefined();
+		await session.resume(ID, "Уточнення", { chatId: 42, url: "u", threadId: 555 });
+		const job = store.get(`job:${ID}`) as { input?: { prompt: string } };
+		expect(job.input?.prompt).toBe("Задача\n\nУточнення"); // старт не втрачено
+	});
+
 	it("іконка теми: ⚡ при роботі; без потрібного емодзі в наборі чи при збої Telegram нічого не ламається", async () => {
 		const { session } = setup({ BOT_TOKEN: "bot" });
 		const edits: unknown[] = [];
@@ -1140,7 +1150,7 @@ describe("AgentSession", () => {
 				expect(below()).toHaveLength(1);
 			});
 
-			it("THREAD_UI=messages: уточнення відкриває нове повідомлення зі станом, воно оновлюється до підсумку; початковий пост не чіпається", async () => {
+			it("THREAD_UI=messages: уточнення не створює окремого повідомлення стану: прогрес і підсумок у табло, клавіші — одним носієм", async () => {
 				const t = setup({ BOT_TOKEN: "bot", THREAD_UI: "messages" });
 				const SID = "tg-1-1";
 				await t.session.start(SID, { prompt: "Задача" });
@@ -1148,20 +1158,16 @@ describe("AgentSession", () => {
 				sent.length = 0;
 				await t.session.watch(SID, { chatId: 5, url: "https://agent.example/s/tg-1-1" }); // уточнення: без postId
 				const fresh = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c)) as unknown as { message_thread_id: number; text: string; reply_markup: { keyboard?: { text: string }[][] } }[];
-				// Повідомлення стану редагується, а Telegram не дає редагувати повідомлення з клавіатурою внизу: воно без неї,
-				// а клавіші йдуть окремим коротким носієм.
-				expect(fresh).toHaveLength(2);
-				expect(fresh[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Працює") });
-				expect(fresh[0].reply_markup?.keyboard).toBeUndefined();
-				expect(fresh[1].reply_markup.keyboard![0].map((b) => b.text)).toEqual(["⏹ Стоп", "🗑 Видалити"]);
-				expect(edits().filter((e) => e.message_id === 77)).toEqual([]); // початковий пост не редагується
+				// Лише носій клавіш (Telegram не дає редагувати повідомлення з клавіатурою), без другого «Працює».
+				expect(fresh).toHaveLength(1);
+				expect(fresh[0].reply_markup.keyboard![0].map((b) => b.text)).toEqual(["⏹ Стоп", "🗑 Видалити"]);
+				expect(edits().some((e) => e.message_id === 77 && e.text.includes("Працює"))).toBe(true); // табло показує «Працює»
 				t.opencode.lastText = "Друга відповідь";
 				await t.session.alarm();
 				t.opencode.busy.clear();
 				t.opencode.info[ocId] = { outcome: "succeeded" };
 				await t.session.alarm();
-				expect(edits().some((e) => e.message_id !== 77 && e.text.includes("✅ Готово"))).toBe(true);
-				expect(edits().some((e) => e.message_id === 77)).toBe(false);
+				expect(edits().some((e) => e.message_id === 77 && e.text.includes("✅ Готово"))).toBe(true);
 			});
 
 			it("THREAD_UI=messages: «⚙️ Команди» показує загальні команди, «← Назад» повертає дії сесії; зміна стану теж повертає до дій", async () => {
