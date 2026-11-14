@@ -1,0 +1,30 @@
+{
+  "name": "@voice-notes/docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node --experimental-strip-types scripts/generate.ts",
+    "build": "npm run generate && vite build",
+    "deploy": "npm run build && wrangler deploy",
+    "dev": "npm run build && wrangler dev --var LOCAL_DEV:1",
+    "typecheck": "npm run generate && tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json && tsc --noEmit -p web/tsconfig.json",
+    "lint": "oxlint -c ../../.oxlintrc.json --deny-warnings src scripts test",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@voice-notes/core": "*"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "clsx": "^2.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "recharts": "^3.0.0",
+    "tailwind-merge": "^3.0.0",
+    "tailwindcss": "^4.0.0",
+    "vite": "^7.0.0"
+  }
+}

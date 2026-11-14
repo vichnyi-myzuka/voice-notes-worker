@@ -1,0 +1,15 @@
+name = "voice-notes-docs"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = false
+preview_urls = false
+# Домен (docs.<BASE_DOMAIN>) підключає CI: wrangler deploy --domain (див. README, «CI/CD»)
+
+[observability]
+enabled = true
+
+# Статику збирає `npm run build` (build/index.ts) з README, docs/ і коду; воркер перевіряє Access і віддає її.
+[assets]
+directory = "dist"
+binding = "ASSETS"
+run_worker_first = true
