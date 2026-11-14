@@ -199,11 +199,11 @@ export class Computer {
 	}
 
 	// Готує теку сесії в контейнері (клон + worktree або порожня тека) і повертає її шлях. exec не успадковує env контейнера,
-	// тому токен передаємо явно. api — адреса воркера й секрет сесії для команди `schedule` (session-prep кладе їх у файл). Викликається лише всередині serial().
-	async prepare(folder: string, repo: string | undefined, mcp: McpWanted = {}, api?: { origin: string; token: string }): Promise<string> {
+	// тому токен передаємо явно. api — адреса воркера, секрет сесії й Service Token Access для команди `schedule` (session-prep кладе їх у файл). Викликається лише всередині serial().
+	async prepare(folder: string, repo: string | undefined, mcp: McpWanted = {}, api?: { origin: string; token: string; clientId?: string; clientSecret?: string }): Promise<string> {
 		const proc = await this.ctx.container!.exec(["session-prep", folder, ...(repo ? [repo] : [])], {
 			cwd: "/workspace",
-			env: { HOME: "/root", ...(this.env.GITHUB_TOKEN && { GITHUB_TOKEN: this.env.GITHUB_TOKEN }), ...(api && { AGENT_API_URL: api.origin, AGENT_API_TOKEN: api.token }) },
+			env: { HOME: "/root", ...(this.env.GITHUB_TOKEN && { GITHUB_TOKEN: this.env.GITHUB_TOKEN }), ...(api && { AGENT_API_URL: api.origin, AGENT_API_TOKEN: api.token, ...(api.clientId && api.clientSecret && { AGENT_API_CLIENT_ID: api.clientId, AGENT_API_CLIENT_SECRET: api.clientSecret }) }) },
 		});
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`session-prep failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);

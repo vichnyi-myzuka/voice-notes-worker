@@ -362,10 +362,10 @@ export class AgentSession extends DurableObject<Env> {
 		return (await this.ctx.storage.get<Tracked>(sessionKey(id)))?.ocId ?? ((await this.ctx.storage.get(jobKey(id))) ? "pending" : undefined);
 	}
 
-	// Адреса воркера й секрет сесії для команди `schedule` у контейнері; без відомої адреси команда в сесії не працює.
-	private async agentApi(folder: string): Promise<{ origin: string; token: string } | undefined> {
+	// Адреса воркера, секрет сесії й Service Token Access для команди `schedule` у контейнері; без відомої адреси команда в сесії не працює.
+	private async agentApi(folder: string): Promise<{ origin: string; token: string; clientId?: string; clientSecret?: string } | undefined> {
 		const origin = await this.ctx.storage.get<string>("origin");
-		return origin ? { origin, token: await sessionToken(this.env.OPENCODE_PASSWORD, folder) } : undefined;
+		return origin ? { origin, token: await sessionToken(this.env.OPENCODE_PASSWORD, folder), clientId: this.env.AGENT_API_ACCESS_CLIENT_ID, clientSecret: this.env.AGENT_API_ACCESS_CLIENT_SECRET } : undefined;
 	}
 
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.

@@ -18,7 +18,7 @@ export default {
 		// Вебхуки Telegram і GitHub стоять повз Access (див. docs/adr/0003-webhooks-bypass-access.md), решта — за Access.
 		if (url.pathname === TELEGRAM_PATH) return handleTelegram(req, env, { agent, llm: workersLlm(env), repos: parseRepos(env.AGENT_REPOS), defer: (w) => ctx.waitUntil(w), syncCommands: true, schedules: durableSchedules(env.SCHEDULER) });
 		if (url.pathname === GITHUB_PATH) return handleGithub(req, env, { agent, defer: (w) => ctx.waitUntil(w) });
-		// Агент із контейнера не проходить Access: цей шлях відкритий повз нього й захищений секретом сесії (ADR 0003).
+		// Агент із контейнера: за Access (Service Token) і секретом сесії (ADR 0003).
 		if (url.pathname === AGENT_API_PATH || url.pathname.startsWith(`${AGENT_API_PATH}/`)) return handleAgentApi(req, env, durableSchedules(env.SCHEDULER));
 		return handleFetch(req, env, agent, durableSchedules(env.SCHEDULER));
 	},

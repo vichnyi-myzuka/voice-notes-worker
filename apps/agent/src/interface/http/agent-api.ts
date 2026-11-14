@@ -1,4 +1,5 @@
 import { safeEqual } from "@voice-notes/core";
+import { denyUnlessAccess } from "./access";
 import type { NewSchedule, Outcome, SchedulePatch, Schedules } from "../../domain/schedule";
 import type { Env } from "../../env";
 import { sessionToken } from "../../infrastructure/session-token";
@@ -11,11 +12,13 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 const STATUS = { invalid: 400, limit: 409, not_found: 404 } as const;
 const outcome = <T>(o: Outcome<T>) => (o.ok ? json({ schedule: o.value }) : json({ error: o.error }, STATUS[o.code]));
 
-// API розкладів для агента всередині контейнера (команда `schedule`). Це другий шлях повз Cloudflare Access (поруч із вебхуками,
-// ADR 0003): контейнер не проходить логін, тому захист власний. Секрет сесії в `authorization: Bearer`, назва теки сесії в
-// `x-session-folder`. Агент може лише пропонувати: нові розклади й зміни стають `pending`, і їх активує власник кнопкою в Telegram.
+// API розкладів для агента всередині контейнера (команда `schedule`). Шлях лишається за Cloudflare Access: контейнер не проходить
+// логін, тож іде з Service Token (заголовки CF-Access-Client-Id/Secret, ADR 0003), а воркер ще й перевіряє JWT Access. Поверх цього
+// секрет сесії в `authorization: Bearer`, назва теки сесії в `x-session-folder`. Агент може лише пропонувати: нові розклади й зміни стають `pending`, і їх активує власник кнопкою в Telegram.
 //   GET /agent-api/schedules, POST /agent-api/schedules, PATCH|DELETE /agent-api/schedules/<id>
 export async function handleAgentApi(req: Request, env: Env, schedules: Schedules): Promise<Response> {
+	const denied = await denyUnlessAccess(req, env);
+	if (denied) return denied;
 	const folder = req.headers.get("x-session-folder") ?? "";
 	const bearer = /^Bearer (\S+)$/.exec(req.headers.get("authorization") ?? "")?.[1] ?? "";
 	if (!FOLDER.test(folder) || !bearer || !(await safeEqual(bearer, await sessionToken(env.OPENCODE_PASSWORD, folder)))) return json({ error: "unauthorized" }, 401);

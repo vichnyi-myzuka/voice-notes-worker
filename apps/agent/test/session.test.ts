@@ -822,10 +822,11 @@ describe("AgentSession", () => {
 			});
 
 			it("session-prep отримує адресу воркера й секрет сесії для команди schedule (з посилання на сесію); без begin — не отримує", async () => {
-				const { session, opencode, alarm } = setup({ BOT_TOKEN: "bot" });
+				const { session, opencode, alarm } = setup({ BOT_TOKEN: "bot", AGENT_API_ACCESS_CLIENT_ID: "cid", AGENT_API_ACCESS_CLIENT_SECRET: "csecret" });
 				await session.begin(ID, { prompt: "Задача" }, POST);
 				await session.alarm();
 				const env = opencode.execs.find((e) => e.cmd[0] === "session-prep")!.env!;
+				expect(env).toMatchObject({ AGENT_API_CLIENT_ID: "cid", AGENT_API_CLIENT_SECRET: "csecret" }); // Service Token Access
 				expect(env.AGENT_API_URL).toBe("https://agent.example");
 				expect(env.AGENT_API_TOKEN).toMatch(/^[0-9a-f]{64}$/);
 				expect(alarm.at).not.toBeNull();

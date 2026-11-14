@@ -2,7 +2,7 @@ import type { CalendarLogin, Computer, Sessions, SilpoLogin } from "../../domain
 import { preview, type NewSchedule, type Outcome, type SchedulePatch, type Schedules } from "../../domain/schedule";
 import { AUTOMATIONS_HTML } from "./automations-page";
 import type { Env } from "../../env";
-import { verifyAccess } from "@voice-notes/core";
+import { denyUnlessAccess } from "./access";
 
 const ID = /^[a-z0-9-]{8,64}$/;
 const SCHEDULE_ID = /^[a-f0-9]{8}$/;
@@ -35,10 +35,8 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
 //   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)
 export async function handleFetch(req: Request, env: Env, agent: Sessions & Computer & SilpoLogin & CalendarLogin, schedules?: Schedules): Promise<Response> {
-	if (!env.LOCAL_DEV) {
-		if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return new Response("Access is not configured", { status: 503 });
-		if (!(await verifyAccess(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD }))) return new Response("Forbidden", { status: 403 });
-	}
+	const denied = await denyUnlessAccess(req, env);
+	if (denied) return denied;
 	const url = new URL(req.url);
 
 	if (req.method === "POST" && url.pathname === "/api/sessions") return create(req, agent);

@@ -42,7 +42,7 @@ function parse(args) {
 async function call(method, path, body) {
 	const res = await fetch(`${conf.url}/agent-api/schedules${path}`, {
 		method,
-		headers: { authorization: `Bearer ${conf.token}`, "x-session-folder": folder, ...(body && { "content-type": "application/json" }) },
+		headers: { authorization: `Bearer ${conf.token}`, "x-session-folder": folder, ...(conf.clientId && { "CF-Access-Client-Id": conf.clientId, "CF-Access-Client-Secret": conf.clientSecret }), ...(body && { "content-type": "application/json" }) },
 		...(body && { body: JSON.stringify(body) }),
 	});
 	const data = await res.json().catch(() => ({}));

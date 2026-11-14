@@ -8,7 +8,8 @@ import { sessionToken } from "../src/infrastructure/session-token";
 // timingSafeEqual є лише в workerd: у Node мокаємо порівняння (мок за шляхом файлу в core).
 vi.mock("../../../packages/core/src/infrastructure/security", () => ({ safeEqual: async (a: string, b: string) => a === b }));
 
-const env = { OPENCODE_PASSWORD: "pw" } as unknown as Env;
+// LOCAL_DEV вимикає перевірку Access: її окремо покриває тест нижче (і access.test.ts у core).
+const env = { OPENCODE_PASSWORD: "pw", LOCAL_DEV: "1" } as unknown as Env;
 const FOLDER = "daily-report-abc123";
 const SID = "abcdef12";
 
@@ -34,6 +35,15 @@ describe("API розкладів для агента", () => {
 		expect(await sessionToken("pw", FOLDER)).toBe(await sessionToken("pw", FOLDER));
 		expect(await sessionToken("pw", "other")).not.toBe(await sessionToken("pw", FOLDER));
 		expect(await sessionToken("pw2", FOLDER)).not.toBe(await sessionToken("pw", FOLDER));
+	});
+
+	it("шлях за Access: без налаштованого Access — 503, без JWT — 403, навіть із правильним секретом сесії", async () => {
+		const schedules = { list: async () => [] } as unknown as Schedules;
+		const headers = { authorization: `Bearer ${await sessionToken("pw", FOLDER)}`, "x-session-folder": FOLDER };
+		const req = () => new Request("https://agent.example/agent-api/schedules", { headers });
+		expect((await handleAgentApi(req(), { OPENCODE_PASSWORD: "pw" } as unknown as Env, schedules)).status).toBe(503);
+		const configured = { OPENCODE_PASSWORD: "pw", ACCESS_TEAM_DOMAIN: "t.cloudflareaccess.com", ACCESS_AUD: "aud" } as unknown as Env;
+		expect((await handleAgentApi(req(), configured, schedules)).status).toBe(403);
 	});
 
 	it("без токена, з чужим токеном чи чужою текою — 401", async () => {
