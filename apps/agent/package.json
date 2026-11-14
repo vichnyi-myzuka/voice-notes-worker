@@ -12,6 +12,7 @@
     "ssh": "sh scripts/ssh.sh"
   },
   "dependencies": {
-    "@voice-notes/core": "*"
+    "@voice-notes/core": "*",
+    "@voice-notes/oauth": "*"
   }
 }

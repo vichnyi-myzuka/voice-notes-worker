@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Calendar } from "../src/infrastructure/container/calendar";
+import { calendarLogin } from "../src/infrastructure/container/logins";
 
 function memory() {
 	const store = new Map<string, unknown>();
@@ -23,7 +23,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("Calendar (OAuth для MCP Google Calendar)", () => {
 	it("вхід: адреса з PKCE, offline-доступом і правами на події; чужий state відхиляється, свій — зберігає токени", async () => {
 		const calls = fakeGoogle(() => Response.json({ access_token: "acc", refresh_token: "ref", expires_in: 3600 }));
-		const cal = new Calendar(memory().storage, CLIENT);
+		const cal = calendarLogin(memory().storage, CLIENT);
 		const url = new URL(await cal.loginUrl("https://agent.example"));
 		expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
 		expect(url.searchParams.get("client_id")).toBe("gid");
@@ -45,13 +45,13 @@ describe("Calendar (OAuth для MCP Google Calendar)", () => {
 	});
 
 	it("без client id/secret вхід неможливий", async () => {
-		await expect(new Calendar(memory().storage, {}).loginUrl("https://agent.example")).rejects.toThrow(/GOOGLE_CLIENT_ID/);
+		await expect(calendarLogin(memory().storage, {}).loginUrl("https://agent.example")).rejects.toThrow(/client id\/secret не задані/);
 	});
 
 	it("токен, що скоро спливе, оновлює через refresh_token (Google його не ротує) і не робить зайвих запитів", async () => {
 		let reply = () => Response.json({ access_token: "acc1", refresh_token: "ref1", expires_in: 60 });
 		const calls = fakeGoogle(() => reply());
-		const cal = new Calendar(memory().storage, CLIENT);
+		const cal = calendarLogin(memory().storage, CLIENT);
 		expect(await cal.accessToken()).toBeUndefined();
 		await cal.callback("c", new URL(await cal.loginUrl("https://agent.example")).searchParams.get("state")!); // expires_in 60 с: уже в межах запасу
 
@@ -65,12 +65,12 @@ describe("Calendar (OAuth для MCP Google Calendar)", () => {
 	it("connected: після входу так; коли refresh-токен більше не діє — ні (бот тоді одразу шле посилання на вхід)", async () => {
 		let reply = () => Response.json({ access_token: "a", refresh_token: "r", expires_in: 1 });
 		fakeGoogle(() => reply());
-		const cal = new Calendar(memory().storage, CLIENT);
+		const cal = calendarLogin(memory().storage, CLIENT);
 		expect(await cal.connected()).toBe(false);
 		await cal.callback("c", new URL(await cal.loginUrl("https://agent.example")).searchParams.get("state")!);
 		reply = () => Response.json({ access_token: "b", expires_in: 3600 });
 		expect(await cal.connected()).toBe(true);
-		const dead = new Calendar(memory().storage, CLIENT);
+		const dead = calendarLogin(memory().storage, CLIENT);
 		reply = () => Response.json({ access_token: "a", refresh_token: "r", expires_in: 1 });
 		await dead.callback("c", new URL(await dead.loginUrl("https://agent.example")).searchParams.get("state")!);
 		reply = () => new Response("invalid_grant", { status: 400 });
@@ -81,7 +81,7 @@ describe("Calendar (OAuth для MCP Google Calendar)", () => {
 	it("збій refresh дає undefined, а не виняток", async () => {
 		let reply = () => Response.json({ access_token: "a", refresh_token: "r", expires_in: 1 });
 		fakeGoogle(() => reply());
-		const cal = new Calendar(memory().storage, CLIENT);
+		const cal = calendarLogin(memory().storage, CLIENT);
 		await cal.callback("c", new URL(await cal.loginUrl("https://agent.example")).searchParams.get("state")!);
 		reply = () => new Response("no", { status: 400 });
 		vi.spyOn(console, "error").mockImplementation(() => {});
