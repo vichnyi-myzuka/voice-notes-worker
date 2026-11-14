@@ -86,6 +86,12 @@ export function fakeAgent(origin = "https://agent.example") {
 			}
 			return undefined;
 		},
+		async findByBranch(repo, folder) {
+			for (const [id, s] of sessions) {
+				if (s.input.repo === repo && `${s.input.name}-${id.split("-").at(-1)}` === folder) return { id, chatId: CHAT };
+			}
+			return undefined;
+		},
 		async serve(req) {
 			served.push(new URL(req.url).pathname);
 			return new Response("ui");

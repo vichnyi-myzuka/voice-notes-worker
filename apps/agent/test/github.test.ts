@@ -69,6 +69,35 @@ describe("вебхук GitHub", () => {
 		expect(sent.reply_markup.inline_keyboard[0][0].callback_data).toBe("dismiss");
 	});
 
+	describe("збій check на гілці бота", () => {
+		const check = (over: Record<string, unknown> = {}, repository = { full_name: "me/bot", default_branch: "main" }) => ({ action: "completed", repository, workflow_run: { id: 9, name: "check", head_branch: "agent/fix-7", head_sha: "abc", html_url: "https://github.com/me/bot/actions/runs/9", conclusion: "failure", head_repository: { full_name: "me/bot" }, ...over } });
+
+		it("пише в чат і дає сесії завдання виправити CI", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			await s.hook("workflow_run", check());
+			expect(s.tgCalls("sendMessage")[0]).toMatchObject({ chat_id: -1001 });
+			expect(s.tgCalls("sendMessage")[0].text).toContain("CI не пройшов у agent/fix-7");
+			const messages = s.sessions.get("tg--1001-7")!.messages;
+			expect(messages).toHaveLength(2);
+			expect(messages[1]).toContain("actions/runs/9");
+			expect(s.watches.at(-1)).toMatchObject({ id: "tg--1001-7", target: { chatId: -1001 } });
+		});
+
+		it("успіх, інші workflow, чужі гілки, форки й сесії без репозиторію ігноруються", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			await s.hook("workflow_run", check({ conclusion: "success" }));
+			await s.hook("workflow_run", check({ conclusion: "cancelled" }));
+			await s.hook("workflow_run", check({ name: "lint" }));
+			await s.hook("workflow_run", check({ head_branch: "feature/fix-7" }));
+			await s.hook("workflow_run", check({ head_repository: { full_name: "evil/bot" } }));
+			await s.hook("workflow_run", check({ head_branch: "agent/nope-1" }));
+			expect(s.tgCalls("sendMessage")).toEqual([]);
+			expect(s.sessions.get("tg--1001-7")!.messages).toHaveLength(1);
+		});
+	});
+
 	it("кнопка «Видалити» під результатом деплою видаляє повідомлення (лише від власника)", async () => {
 		const s = setup();
 		const press = async (from: number) => {
