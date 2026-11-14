@@ -50,13 +50,13 @@ export function resolveRepoPath(from: string, href: string): string | null {
 	return parts.join("/");
 }
 
-export function rewriteHref(href: string, from: string, pages: Map<string, Page>, repoUrl: string): string {
+export function rewriteHref(href: string, from: string, pages: Map<string, Page>, repoUrl: string, base = ""): string {
 	if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href)) return href;
 	const [path, hash] = href.split("#");
 	const target = resolveRepoPath(from, decodeURIComponent(path ?? ""));
 	if (target === null) return href;
 	const page = pages.get(target);
-	if (page) return `/${page.slug}.html${hash ? `#${hash}` : ""}`;
+	if (page) return `${base}/${page.slug}.html${hash ? `#${hash}` : ""}`;
 	return `${repoUrl}/blob/main/${target}`; // код, конфіги тощо: відкриваємо на GitHub
 }
 
@@ -64,7 +64,7 @@ export function escapeHtml(s: string): string {
 	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-export function renderMarkdown(md: string, from: string, pages: Map<string, Page>, repoUrl: string): string {
+export function renderMarkdown(md: string, from: string, pages: Map<string, Page>, repoUrl: string, base = ""): string {
 	const marked = new Marked({
 		gfm: true,
 		renderer: {
@@ -74,7 +74,7 @@ export function renderMarkdown(md: string, from: string, pages: Map<string, Page
 				return `<h${depth} id="${id}">${inner}</h${depth}>\n`;
 			},
 			link({ href, title, tokens }) {
-				const url = rewriteHref(href, from, pages, repoUrl);
+				const url = rewriteHref(href, from, pages, repoUrl, base);
 				const t = title ? ` title="${escapeHtml(title)}"` : "";
 				return `<a href="${escapeHtml(url)}"${t}>${this.parser.parseInline(tokens)}</a>`;
 			},
@@ -99,14 +99,14 @@ export interface Meta {
 
 const GROUP_ORDER = ["Архітектура", "Проєкт", "Документація", "Рішення (ADR)", "Довідники для агентів"];
 
-export function renderNav(pages: Page[], current: string): string {
+export function renderNav(pages: Page[], current: string, base = ""): string {
 	const groups = new Map<string, Page[]>();
 	for (const p of pages) groups.set(p.group, [...(groups.get(p.group) ?? []), p]);
 	const ordered = [...groups.keys()].sort((a, b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b));
 	return ordered
 		.map((g) => {
 			const items = (groups.get(g) ?? [])
-				.map((p) => `<li><a href="/${p.slug}.html"${p.slug === current ? ' aria-current="page"' : ""}>${escapeHtml(p.title)}</a></li>`)
+				.map((p) => `<li><a href="${base}/${p.slug}.html"${p.slug === current ? ' aria-current="page"' : ""}>${escapeHtml(p.title)}</a></li>`)
 				.join("");
 			return `<h4>${escapeHtml(g)}</h4><ul>${items}</ul>`;
 		})
@@ -147,7 +147,7 @@ mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "default", secur
 await mermaid.run({ querySelector: "pre.mermaid" });
 </script>`;
 
-export function renderPage(page: Page, body: string, pages: Page[], meta: Meta): string {
+export function renderPage(page: Page, body: string, pages: Page[], meta: Meta, base = ""): string {
 	const short = meta.sha.slice(0, 7);
 	return `<!doctype html>
 <html lang="uk">
@@ -159,7 +159,7 @@ export function renderPage(page: Page, body: string, pages: Page[], meta: Meta):
 <style>${CSS}</style>
 </head>
 <body>
-<nav><div class="brand">Voice notes · архітектура</div>${renderNav(pages, page.slug)}</nav>
+<nav><div class="brand">Voice notes · архітектура</div>${renderNav(pages, page.slug, base)}</nav>
 <main>
 ${body}
 <footer>Зібрано з <a href="${escapeHtml(meta.repoUrl)}/commit/${escapeHtml(meta.sha)}"><code>${escapeHtml(short)}</code></a> · ${escapeHtml(meta.date)} · <a href="${escapeHtml(meta.repoUrl)}/blob/main/${escapeHtml(page.src)}">джерело сторінки</a></footer>

@@ -80,6 +80,8 @@ function recentMerges(): Merge[] {
 		.map(([date, title]) => ({ date, title }));
 }
 
+// Префікс посилань: порожній на власному домені, `/<назва>` коли сайт лежить під шляхом (publish).
+const base = (process.env.DOCS_BASE ?? "").replace(/\/$/, "");
 const repoUrl = `https://github.com/${process.env.GITHUB_REPOSITORY || "vichnyi-myzuka/voice-notes-worker"}`;
 const meta: Meta = {
 	sha: process.env.GITHUB_SHA || git("rev-parse", "HEAD") || "unknown",
@@ -103,7 +105,7 @@ const write = (slug: string, html: string) => {
 
 for (const page of pages) {
 	const md = page === snapshotPage ? snapshotMarkdown(snapshot(), recentMerges(), meta) : read(page.src);
-	write(page.slug, renderPage(page, renderMarkdown(md, page.src, byPath, repoUrl), pages, meta));
+	write(page.slug, renderPage(page, renderMarkdown(md, page.src, byPath, repoUrl, base), pages, meta, base));
 }
 
 console.log(`docs: ${pages.length} сторінок у ${relative(root, out)} (${meta.sha.slice(0, 7)})`);

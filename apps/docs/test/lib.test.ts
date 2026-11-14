@@ -24,6 +24,10 @@ describe("посилання", () => {
 		expect(rewriteHref("docs/adr/0001-x.md", "README.md", pages, repo)).toBe("/adr/0001-x.html");
 	});
 
+	it("базовий префікс додається до посилань на сторінки", () => {
+		expect(rewriteHref("agent.md", "docs/notes.md", pages, repo, "/site")).toBe("/site/agent.html");
+	});
+
 	it("файли коду ведуть на GitHub, зовнішні й якорі лишаються", () => {
 		expect(rewriteHref("../apps/agent/wrangler.toml", "docs/agent.md", pages, repo)).toBe(`${repo}/blob/main/apps/agent/wrangler.toml`);
 		expect(rewriteHref("https://x.dev/a", "README.md", pages, repo)).toBe("https://x.dev/a");
