@@ -28,6 +28,8 @@ export const WORKING = "⏳ Працює";
 // потім показується в пості.
 export const JOB_ATTEMPTS = 6;
 export const JOB_RETRY_MS = 15 * 1000;
+// Завдання, яке виконується довше (Durable Object могли вивантажити посеред роботи), alarm запускає знову: start і session-prep ідемпотентні.
+export const JOB_STALE_MS = 3 * 60 * 1000;
 export const PROGRESS_INTERVAL_MS = 4000; // не частіше: ліміти Telegram на редагування одного повідомлення
 export const HEADER_DEPLOYED_MAX = 150; // шапка згорнутого поста після успішного деплою
 export const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096

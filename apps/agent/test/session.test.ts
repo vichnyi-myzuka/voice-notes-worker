@@ -17,7 +17,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execStderr: "", execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -57,13 +57,13 @@ function fakeContainer() {
 			}
 			opencode.execs.push({ cmd, env: options?.env });
 			opencode.execMax = Math.max(opencode.execMax, ++opencode.execActive);
-			await Promise.resolve();
+			await (opencode.execGate ?? Promise.resolve());
 			opencode.execActive--;
 			return {
 				output: async () => ({
 					exitCode: opencode.execFails ? 1 : 0,
 					stdout: new TextEncoder().encode(cmd[0] === "cat" ? opencode.procNet : `/workspace/sessions/${cmd[1]}\n`),
-					stderr: new TextEncoder().encode(opencode.execFails ? "fatal: repository not found" : ""),
+					stderr: new TextEncoder().encode(opencode.execFails ? "fatal: repository not found" : opencode.execStderr),
 				}),
 			};
 		},
@@ -115,7 +115,7 @@ function fakeContainer() {
 					return new Response(null, { status: 204 });
 				}
 				const m = path.match(/^\/api\/session\/([^/]+)(?:\/(prompt|interrupt))?$/);
-				if (m && !opencode.sessions.has(m[1])) return new Response("not found", { status: 404 });
+				if (m && !opencode.sessions.has(m[1])) return new Response(JSON.stringify({ _tag: "SessionNotFoundError", sessionID: m[1] }), { status: 404 });
 				if (req.method === "DELETE" && m && !m[2]) {
 					opencode.sessions.delete(m[1]);
 					opencode.deleted.push(m[1]);
@@ -144,6 +144,7 @@ function setup(extraEnv: Record<string, string> = {}) {
 	const { container, opencode } = fakeContainer();
 	const store = new Map<string, unknown>();
 	const alarm = { at: null as number | null };
+	const background: Promise<unknown>[] = [];
 	const ctx = {
 		container,
 		storage: {
@@ -155,11 +156,17 @@ function setup(extraEnv: Record<string, string> = {}) {
 			list: async ({ prefix }: { prefix: string }) => new Map([...store].filter(([k]) => k.startsWith(prefix))),
 		},
 		blockConcurrencyWhile: (fn: () => Promise<void>) => fn(),
-		waitUntil: () => {},
+		waitUntil: (p: Promise<unknown>) => void background.push(p),
 	};
 	const env = { OPENCODE_PASSWORD: "pw", ANTHROPIC_API_KEY: "ak", GITHUB_TOKEN: undefined, ...extraEnv };
 	const session = new AgentSession(ctx as unknown as DurableObjectState, env as never);
-	return { session, container, opencode, store, alarm };
+	// Фонові завдання alarm (waitUntil): більшість тестів чекає їх завершення, як це було до винесення з alarm.
+	const rawAlarm = session.alarm.bind(session);
+	session.alarm = async () => {
+		await rawAlarm();
+		await Promise.all(background.splice(0));
+	};
+	return { session, container, opencode, store, alarm, rawAlarm, background };
 }
 
 const ID = "session-0001";
@@ -247,6 +254,15 @@ describe("AgentSession", () => {
 		expect(a.sessionId).toBe(b.sessionId);
 		expect(opencode.seq).toBe(1);
 		expect(opencode.prompts).toHaveLength(1);
+	});
+
+	it("start: з виводу session-prep у лог іде лише рядок секундоміра", async () => {
+		const { session, opencode } = setup();
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
+		opencode.execStderr = "remote: Counting objects\ntiming fetch=400ms worktree=80ms deps-cached=1100ms\nщось ще";
+		await session.start(ID, { prompt: "Задача", repo: "me/app" });
+		const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("latency session-prep"));
+		expect(lines).toEqual([`latency session-prep ${ID}: fetch=400ms worktree=80ms deps-cached=1100ms`]);
 	});
 
 	it("start: помилка session-prep не лишає сесії й не ставить задачу", async () => {
@@ -721,6 +737,19 @@ describe("AgentSession", () => {
 			expect(sent).toHaveLength(1); // спостереження знято
 		});
 
+		it("сесії OpenCode вже немає: спостереження знімається з поясненням, а не падає в 404 щоразу", async () => {
+			const { session, opencode, store } = await watched();
+			await session.alarm(); // бачимо, що працює
+			opencode.sessions.delete(ocId);
+			opencode.busy.clear();
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			await session.alarm();
+			expect(store.has(`watch:${ID}`)).toBe(false);
+			expect(sent.at(-1)?.text).toContain("Сесії OpenCode вже немає");
+			await session.alarm();
+			expect(sent).toHaveLength(1);
+		});
+
 		describe("події OpenCode (SSE)", () => {
 			const flush = async () => {
 				for (let i = 0; i < 20; i++) await Promise.resolve();
@@ -952,6 +981,41 @@ describe("AgentSession", () => {
 				await session.alarm();
 				expect(store.has(`job:${ID}`)).toBe(false);
 				expect(store.has(`watch:${ID}`)).toBe(true);
+			});
+
+			it("alarm не чекає довгого старту: нове завдання, що прийшло під час підготовки теки, виконується одразу", async () => {
+				const { session, opencode, rawAlarm, background } = setup({ BOT_TOKEN: "bot" });
+				await session.start(ID, { prompt: "Перша" });
+				let release!: () => void;
+				opencode.execGate = new Promise<void>((r) => (release = r));
+				await session.begin("session-0002", { prompt: "Нова" }, POST);
+				await rawAlarm(); // повертається, хоч session-prep ще не завершився
+				expect(opencode.prompts.map((p) => p.text)).toEqual(["Перша"]);
+				await session.resume(ID, "Уточнення", { chatId: 5, url: TARGET.url });
+				await rawAlarm();
+				for (let i = 0; i < 50; i++) await Promise.resolve();
+				await new Promise((r) => setTimeout(r, 0));
+				expect(opencode.prompts.map((p) => p.text)).toEqual(["Перша", "Уточнення"]); // нова сесія ще в session-prep
+				release();
+				await Promise.all(background.splice(0));
+				expect(opencode.prompts.map((p) => p.text)).toEqual(["Перша", "Уточнення", "Нова"]);
+			});
+
+			it("завдання, що вже виконується, alarm не запускає вдруге; після вивантаження (застарілий startedAt) запускає знову", async () => {
+				const { session, opencode, rawAlarm, background, store } = setup({ BOT_TOKEN: "bot" });
+				await session.start(ID, { prompt: "Перша" });
+				let release!: () => void;
+				opencode.execGate = new Promise<void>((r) => (release = r));
+				await session.begin("session-0002", { prompt: "Нова" }, POST);
+				await rawAlarm();
+				await rawAlarm(); // повторний alarm під час виконання
+				release();
+				await Promise.all(background.splice(0));
+				expect(opencode.prompts.filter((p) => p.text === "Нова")).toHaveLength(1);
+				// Завдання, залишене «виконуваним» давно (екземпляр вивантажили), підхоплюється.
+				store.set("job:session-0003", { id: "session-0003", input: { prompt: "Втрачена" }, target: POST, attempts: 0, startedAt: Date.now() - 10 * 60 * 1000 });
+				await session.alarm();
+				expect(opencode.prompts.map((p) => p.text)).toContain("Втрачена");
 			});
 
 			it("resume: уточнення в сплячий контейнер іде через alarm, не блокуючи виклик", async () => {
