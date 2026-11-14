@@ -14,6 +14,7 @@ import sureAgent from "../../../payload/sure-agent.md";
 import { MCP_NAMES, type McpName, type OAuthMcpName } from "../../domain/agent";
 import type { OAuthToken } from "@voice-notes/oauth";
 import { CLOUDFLARE_MCP_URL, SILPO_MCP_URL } from "./logins";
+import { REPORT_SITE_FILES } from "./report-site";
 
 // Файли, які воркер розкладає в контейнер сам (а не кладе в образ): вони змінюються часто, і від цього не мають скидатися знімки
 // та історія сесій. Нові сесії одразу працюють з актуальними версіями; старі сесії зберігають своє.
@@ -45,6 +46,8 @@ export const PAYLOAD: PayloadFile[] = [
 	{ path: "/root/.claude/CLAUDE.md", mode: "644", content: agents },
 	{ path: "/usr/local/bin/publish", mode: "755", content: publish },
 	{ path: "/usr/local/bin/new-report-site", mode: "755", content: newReportSite },
+	// Файли шаблону, які копіює new-report-site (див. report-site.ts)
+	...REPORT_SITE_FILES,
 	// Запит агента на підключення MCP посеред сесії (див. request-mcp.sh і requestedMcp у mcp.ts)
 	{ path: "/usr/local/bin/request-mcp", mode: "755", content: requestMcp },
 	// Агент повідомляє репозиторій сесії, не визначений на старті (див. set-repo.sh і settedRepo у repo.ts)
