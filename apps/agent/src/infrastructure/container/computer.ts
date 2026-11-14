@@ -2,7 +2,7 @@ import type { ComputerInfo, ConnectionsInfo, SnapshotInfo } from "../../domain/a
 import type { Env } from "../../env";
 import { stopwatch } from "../../timing";
 import { parseConnections } from "./connections";
-import { READY_ATTEMPTS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "./config";
+import { FORM_HOLD_MS, READY_ATTEMPTS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "./config";
 import { IMAGE_MAX_BYTES } from "./images";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "./opencode";
 import { PAYLOAD, PAYLOAD_HASH, WRITER, mcpConfig, type McpWanted } from "./payload";
@@ -168,7 +168,8 @@ export class Computer {
 
 	// Alarm зберігає диск контейнера, коли агенти вільні і з минулого знімка щось змінилось, а після AGENT_IDLE_STOP_MS
 	// без роботи зупиняє контейнер. Перепланує себе, лише поки контейнер працює.
-	async settle(): Promise<void> {
+	// formAt: коли поставлено останнє питання, що чекає відповіді (0, якщо немає).
+	async settle(formAt = 0): Promise<void> {
 		if (!this.running) return; // контейнер уже спить
 		const [activeAt = 0, usedAt = 0, saved] = await Promise.all([
 			this.ctx.storage.get<number>("activeAt"),
@@ -186,7 +187,7 @@ export class Computer {
 			await this.ctx.storage.setAlarm(Date.now() + snapshotIntervalMs(this.env));
 			return;
 		}
-		const stopAt = Math.max(activeAt, usedAt) + idleStopMs(this.env);
+		const stopAt = Math.max(Math.max(activeAt, usedAt) + idleStopMs(this.env), formAt ? formAt + FORM_HOLD_MS : 0);
 		if (Date.now() < stopAt) return void (await this.ctx.storage.setAlarm(stopAt));
 		// Знімок свіжий, агенти вільні: диск збережено, тож контейнер можна зупинити.
 		if (await isAnyBusy(this.opencode()).catch(() => true)) return void (await this.ctx.storage.setAlarm(Date.now() + snapshotIntervalMs(this.env)));

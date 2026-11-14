@@ -1259,6 +1259,24 @@ describe("AgentSession", () => {
 			}
 		});
 
+		it("питання, що чекає відповіді, тримає контейнер довше за простій, але не вічно", async () => {
+			const { session, alarm, container, store } = await finishedTask({ AGENT_IDLE_STOP_MS: "60000" });
+			store.set("form:x", { askedAt: Date.now(), formId: "f", ocId: "o", key: "k", choices: [], selected: [], text: "?" });
+			vi.useFakeTimers({ toFake: ["Date"] });
+			try {
+				vi.setSystemTime(Date.now() + 3_600_000); // година: простій давно минув
+				alarm.at = null;
+				await session.alarm();
+				expect(container.running).toBe(true);
+				vi.setSystemTime(Date.now() + 3 * 3_600_000);
+				alarm.at = null;
+				await session.alarm();
+				expect(container.running).toBe(false);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it("простій не зупиняє контейнер, поки агент працює", async () => {
 			const { session, alarm, container, opencode } = setup({ AGENT_IDLE_STOP_MS: "1000" });
 			await session.start(ID, { prompt: "Задача" });

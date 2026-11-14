@@ -18,7 +18,7 @@ import { Posts } from "./posts";
 import { calendarLogin, cloudflareLogin, silpoLogin } from "./logins";
 import { retitle } from "./title";
 import { WebProxy } from "./proxy";
-import { WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
+import { FORM_PREFIX, WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -70,7 +70,9 @@ export class AgentSession extends DurableObject<Env> {
 			await this.computer.markUsed();
 			return void (await this.ctx.storage.setAlarm(Date.now() + WATCH_INTERVAL_MS));
 		}
-		await this.computer.settle();
+		// Агент чекає відповіді на питання: питання живе в пам'яті OpenCode, тож контейнер тримаємо довше (FORM_HOLD_MS).
+		const forms = await this.ctx.storage.list<PendingForm>({ prefix: FORM_PREFIX });
+		await this.computer.settle(Math.max(0, ...[...forms.values()].map((f) => f.askedAt ?? 0)));
 	}
 
 	// Один оберт опитування: зупиняє сесії, що перевищили ліміти, і повідомляє в чат про завершені. Повертає true, поки є що
@@ -507,7 +509,7 @@ export class AgentSession extends DurableObject<Env> {
 		const found = first ?? (form.id ? formChoices(form) : undefined);
 		const text = first?.text ?? describeForm(form);
 		// Форму без кнопок (довільний текст) теж зберігаємо: відповідь текстом її скасує (див. followUp)
-		if (form.id) await this.forms.save(id, { formId: form.id, ocId: entry[1].ocId, key: found?.key ?? "", choices: found?.choices ?? [], multiple: found?.multiple, selected: [], text, next, answers: {} } satisfies PendingForm);
+		if (form.id) await this.forms.save(id, { askedAt: Date.now(), formId: form.id, ocId: entry[1].ocId, key: found?.key ?? "", choices: found?.choices ?? [], multiple: found?.multiple, selected: [], text, next, answers: {} } satisfies PendingForm);
 		await this.progress(entry[1].ocId, "", undefined, text, found && { labels: found.choices.map((c) => c.label), multiple: found.multiple });
 		await this.icon(entry[1], "question");
 	}
