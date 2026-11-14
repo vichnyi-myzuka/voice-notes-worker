@@ -19,7 +19,8 @@ export type ThreadUi = {
 	postButtons(s: { final: boolean; retry: boolean; mergeable: boolean; deployDone: boolean }): Buttons;
 	// Підсумок ходу агента: що писати в пості (post) і чи слати підсумок ще й окремим повідомленням (separate; без поста він іде завжди)
 	// з якими кнопками (buttons).
-	summary(s: { text: string; limit: boolean; mergeable: boolean }): { post: string; separate: boolean; buttons: Buttons };
+	// message — текст окремого повідомлення (у «messages» без повтору «✅ Готово», яке вже є в повідомленні стану).
+	summary(s: { text: string; limit: boolean; mergeable: boolean }): { post: string; message: string; separate: boolean; buttons: Buttons };
 	// Чи кожен хід агента після уточнення починається новим повідомленням зі станом (воно оновлюється до підсумку), а не редагує початковий пост.
 	statusPerTurn: boolean;
 	// Чи лишати в темі повідомлення-уточнення власника (історія розмови), а не видаляти їх після прийняття.
@@ -38,7 +39,7 @@ export type ThreadUi = {
 // Класичний вигляд: один пост, який оновлюється на місці, з кнопками керування під ним; підсумок усередині поста.
 export const classicUi: ThreadUi = {
 	postButtons: ({ final, retry, mergeable, deployDone }) => (deployDone ? "dismiss" : final ? (retry ? "retry" : mergeable ? "mergeable" : "done") : "working"),
-	summary: ({ text, limit, mergeable }) => ({ post: text, separate: false, buttons: limit ? "retry" : mergeable ? "mergeable" : "done" }),
+	summary: ({ text, limit, mergeable }) => ({ post: text, message: text, separate: false, buttons: limit ? "retry" : mergeable ? "mergeable" : "done" }),
 	statusPerTurn: false,
 	keepFollowUps: false,
 	topicOnlyStart: false,
@@ -61,7 +62,7 @@ const KEYSETS: Record<KeyState, KeySet> = {
 const COMMANDS_SET: KeySet = { label: "⚙️ Команди", keys: [["quota", "status"], ["update"], ["back"]] };
 export const messagesUi: ThreadUi = {
 	postButtons: () => "none",
-	summary: ({ text, limit, mergeable }) => ({ post: STATUS(text, limit), separate: true, buttons: limit ? "retry" : mergeable ? "mergeable" : "none" }),
+	summary: ({ text, limit, mergeable }) => ({ post: STATUS(text, limit), message: text.replace(/^✅ Готово\n\n(?=\S)/, ""), separate: true, buttons: limit ? "retry" : mergeable ? "mergeable" : "none" }),
 	statusPerTurn: true,
 	keepFollowUps: true,
 	topicOnlyStart: true,

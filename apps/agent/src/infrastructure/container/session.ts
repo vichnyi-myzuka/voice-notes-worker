@@ -310,7 +310,7 @@ export class AgentSession extends DurableObject<Env> {
 		const shown = await this.posts.show(w, summary.post, true, undefined, mergeable, limit);
 		await this.retitle(watchId(key), w, text);
 		await this.posts.keys(w, limit ? "retry" : mergeable ? "mergeable" : "done").catch((err) => console.error("keys failed:", err));
-		if (!shown || summary.separate) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, summary.buttons, undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
+		if (!shown || summary.separate) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, summary.message, w.url, summary.buttons, undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
 	}
 

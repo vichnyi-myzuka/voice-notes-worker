@@ -1143,6 +1143,7 @@ describe("AgentSession", () => {
 				const summary = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {}))) as unknown as { message_thread_id: number; text: string }[];
 				expect(summary).toHaveLength(1);
 				expect(summary[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Готово: <b>ok</b>") });
+				expect(summary[0].text).not.toContain("✅ Готово"); // статус «✅ Готово» уже в повідомленні стану: підсумок його не повторює
 				// клавіші внизу теми за станом: після завершення лише 🗑 Видалити (⏹ Стоп показує begin/resume)
 				const keyboards = sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup) as unknown as { reply_markup: { keyboard: { text: string }[][] } }[];
 				expect(keyboards.map((k) => k.reply_markup.keyboard[0].map((b) => b.text))).toEqual([["🗑 Видалити"]]);
