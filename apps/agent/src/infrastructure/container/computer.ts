@@ -2,7 +2,7 @@ import type { ComputerInfo, ConnectionsInfo, SnapshotInfo } from "../../domain/a
 import type { Env } from "../../env";
 import { stopwatch } from "../../timing";
 import { parseConnections } from "./connections";
-import { FORM_HOLD_MS, READY_ATTEMPTS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "./config";
+import { FORM_HOLD_MS, READY_ATTEMPTS, SNAPSHOT_CHECK_MS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "./config";
 import { IMAGE_MAX_BYTES } from "./images";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "./opencode";
 import { PAYLOAD, PAYLOAD_HASH, WRITER, mcpConfig, type McpWanted } from "./payload";
@@ -184,16 +184,23 @@ export class Computer {
 			this.ctx.storage.get<number>("usedAt"),
 			this.ctx.storage.get<SavedSnapshot>("snapshot"),
 		]);
-		try {
-			if (!saved || saved.at < activeAt) {
+		// Знімок уже йде у фоні: контейнер не чіпаємо (не зупиняємо), дивимось знову трохи згодом.
+		if (this.snapshotting) return void (await this.alarmNoLater(Date.now() + SNAPSHOT_CHECK_MS));
+		if (!saved || saved.at < activeAt) {
+			// Не частіше за інтервал: інакше робота під час знімка (він змінює activeAt) гнала б знімки один за одним.
+			const wait = saved ? saved.at + snapshotIntervalMs(this.env) - Date.now() : 0;
+			if (wait > 0) return void (await this.alarmNoLater(Date.now() + wait));
+			try {
 				if (await isAnyBusy(this.opencode())) throw new Error("an agent is busy");
-				await this.saveSnapshot();
+			} catch (err) {
+				// Зайнятий агент або тимчасова помилка: повторимо наступного разу.
+				console.error("snapshot skipped:", err);
+				await this.alarmNoLater(Date.now() + snapshotIntervalMs(this.env));
+				return;
 			}
-		} catch (err) {
-			// Зайнятий агент або тимчасова помилка: повторимо наступного разу.
-			console.error("snapshot skipped:", err);
-			await this.alarmNoLater(Date.now() + snapshotIntervalMs(this.env));
-			return;
+			// Знімок диска триває десятки секунд: іде у фоні, щоб alarm не стояв, а нові повідомлення виконувались одразу.
+			this.startSnapshot();
+			return void (await this.alarmNoLater(Date.now() + SNAPSHOT_CHECK_MS));
 		}
 		const stopAt = Math.max(Math.max(activeAt, usedAt) + idleStopMs(this.env), formAt ? formAt + FORM_HOLD_MS : 0);
 		if (Date.now() < stopAt) return void (await this.alarmNoLater(stopAt));
@@ -201,6 +208,18 @@ export class Computer {
 		if (await isAnyBusy(this.opencode()).catch(() => true)) return void (await this.alarmNoLater(Date.now() + snapshotIntervalMs(this.env)));
 		console.log("container stopped: idle");
 		await this.destroyContainer();
+	}
+
+	// Знімок, що зараз іде у фоні (в пам'яті екземпляра: після вивантаження порожній, і alarm просто запустить знімок знову).
+	private snapshotting: Promise<void> | undefined;
+
+	private startSnapshot(): void {
+		const job = this.saveSnapshot().then(
+			() => undefined,
+			(err) => console.error("snapshot failed:", err),
+		);
+		this.snapshotting = job.finally(() => (this.snapshotting = undefined));
+		this.ctx.waitUntil(this.snapshotting);
 	}
 
 	private async saveSnapshot(): Promise<SnapshotInfo> {
@@ -216,6 +235,7 @@ export class Computer {
 	// Ручний знімок: зміни поза сесіями агента (наприклад, через SSH) alarm не бачить. Контейнер, що спить, не будимо.
 	async snapshot(): Promise<SnapshotInfo> {
 		if (!this.running) throw new Error("container is not running");
+		if (this.snapshotting) throw new Error("a snapshot is already in progress");
 		if (await isAnyBusy(this.opencode())) throw new Error("an agent is busy");
 		return this.saveSnapshot();
 	}

@@ -1609,9 +1609,12 @@ describe("AgentSession", () => {
 		}
 
 		it("після знімка alarm перепланується на момент зупинки через простій, а тоді контейнер зупиняється й більше не будить alarm", async () => {
-			const { session, alarm, container } = await finishedTask({ AGENT_IDLE_STOP_MS: "60000" });
+			const { session, alarm, container, background } = await finishedTask({ AGENT_IDLE_STOP_MS: "60000" });
 			alarm.at = null;
-			await session.alarm();
+			await session.alarm(); // знімок іде у фоні, alarm одразу повертається
+			await Promise.all(background.splice(0));
+			alarm.at = null;
+			await session.alarm(); // знімок готовий: наступний alarm — на момент зупинки через простій
 			expect(container.running).toBe(true);
 			expect(alarm.at).toBeGreaterThan(Date.now() + 30_000);
 			expect(alarm.at).toBeLessThanOrEqual(Date.now() + 60_000);
@@ -1665,6 +1668,24 @@ describe("AgentSession", () => {
 			await session.alarm();
 			expect(container.snapshots.size).toBe(1);
 			expect(store.get("snapshot")).toMatchObject({ id: "snap1", image: "image" });
+		});
+
+		it("знімок іде у фоні: alarm не чекає його, а поки він триває, другий не стартує й контейнер не зупиняється", async () => {
+			const { container, alarm, background, rawAlarm } = await finishedTask({ AGENT_IDLE_STOP_MS: "1" });
+			let release!: () => void;
+			const gate = new Promise<void>((r) => (release = r));
+			const original = container.snapshotContainer.bind(container);
+			container.snapshotContainer = async (...args: Parameters<typeof original>) => (await gate, original(...args));
+			alarm.at = null;
+			await rawAlarm(); // повертається, хоч знімок ще не завершився
+			expect(container.snapshots.size).toBe(0);
+			alarm.at = null;
+			await rawAlarm(); // знімок ще йде: нового немає, контейнер живий (навіть при простої)
+			expect(container.running).toBe(true);
+			expect(alarm.at).not.toBeNull();
+			release();
+			await Promise.all(background.splice(0));
+			expect(container.snapshots.size).toBe(1);
 		});
 
 		it("alarm нічого не знімає, поки агент працює, і чекає наступного разу", async () => {
