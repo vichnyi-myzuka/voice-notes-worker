@@ -7,4 +7,4 @@
 **Наслідки.**
 - Підготовка тек і створення сесій виконуються по черзі (`Computer.serial`): паралельні `git clone` одного репозиторію псують один одного.
 - Клас лишається `AgentSession` історично: перейменування потребувало б міграції Durable Object.
-- Усередині клас розділено на модулі (`computer`, `posts`, `forms`, `proxy`, `state`, `config`); зовні його бачать як порт `Agent` (`Sessions & Computer & Deploys`).
+- Усередині клас — фасад над модулями (`store`, `jobs`, `watcher`, `progress`, `limits`, `mcp`, `computer`, `posts`, `forms`, `proxy`, `state`, `config`; розбиття — `docs/agent-refactor.md`); зовні його бачать як порт `Agent` (`Sessions & Computer & Deploys`).

@@ -72,13 +72,6 @@ export async function setTopicIcon(env: BotEnv, chat: number, threadId: number, 
 	}
 }
 
-// Закріплює повідомлення (табло сесії) без сповіщення; збій (немає прав, чат без закріплень) не критичний.
-export const pinMessage = (env: BotEnv, chat: number, messageId: number) =>
-	tg(env, "pinChatMessage", { chat_id: chat, message_id: messageId, disable_notification: true }).then(
-		() => true,
-		(err) => (console.error("pin failed:", err), false),
-	);
-
 // Видаляє тему разом з усіма повідомленнями в ній.
 export const removeTopic = (env: BotEnv, chat: number, threadId: number) =>
 	tg(env, "deleteForumTopic", { chat_id: chat, message_thread_id: threadId }).catch((err) => console.error("delete topic failed:", err));

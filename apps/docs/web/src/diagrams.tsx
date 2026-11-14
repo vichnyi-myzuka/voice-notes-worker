@@ -95,7 +95,7 @@ export function AgentModules() {
       <Box x={540} y={20} w={200} h={70} title="interface/http" lines={["REST API, проксі OpenCode"]} color={0} />
       <Box x={20} y={160} w={460} h={80} title="infrastructure/chat" lines={["пости, клавіатури, callback_data,", "дії над повідомленнями"]} color={2} />
       <Box x={540} y={160} w={400} h={80} title="domain/agent (порт Agent)" lines={["Sessions & Computer & Deploys", "кожен модуль бере лише потрібне"]} color={1} />
-      <Box x={540} y={300} w={400} h={80} title="infrastructure/container" lines={["Durable Object AgentSession,", "контейнер і знімки диска"]} color={1} />
+      <Box x={540} y={300} w={400} h={80} title="infrastructure/container" lines={["AgentSession — фасад над Jobs, Watcher,", "Progress, Mcp, Limits, Computer, Posts"]} color={1} />
       <Arrow points={[[120, 90], [120, 160]]} />
       <Arrow points={[[380, 90], [380, 160]]} />
       <Arrow points={[[640, 90], [640, 160]]} />

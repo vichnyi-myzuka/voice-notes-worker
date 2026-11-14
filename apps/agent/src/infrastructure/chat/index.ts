@@ -2,12 +2,10 @@ import { NO_PREVIEW, tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes
 import { chatHtml, escapeHtml, stripQuote, tablesToCards } from "@voice-notes/telegram-format";
 import type { McpName } from "../../domain/agent";
 import { callback } from "./callback";
-import { replyKeyboard, type KeySet } from "./thread-ui";
 
 export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
-export { KEYS, NEW_SESSION, keyAction, replyKeyboard, sendNewSessionKeyboard, showKeys, threadUi, type KeySet, type KeyState, type KeyView, type SessionKey, type ThreadUi } from "./thread-ui";
 export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
-export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, pinMessage, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
+export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
 
 // Кнопки під постом сесії: поки агент працює — «Стоп» і «Видалити», після завершення — лише «Видалити». Id сесії береться з її
 // посилання (…/s/<id>), у callback_data лежить `<дія>:<id>` (обробляє interface/telegram). Редагування без reply_markup кнопки
@@ -15,8 +13,7 @@ export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, pinMessage, removeMessage, r
 // "mergeable": сесія завершена, а в її гілки є відкритий PR: додається «Змерджити» (`merge:<id>`).
 // "dismiss": деплой завершено, сесію прибрано: лишається лише «Видалити» (просте видалення повідомлення, `dismiss`).
 // "retry": сесія впала на лімітах Claude: додається «Повторити» (`retry:<id>`), що просить агента продовжити.
-// "none": без кнопок керування (режим THREAD_UI=messages: ними керує «Меню сесії»), лишаються лише відповіді на питання й схвалення.
-export type Buttons = "working" | "done" | "mergeable" | "dismiss" | "retry" | "none";
+export type Buttons = "working" | "done" | "mergeable" | "dismiss" | "retry";
 // Запит на схвалення деплою в пості сесії: кнопки «Схвалити/Відхилити» (`appr|rej:<repo>:<id запуску>`, обробляє interface/github/review).
 export type Review = { repo: string; runId: number };
 // Кнопки-відповіді на питання агента: підписи (для множинного вибору з позначками) й режим: одразу відповісти чи перемикати + «Підтвердити».
@@ -25,7 +22,7 @@ const SESSION_ID = /\/s\/(tg-[\w-]+)/;
 function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, answers?: Answers, review?: Review): TgInlineKeyboard | undefined {
 	const id = sessionUrl && buttons ? SESSION_ID.exec(sessionUrl)?.[1] : undefined;
 	if (!id) return undefined;
-	const row = buttons === "none" ? [] : [
+	const row = [
 		...(buttons === "working" ? [{ text: "⏹ Стоп", callback_data: callback.stop(id) }] : []),
 		...(buttons === "retry" ? [{ text: "🔄 Повторити", callback_data: callback.retry(id) }] : []),
 		...(buttons === "mergeable" ? [{ text: "🔀 Змерджити", callback_data: callback.merge(id) }] : []),
@@ -48,11 +45,9 @@ function render(text: string, sessionUrl?: string): { html: string; plain: strin
 
 // Надсилає повідомлення з форматуванням і необов'язковим посиланням на сесію внизу. Якщо Telegram відхилив розмітку, шле
 // той самий текст без неї. Повертає message_id.
-// keys — клавіші внизу теми (режим messages): прикріплюються до цього повідомлення замість окремого повідомлення-носія; тоді
-// кнопок під повідомленням немає (в одного повідомлення або одна, або інша клавіатура).
-export async function sendChat(env: BotEnv, chatId: number | string, text: string, sessionUrl?: string, buttons?: Buttons, answers?: Answers, review?: Review, threadId?: number, keys?: KeySet): Promise<number> {
+export async function sendChat(env: BotEnv, chatId: number | string, text: string, sessionUrl?: string, buttons?: Buttons, answers?: Answers, review?: Review, threadId?: number): Promise<number> {
 	const { html, plain } = render(text, sessionUrl);
-	const reply_markup = (keys ? replyKeyboard(keys) : keyboard(sessionUrl, buttons, answers, review)) as TgInlineKeyboard | undefined;
+	const reply_markup = keyboard(sessionUrl, buttons, answers, review);
 	const thread = threadId ? { message_thread_id: threadId } : {};
 	try {
 		return (await tg(env, "sendMessage", { chat_id: chatId, ...thread, text: html, parse_mode: "HTML", link_preview_options: NO_PREVIEW, reply_markup })).message_id;
