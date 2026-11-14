@@ -2,11 +2,13 @@
 import type { Env } from "./env";
 import { durableAgent } from "./infrastructure/container";
 import { workersLlm } from "@voice-notes/core";
+import { durableSchedules } from "./infrastructure/scheduler";
 import { handleFetch } from "./interface/http";
 import { GITHUB_PATH, handleGithub } from "./interface/github";
 import { TELEGRAM_PATH, handleTelegram, parseRepos } from "./interface/telegram";
 
 export { AgentSession } from "./infrastructure/container";
+export { Scheduler } from "./infrastructure/scheduler";
 export type { Env } from "./env";
 
 export default {
@@ -16,6 +18,6 @@ export default {
 		// Вебхуки Telegram і GitHub стоять повз Access (див. docs/adr/0003-webhooks-bypass-access.md), решта — за Access.
 		if (url.pathname === TELEGRAM_PATH) return handleTelegram(req, env, { agent, llm: workersLlm(env), repos: parseRepos(env.AGENT_REPOS), defer: (w) => ctx.waitUntil(w), syncCommands: true });
 		if (url.pathname === GITHUB_PATH) return handleGithub(req, env, { agent, defer: (w) => ctx.waitUntil(w) });
-		return handleFetch(req, env, agent);
+		return handleFetch(req, env, agent, durableSchedules(env.SCHEDULER));
 	},
 } satisfies ExportedHandler<Env>;

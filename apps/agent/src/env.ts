@@ -1,8 +1,10 @@
 import type { AgentSession } from "./infrastructure/container";
+import type { Scheduler } from "./infrastructure/scheduler";
 
 // Прив'язки й секрети воркера агента (див. wrangler.toml і README).
 export interface Env {
 	AGENT_SESSION: DurableObjectNamespace<AgentSession>;
+	SCHEDULER: DurableObjectNamespace<Scheduler>; // розклади автоматизацій (ADR 0005)
 	// Cloudflare Access: team domain (`<team>.cloudflareaccess.com`) і AUD застосунку
 	ACCESS_TEAM_DOMAIN?: string;
 	ACCESS_AUD?: string;
