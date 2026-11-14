@@ -4,6 +4,7 @@ import type { McpName } from "../../domain/agent";
 import { callback } from "./callback";
 
 export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
+export { MENU_BUTTON, threadUi, type ThreadUi } from "./thread-ui";
 export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
 export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
 
@@ -15,11 +16,6 @@ export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, 
 // "retry": сесія впала на лімітах Claude: додається «Повторити» (`retry:<id>`), що просить агента продовжити.
 // "none": без кнопок керування (режим THREAD_UI=messages: ними керує «Меню сесії»), лишаються лише відповіді на питання й схвалення.
 export type Buttons = "working" | "done" | "mergeable" | "dismiss" | "retry" | "none";
-
-// Режим теми сесії (див. THREAD_UI у env.ts).
-export const threadMessages = (env: { THREAD_UI?: string }): boolean => env.THREAD_UI === "messages";
-// Текст кнопки постійної клавіатури внизу теми: її натискання надходить як звичайний текст.
-export const MENU_BUTTON = "⚙️ Меню сесії";
 // Запит на схвалення деплою в пості сесії: кнопки «Схвалити/Відхилити» (`appr|rej:<repo>:<id запуску>`, обробляє interface/github/review).
 export type Review = { repo: string; runId: number };
 // Кнопки-відповіді на питання агента: підписи (для множинного вибору з позначками) й режим: одразу відповісти чи перемикати + «Підтвердити».
@@ -40,12 +36,6 @@ function keyboard(sessionUrl: string | undefined, buttons: Buttons | undefined, 
 	const confirm = answers?.multiple ? [[{ text: "✅ Підтвердити", callback_data: callback.confirm(id) }]] : [];
 	const rows = [...choices, ...confirm, ...approval, ...(row.length > 0 ? [row] : [])];
 	return rows.length > 0 ? { inline_keyboard: rows } : undefined;
-}
-
-// Постійна клавіатура внизу теми з однією кнопкою «⚙️ Меню сесії» (як «Головне меню» в інших ботів). Повідомлення потрібне Telegram,
-// щоб показати клавіатуру; воно коротке й лишається в темі.
-export async function sendMenuKeyboard(env: BotEnv, chatId: number, threadId: number): Promise<void> {
-	await tg(env, "sendMessage", { chat_id: chatId, message_thread_id: threadId, text: `Керування сесією: кнопка «${MENU_BUTTON}» внизу.`, reply_markup: { keyboard: [[{ text: MENU_BUTTON }]], resize_keyboard: true, is_persistent: true } } as never).catch((err) => console.error("menu keyboard failed:", err));
 }
 
 // Текст повідомлення в двох видах: HTML і простий (запасний, якщо Telegram відхилить розмітку). Внизу, за потреби,
