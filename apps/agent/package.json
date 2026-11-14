@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@voice-notes/core": "*",
-    "@voice-notes/oauth": "*"
+    "@voice-notes/oauth": "*",
+    "@voice-notes/telegram-format": "*"
   }
 }
