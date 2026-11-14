@@ -144,6 +144,7 @@ function setup(extraEnv: Record<string, string> = {}) {
 	const { container, opencode } = fakeContainer();
 	const store = new Map<string, unknown>();
 	const alarm = { at: null as number | null };
+	const background: Promise<unknown>[] = [];
 	const ctx = {
 		container,
 		storage: {
@@ -155,11 +156,17 @@ function setup(extraEnv: Record<string, string> = {}) {
 			list: async ({ prefix }: { prefix: string }) => new Map([...store].filter(([k]) => k.startsWith(prefix))),
 		},
 		blockConcurrencyWhile: (fn: () => Promise<void>) => fn(),
-		waitUntil: () => {},
+		waitUntil: (p: Promise<unknown>) => void background.push(p),
 	};
 	const env = { OPENCODE_PASSWORD: "pw", ANTHROPIC_API_KEY: "ak", GITHUB_TOKEN: undefined, ...extraEnv };
 	const session = new AgentSession(ctx as unknown as DurableObjectState, env as never);
-	return { session, container, opencode, store, alarm };
+	// Фонові завдання alarm (waitUntil): більшість тестів чекає їх завершення, як це було до винесення з alarm.
+	const rawAlarm = session.alarm.bind(session);
+	session.alarm = async () => {
+		await rawAlarm();
+		await Promise.all(background.splice(0));
+	};
+	return { session, container, opencode, store, alarm, rawAlarm, background };
 }
 
 const ID = "session-0001";
@@ -910,20 +917,39 @@ describe("AgentSession", () => {
 				expect(store.has(`watch:${ID}`)).toBe(true);
 			});
 
-			it("уточнення в існуючу сесію не чекає, поки нова сесія готує теку (завдання виконуються одночасно)", async () => {
-				const { session, opencode } = setup({ BOT_TOKEN: "bot" });
+			it("alarm не чекає довгого старту: нове завдання, що прийшло під час підготовки теки, виконується одразу", async () => {
+				const { session, opencode, rawAlarm, background } = setup({ BOT_TOKEN: "bot" });
 				await session.start(ID, { prompt: "Перша" });
 				let release!: () => void;
 				opencode.execGate = new Promise<void>((r) => (release = r));
 				await session.begin("session-0002", { prompt: "Нова" }, POST);
+				await rawAlarm(); // повертається, хоч session-prep ще не завершився
+				expect(opencode.prompts.map((p) => p.text)).toEqual(["Перша"]);
 				await session.resume(ID, "Уточнення", { chatId: 5, url: TARGET.url });
-				const run = session.alarm();
+				await rawAlarm();
 				for (let i = 0; i < 50; i++) await Promise.resolve();
 				await new Promise((r) => setTimeout(r, 0));
 				expect(opencode.prompts.map((p) => p.text)).toEqual(["Перша", "Уточнення"]); // нова сесія ще в session-prep
 				release();
-				await run;
+				await Promise.all(background.splice(0));
 				expect(opencode.prompts.map((p) => p.text)).toEqual(["Перша", "Уточнення", "Нова"]);
+			});
+
+			it("завдання, що вже виконується, alarm не запускає вдруге; після вивантаження (застарілий startedAt) запускає знову", async () => {
+				const { session, opencode, rawAlarm, background, store } = setup({ BOT_TOKEN: "bot" });
+				await session.start(ID, { prompt: "Перша" });
+				let release!: () => void;
+				opencode.execGate = new Promise<void>((r) => (release = r));
+				await session.begin("session-0002", { prompt: "Нова" }, POST);
+				await rawAlarm();
+				await rawAlarm(); // повторний alarm під час виконання
+				release();
+				await Promise.all(background.splice(0));
+				expect(opencode.prompts.filter((p) => p.text === "Нова")).toHaveLength(1);
+				// Завдання, залишене «виконуваним» давно (екземпляр вивантажили), підхоплюється.
+				store.set("job:session-0003", { id: "session-0003", input: { prompt: "Втрачена" }, target: POST, attempts: 0, startedAt: Date.now() - 10 * 60 * 1000 });
+				await session.alarm();
+				expect(opencode.prompts.map((p) => p.text)).toContain("Втрачена");
 			});
 
 			it("resume: уточнення в сплячий контейнер іде через alarm, не блокуючи виклик", async () => {

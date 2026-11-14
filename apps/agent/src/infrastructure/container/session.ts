@@ -10,7 +10,7 @@ import { Computer } from "./computer";
 import { requestedMcp } from "./mcp";
 import { MCP_PROMPTS, type McpWanted } from "./payload";
 import { stamp, stopwatch } from "../../timing";
-import { JOB_ATTEMPTS, JOB_RETRY_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
+import { JOB_ATTEMPTS, JOB_RETRY_MS, JOB_STALE_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { Forms } from "./forms";
 import { extractImages, loadImages, sendImages, type OutImage } from "./images";
@@ -394,12 +394,21 @@ export class AgentSession extends DurableObject<Env> {
 		await this.ctx.storage.setAlarm(Date.now());
 	}
 
-	// Виконує прийняті завдання одночасно: нова сесія готує теку 25–50 с (git clone), і уточнення в інші сесії не мають чекати за нею
-	// (раніше вони стояли в черзі до 70 с). Паралельність безпечна: старт контейнера спільний (ensureRunning), а клони йдуть
-	// по черзі в computer.serial. Повертає true, поки є що повторювати чи виконувати.
+	// Завдання, що виконуються в цьому екземплярі Durable Object (після вивантаження набір порожній, і alarm підхоплює їх знову).
+	private readonly activeJobs = new Set<string>();
+
+	// Запускає прийняті завдання у фоні й одразу повертається: alarm не чекає довгого старту (clone, контейнер), тож нове
+	// повідомлення не стоїть за ним. Завдання з `startedAt` вважається виконуваним, доки не мине JOB_STALE_MS (страховка від
+	// вивантаження). Клони йдуть по черзі в computer.serial, старт контейнера спільний (ensureRunning). Повертає true, поки є завдання.
 	private async runJobs(): Promise<boolean> {
-		const jobs = await this.ctx.storage.list<Job>({ prefix: "job:" });
-		await Promise.all([...jobs].map(([key, job]) => this.runJob(key, job)));
+		for (const [key, job] of await this.ctx.storage.list<Job>({ prefix: "job:" })) {
+			if (this.activeJobs.has(job.id)) continue;
+			if (job.startedAt && Date.now() - job.startedAt < JOB_STALE_MS) continue;
+			const started: Job = { ...job, startedAt: Date.now() };
+			await this.ctx.storage.put(key, started);
+			this.activeJobs.add(job.id);
+			this.ctx.waitUntil(this.runJob(key, started).catch((err) => console.error(`job ${job.id} crashed:`, err)).finally(() => this.activeJobs.delete(job.id)));
+		}
 		return (await this.ctx.storage.list({ prefix: "job:" })).size > 0;
 	}
 
@@ -416,7 +425,8 @@ export class AgentSession extends DurableObject<Env> {
 		} catch (err) {
 			console.error(`job ${job.id} failed (attempt ${job.attempts + 1}):`, err);
 			if (job.attempts + 1 < JOB_ATTEMPTS) {
-				await this.ctx.storage.put(key, { ...job, attempts: job.attempts + 1 } satisfies Job);
+				const { startedAt: _, ...rest } = job;
+				await this.ctx.storage.put(key, { ...rest, attempts: job.attempts + 1 } satisfies Job); // знову готове до запуску наступним alarm
 				return;
 			}
 			await this.ctx.storage.delete(key);
