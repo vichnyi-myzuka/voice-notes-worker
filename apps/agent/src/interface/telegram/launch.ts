@@ -1,6 +1,6 @@
 import { tg, tgSendMessage, type BotEnv } from "@voice-notes/core";
 import { MCP_LABELS, folderFor, type Agent, type ImageRef, type McpName } from "../../domain/agent";
-import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, pinMessage, removeMessage, renameTopic, sendChat, type KeySet } from "../../infrastructure/chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, removeMessage, sendChat } from "../../infrastructure/chat";
 import { type Stopwatch } from "../../timing";
 import type { KnownRepo, Route } from "./repo";
 
@@ -14,7 +14,6 @@ export type Pending = {
 	messageId: number; // оригінальне повідомлення власника
 	inChannel: boolean;
 	threadId?: number;
-	renameTopic?: boolean; // перше повідомлення в порожній темі: тема отримує назву задачі (режим messages)
 	voice: boolean; // задача продиктована голосом (у пості її розшифровка в цитаті)
 	image: boolean;
 	prompt: string;
@@ -27,12 +26,11 @@ export type Pending = {
 	// MCP, які роутер вважає потрібними чи припускає, але вмикати без підтвердження не можна (див. askMcp)
 	ask: McpName[];
 	images?: ImageRef[];
-	keys?: KeySet; // клавіші внизу теми для стану «працює» (режим messages): надсилаються разом із постом сесії
 };
 
 // Створює пост і сесію (тему в приватному чаті, пост із ⏳, begin в агента). repo — вибраний чи розпізнаний репозиторій.
 export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo: string | undefined, sw?: Stopwatch): Promise<void> {
-	const { id, chat, messageId, inChannel, threadId, renameTopic: renameFirst, voice: file, image: hasImage, prompt, route, model, sure, silpo, calendar, cloudflare, images } = p;
+	const { id, chat, messageId, inChannel, threadId, voice: file, image: hasImage, prompt, route, model, sure, silpo, calendar, cloudflare, images } = p;
 	console.log(`telegram ${chat}/${messageId}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo} calendar=${calendar} cloudflare=${cloudflare}`);
 	const url = agent.url(id);
 	// Приватний чат: кожна нова сесія отримує свою тему, і далі розмова йде в ній. Теми не ввімкнено (чи збій) — усе в самому чаті.
@@ -40,7 +38,6 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 	// Назва теми — семантична (від моделі), далі її оновлює агент, коли напрям розмови змінюється.
 	const title = route.title ?? route.name ?? prompt.replace(/\s+/g, " ").slice(0, 60);
 	const created = !inChannel && !threadId ? await createTopic(env, chat, title) : undefined;
-	if (renameFirst && threadId) await renameTopic(env, chat, threadId, title);
 	sw?.mark("topic");
 	const thread = created ?? threadId;
 	// У каналі й у новій темі оригінал замінюється постом із задачею (як у нотатках), у приваті без теми оригінал лишається, тож задачу не дублюємо.
@@ -52,25 +49,11 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
 	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : "", calendar ? "📅 Календар" : "", cloudflare ? "☁️ Cloudflare" : ""].filter(Boolean).join("\n");
-	// Режим messages (keys задано лише в ньому): першим у темі йде закріплене табло сесії (репозиторій, гілка, модель, сервіси і стан,
-	// який агент оновлює на місці), а задача окремим повідомленням після нього. Інакше (classic) задача й стан в одному пості.
-	const board = !!thread && !!p.keys;
-	const task = file ? `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}` : clipped;
-	const header = (
-		board ? where
-		: file ? [where, task].filter(Boolean).join("\n\n")
-		: `${moved ? `${clipped}\n\n` : ""}${where}`
-	).trim();
-	// Пост без клавіатури внизу: Telegram не дає редагувати повідомлення, надіслане з нею (message can't be edited), а пост агент
-	// оновлює на місці. Клавіші внизу теми (режим messages) ставить begin окремим повідомленням-носієм.
+	const header = (file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n") : `${moved ? `${clipped}\n\n` : ""}${where}`).trim();
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
-	if (board && thread) {
-		await pinMessage(env, chat, postId);
-		if (moved || file) await sendChat(env, chat, task, undefined, "none", undefined, undefined, thread).catch((err) => console.error("task message failed:", err));
-	}
 	sw?.mark("post");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(cloudflare && { cloudflare }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...((created || renameFirst) && { title }) });
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(cloudflare && { cloudflare }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
 	sw?.mark("begin");
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
 	if (moved || file) await removeMessage(env, chat, messageId);

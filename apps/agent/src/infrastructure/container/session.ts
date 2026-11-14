@@ -3,7 +3,7 @@ import type { OAuthLogin } from "@voice-notes/oauth";
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
 import { MCP_LABELS, folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
-import { removeTopic, renameTopic, sendChat, sendMcpQuestion, setTopicIcon, threadUi, type Answers, type KeyView, type TopicState } from "../chat";
+import { removeTopic, renameTopic, sendChat, sendMcpQuestion, setTopicIcon, type Answers, type TopicState } from "../chat";
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
@@ -187,16 +187,6 @@ export class AgentSession extends DurableObject<Env> {
 		return this.posts.setDeployByPost(postId, deploy, force);
 	}
 
-	// Клавіші внизу теми сесії: дії сесії чи екран загальних команд.
-	async keyView(id: string, view: KeyView): Promise<void> {
-		const post = (await this.store.session(id))?.post;
-		if (post?.chatId) await this.posts.keyView({ chatId: post.chatId, ...(post.threadId && { threadId: post.threadId }) }, view);
-	}
-
-	async pendingReview(id: string): Promise<{ postId: number; repo: string; runId: number } | undefined> {
-		return this.posts.pendingReview(await this.store.session(id));
-	}
-
 	saveRef(key: string, ref: PostRef): Promise<void> {
 		return this.posts.saveRef(key, ref);
 	}
@@ -308,17 +298,10 @@ export class AgentSession extends DurableObject<Env> {
 		const mergeable = check.ok;
 		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
 		if (limit) await this.limits.wait(id, w);
-		// Що писати в пості й чи слати підсумок окремим повідомленням, вирішує вигляд сесії (THREAD_UI, див. chat/thread-ui.ts)
-		const summary = (await threadUi(this.env, !!w.threadId)).summary({ text, limit, mergeable });
-		const shown = await this.posts.show(w, summary.post, true, undefined, mergeable, limit);
+		const shown = await this.posts.show(w, text, true, undefined, mergeable, limit);
 		await this.retitle(id, w, text);
-		// Клавіші внизу теми за станом: чіпляються до окремого підсумку (без повідомлення-носія, що повторює статус); якщо підсумок
-		// окремо не йде — самостійним повідомленням.
-		const keyState = limit ? "retry" : mergeable ? "mergeable" : "done";
-		if (!shown || summary.separate) {
-			const keys = await this.posts.nextKeys(w, keyState).catch((err) => (console.error("keys failed:", err), undefined));
-			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, summary.message, w.url, summary.buttons, undefined, undefined, w.threadId, keys).catch((err) => console.error("notify failed:", err));
-		} else await this.posts.keys(w, keyState).catch((err) => console.error("keys failed:", err));
+		// Поста немає (чи його видалили): підсумок окремим повідомленням з тими самими кнопками.
+		if (!shown) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, limit ? "retry" : mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
 	}
 
@@ -455,14 +438,11 @@ export class AgentSession extends DurableObject<Env> {
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
 	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
 		if (await this.link(id)) return;
-		// Клавіші завжди окремим повідомленням-носієм: пост із клавіатурою внизу Telegram не дає редагувати.
-		await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
 		await this.enqueue({ id, input, target, attempts: 0 });
 	}
 
 	// Те саме для уточнення; контейнер може спати.
 	async resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
-		// Клавіші «працює» прийдуть разом із повідомленням стану, яке watch надішле, коли завдання почне виконуватись.
 		// Завдання одне на сесію (ключ job:<id>): уточнення, що прийшло, поки попереднє ще не почало виконуватись, не затирає його, а
 		// додається до нього (інакше текст чи фото губиться, а в темі лишається «Працює» без відповіді).
 		const queued = await this.store.job(id);
@@ -542,7 +522,7 @@ export class AgentSession extends DurableObject<Env> {
 		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
 		if (!this.env.BOT_TOKEN) return;
 		if (job.target.postId && (await this.posts.show(job.target, text, true))) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, (await threadUi(this.env, !!job.target.threadId)).noticeButtons("done"), undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
 	}
 
 	// Статус не будить контейнер, що спить.
@@ -567,12 +547,7 @@ export class AgentSession extends DurableObject<Env> {
 		// Пост сесії: новий (з першого виклику) запам'ятовується, у наступних (уточнення) береться зі сховища.
 		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }), ...(target.title && { title: target.title }) } : tracked.post;
 		if (target.postId) await this.store.saveSession(id, { ...tracked, post } satisfies Tracked);
-		let full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
-		// Уточнення в темі (режим messages): окремого повідомлення стану немає, прогрес показує табло (пост сесії, редагується на місці),
-		// а клавіші «працює» міняє єдине повідомлення-носій.
-		if (!target.postId && post?.threadId && this.env.BOT_TOKEN && (await threadUi(this.env, true)).statusPerTurn) {
-			await this.posts.keys({ chatId: full.chatId, threadId: post.threadId }, "working").catch((err) => console.error("keys failed:", err));
-		}
+		const full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
 		const previous = await this.store.watch(id);
 		if (previous?.postId && previous.postId !== full.postId) await this.posts.mark(previous, false); // реакція не лишається на старому пості
 		await this.store.saveWatch(id, { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);

@@ -1,6 +1,6 @@
 import type { WatchTarget } from "../../domain/agent";
 import type { Env } from "../../env";
-import { sendChat, threadUi } from "../chat";
+import { sendChat } from "../chat";
 import { fetchQuota, isBlocked, resetTime } from "../quota";
 import { LIMIT_POLL_MS } from "./config";
 import type { SessionStore } from "./store";
@@ -44,7 +44,7 @@ export class Limits {
 		}
 		for (const [id, w] of waiting) {
 			await this.store.dropLimit(id);
-			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", w.url, (await threadUi(this.env, !!w.threadId)).noticeButtons("retry"), undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", w.url, "retry", undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
 		}
 		return undefined;
 	}
