@@ -1,6 +1,6 @@
 import { tg, tgSendMessage, type BotEnv } from "@voice-notes/core";
 import { MCP_LABELS, folderFor, type Agent, type ImageRef, type McpName } from "../../domain/agent";
-import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, removeMessage, renameTopic, sendChat } from "../../infrastructure/chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, removeMessage, renameTopic, sendChat, type KeySet } from "../../infrastructure/chat";
 import { type Stopwatch } from "../../timing";
 import type { KnownRepo, Route } from "./repo";
 
@@ -27,6 +27,7 @@ export type Pending = {
 	// MCP, які роутер вважає потрібними чи припускає, але вмикати без підтвердження не можна (див. askMcp)
 	ask: McpName[];
 	images?: ImageRef[];
+	keys?: KeySet; // клавіші внизу теми для стану «працює» (режим messages): надсилаються разом із постом сесії
 };
 
 // Створює пост і сесію (тему в приватному чаті, пост із ⏳, begin в агента). repo — вибраний чи розпізнаний репозиторій.
@@ -55,7 +56,8 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
 		: `${moved ? `${clipped}\n\n` : ""}${where}`
 	).trim();
-	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
+	// Режим messages: клавіші внизу теми («Стоп» тощо) йдуть разом із цим постом, а не окремим повідомленням, що повторює статус.
+	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread, thread ? p.keys : undefined);
 	sw?.mark("post");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
 	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(cloudflare && { cloudflare }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...((created || renameFirst) && { title }) });

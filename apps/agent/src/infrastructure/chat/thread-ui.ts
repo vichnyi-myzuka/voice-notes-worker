@@ -62,7 +62,8 @@ const KEYSETS: Record<KeyState, KeySet> = {
 const COMMANDS_SET: KeySet = { label: "⚙️ Команди", keys: [["quota", "status"], ["update"], ["back"]] };
 export const messagesUi: ThreadUi = {
 	postButtons: () => "none",
-	summary: ({ text, limit, mergeable }) => ({ post: STATUS(text, limit), message: text.replace(/^✅ Готово\n\n(?=\S)/, ""), separate: true, buttons: limit ? "retry" : mergeable ? "mergeable" : "none" }),
+	// Без кнопок під підсумком: «Змерджити» й «Повторити» уже є в клавішах внизу теми, які прикріплюються до цього повідомлення.
+	summary: ({ text, limit }) => ({ post: STATUS(text, limit), message: text.replace(/^✅ Готово\n\n(?=\S)/, ""), separate: true, buttons: "none" }),
 	statusPerTurn: true,
 	keepFollowUps: true,
 	topicOnlyStart: true,
@@ -89,9 +90,13 @@ export async function sendNewSessionKeyboard(env: BotEnv, chat: number, text: st
 
 // Показує клавіші внизу теми: Telegram міняє reply-клавіатуру лише новим повідомленням, тож шлемо коротке (з підписом стану), а
 // попереднє таке повідомлення (previous) прибираємо, щоб тема не заростала. Повертає id нового повідомлення.
+// Клавіатура внизу теми для набору клавіш. Telegram міняє її лише разом із новим повідомленням, тож її краще чіпляти до
+// повідомлення зі станом, яке й так надсилається (sendChat, параметр keys), а окремий showKeys лишити на випадок, коли такого немає.
+export const replyKeyboard = (set: KeySet) => ({ keyboard: set.keys.map((row) => row.map((k) => ({ text: KEYS[k] }))), resize_keyboard: true, is_persistent: true });
+
 export async function showKeys(env: BotEnv, chat: number, thread: number, set: KeySet, previous?: number): Promise<number | undefined> {
 	try {
-		const sent = await tg(env, "sendMessage", { chat_id: chat, message_thread_id: thread, text: set.label, reply_markup: { keyboard: set.keys.map((row) => row.map((k) => ({ text: KEYS[k] }))), resize_keyboard: true, is_persistent: true } } as never);
+		const sent = await tg(env, "sendMessage", { chat_id: chat, message_thread_id: thread, text: set.label, reply_markup: replyKeyboard(set) } as never);
 		if (previous) await tg(env, "deleteMessage", { chat_id: chat, message_id: previous }).catch(() => {});
 		return sent.message_id;
 	} catch (err) {

@@ -83,11 +83,11 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	private async work(): Promise<void> {
-		if (await this.runJobs()) return void (await this.ctx.storage.setAlarm(Date.now() + JOB_RETRY_MS));
+		if (await this.runJobs()) return void (await this.computer.alarmNoLater(Date.now() + JOB_RETRY_MS));
 		// Поки хтось працює чи за кимось стежать, опитуємо часто (підсумки, ліміти) й знімок відкладаємо.
 		if (await this.tick()) {
 			await this.computer.markUsed();
-			return void (await this.ctx.storage.setAlarm(Date.now() + WATCH_INTERVAL_MS));
+			return void (await this.computer.alarmNoLater(Date.now() + WATCH_INTERVAL_MS));
 		}
 		// Агент чекає відповіді на питання: питання живе в пам'яті OpenCode, тож контейнер тримаємо довше (FORM_HOLD_MS).
 		const forms = await this.ctx.storage.list<PendingForm>({ prefix: FORM_PREFIX });
@@ -309,8 +309,13 @@ export class AgentSession extends DurableObject<Env> {
 		const summary = (await threadUi(this.env, !!w.threadId)).summary({ text, limit, mergeable });
 		const shown = await this.posts.show(w, summary.post, true, undefined, mergeable, limit);
 		await this.retitle(watchId(key), w, text);
-		await this.posts.keys(w, limit ? "retry" : mergeable ? "mergeable" : "done").catch((err) => console.error("keys failed:", err));
-		if (!shown || summary.separate) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, summary.message, w.url, summary.buttons, undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
+		// Клавіші внизу теми за станом: чіпляються до окремого підсумку (без повідомлення-носія, що повторює статус); якщо підсумок
+		// окремо не йде — самостійним повідомленням.
+		const keyState = limit ? "retry" : mergeable ? "mergeable" : "done";
+		if (!shown || summary.separate) {
+			const keys = await this.posts.nextKeys(w, keyState).catch((err) => (console.error("keys failed:", err), undefined));
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, summary.message, w.url, summary.buttons, undefined, undefined, w.threadId, keys).catch((err) => console.error("notify failed:", err));
+		} else await this.posts.keys(w, keyState).catch((err) => console.error("keys failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
 	}
 
@@ -424,13 +429,15 @@ export class AgentSession extends DurableObject<Env> {
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
 	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
 		if (await this.link(id)) return;
-		await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
+		// З постом (його щойно надіслано з клавішами, див. launchSession) лише запам'ятовуємо стан; без нього клавіші йдуть окремо.
+		if (target.postId) await this.posts.nextKeys(target, "working").catch((err) => console.error("keys failed:", err));
+		else await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
 		await this.enqueue({ id, input, target, attempts: 0 });
 	}
 
 	// Те саме для уточнення; контейнер може спати.
 	async resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
-		await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
+		// Клавіші «працює» прийдуть разом із повідомленням стану, яке watch надішле, коли завдання почне виконуватись.
 		// Завдання одне на сесію (ключ job:<id>): уточнення, що прийшло, поки попереднє ще не почало виконуватись, не затирає його, а
 		// додається до нього (інакше текст чи фото губиться, а в темі лишається «Працює» без відповіді).
 		const queued = await this.ctx.storage.get<Job>(jobKey(id));
@@ -566,7 +573,8 @@ export class AgentSession extends DurableObject<Env> {
 		// початковий пост лишається як є (на ньому деплой, ідентичність сесії).
 		let fresh = false;
 		if (!target.postId && post?.threadId && this.env.BOT_TOKEN && (await threadUi(this.env, true)).statusPerTurn) {
-			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, full.url, "none", undefined, undefined, post.threadId).catch((err) => (console.error("status message failed:", err), undefined));
+			const keys = await this.posts.nextKeys({ chatId: full.chatId, threadId: post.threadId }, "working").catch((err) => (console.error("keys failed:", err), undefined));
+			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, full.url, "none", undefined, undefined, post.threadId, keys).catch((err) => (console.error("status message failed:", err), undefined));
 			if (statusId) (full = { ...full, postId: statusId, header: "" }), (fresh = true);
 		}
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));

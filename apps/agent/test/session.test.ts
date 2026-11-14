@@ -972,10 +972,11 @@ describe("AgentSession", () => {
 				vi.spyOn(console, "error").mockImplementation(() => {});
 				await session.begin(ID, { prompt: "Задача" }, POST);
 				opencode.execFails = true;
+				alarm.at = null; // alarm спрацював: справжній Durable Object скидає його
 				await session.alarm();
 				expect(store.has(`job:${ID}`)).toBe(true);
 				expect(alarm.at).toBeGreaterThan(Date.now()); // повтор пізніше
-				for (let i = 0; i < 6; i++) await session.alarm();
+				for (let i = 0; i < 6; i++) (alarm.at = null), await session.alarm();
 				expect(store.has(`job:${ID}`)).toBe(false);
 				expect(texts().at(-1)).toContain("Не вдалося запустити агента");
 				expect(store.has(`watch:${ID}`)).toBe(false);
@@ -1048,6 +1049,15 @@ describe("AgentSession", () => {
 				expect(opencode.prompts.map((p) => p.text)).toEqual(["Задача", "Перше\n\nДруге"]);
 			});
 
+			it("alarm не відсуває пізніше вже запланований ранній: уточнення, що прийшло під час довгого знімка диска, не чекає stopAt", async () => {
+				const { session, alarm } = setup({ BOT_TOKEN: "bot" });
+				await session.start(ID, { prompt: "Задача" });
+				const soon = Date.now();
+				alarm.at = soon; // власник написав, поки alarm ще виконувався (знімок): resume ставить alarm «зараз»
+				await session.alarm(); // після знімка settle планує наступний alarm набагато пізніше
+				expect(alarm.at).toBe(soon);
+			});
+
 			it("remove скасовує завдання, яке ще не запустилось", async () => {
 				const { session, store, container } = setup({ BOT_TOKEN: "bot" });
 				await session.begin(ID, { prompt: "Задача" }, POST);
@@ -1092,8 +1102,10 @@ describe("AgentSession", () => {
 				expect(keyboard.at(-1)!.reply_markup.keyboard[0].map((b) => b.text)).toEqual(["✅ Схвалити", "❌ Відхилити", "🗑 Видалити"]);
 				expect(await t.session.pendingReview(SID)).toEqual({ postId: 77, repo: "me/app", runId: 9 });
 				// стан деплою ще й окремим повідомленням унизу теми (повтор того самого тексту нового не шле)
-				const below = () => sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {})) && String(c.text).includes("Деплой чекає схвалення"));
+				const below = () => sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && String(c.text).includes("Деплой чекає схвалення"));
 				expect(below()).toHaveLength(1);
+				expect(keyboard).toHaveLength(1); // клавіші прикріплено до цього повідомлення, окремого носія з тим самим підписом немає
+				expect(JSON.stringify(below()[0])).toContain("✅ Схвалити");
 				await t.session.setDeploy("me/app", "card-1", { text: "🚀 Деплой чекає схвалення", repo: "me/app", runId: 9, stage: "approval" });
 				expect(below()).toHaveLength(1);
 			});
@@ -1105,9 +1117,10 @@ describe("AgentSession", () => {
 				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 });
 				sent.length = 0;
 				await t.session.watch(SID, { chatId: 5, url: "https://agent.example/s/tg-1-1" }); // уточнення: без postId
-				const fresh = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {}))) as unknown as { message_thread_id: number; text: string }[];
-				expect(fresh).toHaveLength(1);
+				const fresh = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c)) as unknown as { message_thread_id: number; text: string; reply_markup: { keyboard: { text: string }[][] } }[];
+				expect(fresh).toHaveLength(1); // одне повідомлення «Працює», а не станом і ще окремим носієм клавіш
 				expect(fresh[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Працює") });
+				expect(fresh[0].reply_markup.keyboard[0].map((b) => b.text)).toEqual(["⏹ Стоп", "🗑 Видалити"]);
 				expect(edits().filter((e) => e.message_id === 77)).toEqual([]); // початковий пост не редагується
 				t.opencode.lastText = "Друга відповідь";
 				await t.session.alarm();
@@ -1150,11 +1163,11 @@ describe("AgentSession", () => {
 				expect(edits().at(-1)!.text).toContain("✅ Готово");
 				expect(edits().at(-1)!.text).not.toContain("Готово: ok");
 				expect(JSON.stringify((edits().at(-1) as { reply_markup?: unknown }).reply_markup ?? null)).not.toContain("del:");
-				const summary = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {}))) as unknown as { message_thread_id: number; text: string }[];
+				const summary = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c)) as unknown as { message_thread_id: number; text: string }[];
 				expect(summary).toHaveLength(1);
 				expect(summary[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Готово: <b>ok</b>") });
 				expect(summary[0].text).not.toContain("✅ Готово"); // статус «✅ Готово» уже в повідомленні стану: підсумок його не повторює
-				// клавіші внизу теми за станом: після завершення лише 🗑 Видалити (⏹ Стоп показує begin/resume)
+				// клавіші внизу теми за станом: після завершення лише 🗑 Видалити, і вони прикріплені до самого підсумку (summary.length === 1 вище)
 				const keyboards = sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup) as unknown as { reply_markup: { keyboard: { text: string }[][] } }[];
 				expect(keyboards.map((k) => k.reply_markup.keyboard[0].map((b) => b.text))).toEqual([["🗑 Видалити"]]);
 			});

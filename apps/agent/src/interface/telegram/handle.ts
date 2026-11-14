@@ -2,7 +2,7 @@ import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendM
 import { MCP_WRITES, type Agent, type ImageRef, type McpName } from "../../domain/agent";
 import type { Env } from "../../env";
 import { stamp, stopwatch } from "../../timing";
-import { NEW_SESSION, keyAction, removeMessage, sayTemporarily, sendNewSessionKeyboard, threadUi } from "../../infrastructure/chat";
+import { NEW_SESSION, keyAction, removeMessage, sayTemporarily, sendNewSessionKeyboard, threadUi, type KeySet } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
 import { handleKey, handleNewSession } from "./keys";
 import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
@@ -14,7 +14,7 @@ export const TELEGRAM_PATH = "/telegram";
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
 // repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. repo.ts); без них репозиторій задає лише префікс.
 // syncCommands: виставляти меню `/`-команд (див. syncCommands); у тестах вимкнено.
-export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean; keepFollowUps?: boolean; topicStart?: boolean };
+export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean; keepFollowUps?: boolean; topicStart?: boolean; workingKeys?: KeySet };
 
 // Меню `/`-команд у приваті. Єдине місце, де вони перелічені: додаєш команду в обробник — додай і сюди.
 export const COMMANDS = [
@@ -85,7 +85,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	}
 	if (inChannel || inPrivate) {
 		deps.defer(
-			handleMessage(bot, msg, inChannel, { ...deps, keepFollowUps: !!ui?.keepFollowUps && !!msg.message_thread_id, topicStart: !!ui?.topicOnlyStart }, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
+			handleMessage(bot, msg, inChannel, { ...deps, keepFollowUps: !!ui?.keepFollowUps && !!msg.message_thread_id, topicStart: !!ui?.topicOnlyStart, workingKeys: ui?.keys("working") }, env.CLAUDE_CODE_OAUTH_TOKEN).catch(async (err) => {
 				console.error("telegram message failed:", err);
 				await tgSendMessage(bot, msg.chat.id, "⚠️ Не вдалося створити сесію, спробуй ще раз.", msg.message_thread_id).catch(() => {});
 			}),
@@ -168,7 +168,7 @@ function parsePrefixes(transcript: string): { task: string; model?: string; sure
 }
 
 // spoken — уже розшифроване голосове (запис із Shortcut): задача йде як голосова, але Whisper не викликається.
-async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], keepFollowUps = false, topicStart = false, sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string, spoken?: string): Promise<void> {
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], keepFollowUps = false, topicStart = false, workingKeys, sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string, spoken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const voiced = !!file || spoken !== undefined;
@@ -279,7 +279,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
 	// Cloudflare сюди не входить: аналіз витрат і неефективностей потребує міркувань, модель лишається за замовчуванням.
 	const model = requestedModel ?? route.model ?? (sure || silpo || calendar || ask.some((n) => n !== "cloudflare") ? "haiku" : undefined);
-	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), ...(topicStart && threadId && { renameTopic: true }), voice: voiced, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ask, ...(images && { images }) };
+	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), ...(topicStart && threadId && { renameTopic: true }), voice: voiced, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ask, ...(images && { images }), ...(workingKeys && { keys: workingKeys }) };
 	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.
 	if (!repo && route.unsure) {
 		await askRepo(env, agent, repos, pending);
@@ -331,7 +331,7 @@ export async function handleShortcut(req: Request, env: Env, deps: TelegramDeps)
 			if (!spoken) return void (await tgSendMessage(bot, chat, "⚠️ Не розібрав голос із шортката, запиши ще раз."));
 			const sent = await tg(bot, "sendMessage", { chat_id: chat, text: "🎙 Розпізнаю…" });
 			const msg: TgMessage = { message_id: sent.message_id, date: Math.floor(Date.now() / 1000), chat: { id: chat, type: "private" }, from: { id: chat } };
-			await handleMessage(bot, msg, false, deps, env.CLAUDE_CODE_OAUTH_TOKEN, spoken);
+			await handleMessage(bot, msg, false, { ...deps, workingKeys: (await threadUi(env, true)).keys("working") }, env.CLAUDE_CODE_OAUTH_TOKEN, spoken);
 		})().catch(async (err) => {
 			console.error("shortcut failed:", err);
 			await tgSendMessage(bot, chat, "⚠️ Не вдалося створити сесію із шортката, спробуй ще раз.").catch(() => {});

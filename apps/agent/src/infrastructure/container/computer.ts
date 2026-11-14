@@ -166,6 +166,14 @@ export class Computer {
 		if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + snapshotIntervalMs(this.env));
 	}
 
+	// Планує alarm не пізніше за вказаний час, але не відсуває вже запланований ранішій. Знімок диска йде десятки секунд усередині
+	// alarm; за цей час уточнення власника ставить alarm «зараз», і наступне setAlarm(stopAt) не повинно його затерти
+	// (інакше завдання чекає до stopAt, а наступне уточнення замінює його в черзі).
+	async alarmNoLater(at: number): Promise<void> {
+		const current = await this.ctx.storage.getAlarm();
+		if (current === null || current > at) await this.ctx.storage.setAlarm(at);
+	}
+
 	// Alarm зберігає диск контейнера, коли агенти вільні і з минулого знімка щось змінилось, а після AGENT_IDLE_STOP_MS
 	// без роботи зупиняє контейнер. Перепланує себе, лише поки контейнер працює.
 	// formAt: коли поставлено останнє питання, що чекає відповіді (0, якщо немає).
@@ -184,13 +192,13 @@ export class Computer {
 		} catch (err) {
 			// Зайнятий агент або тимчасова помилка: повторимо наступного разу.
 			console.error("snapshot skipped:", err);
-			await this.ctx.storage.setAlarm(Date.now() + snapshotIntervalMs(this.env));
+			await this.alarmNoLater(Date.now() + snapshotIntervalMs(this.env));
 			return;
 		}
 		const stopAt = Math.max(Math.max(activeAt, usedAt) + idleStopMs(this.env), formAt ? formAt + FORM_HOLD_MS : 0);
-		if (Date.now() < stopAt) return void (await this.ctx.storage.setAlarm(stopAt));
+		if (Date.now() < stopAt) return void (await this.alarmNoLater(stopAt));
 		// Знімок свіжий, агенти вільні: диск збережено, тож контейнер можна зупинити.
-		if (await isAnyBusy(this.opencode()).catch(() => true)) return void (await this.ctx.storage.setAlarm(Date.now() + snapshotIntervalMs(this.env)));
+		if (await isAnyBusy(this.opencode()).catch(() => true)) return void (await this.alarmNoLater(Date.now() + snapshotIntervalMs(this.env)));
 		console.log("container stopped: idle");
 		await this.destroyContainer();
 	}

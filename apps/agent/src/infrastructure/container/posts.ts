@@ -62,13 +62,28 @@ export class Posts {
 		await this.drawKeys({ chatId: w.chatId, threadId: w.threadId }, set, state, "session", last);
 	}
 
+	// Клавіші, які треба причепити до повідомлення зі станом, що надсилається зараз (sendChat, параметр keys): так окремого
+	// повідомлення-носія, що повторює статус, не буде. Запам'ятовує стан як показаний; undefined — клавіші вже такі (чи режим
+	// без клавіш), тоді повідомлення йде без них. Старе повідомлення-носій, якщо було, прибирається.
+	async nextKeys(w: { chatId: number; threadId?: number }, state: KeyState): Promise<KeySet | undefined> {
+		const set = w.threadId && this.env.BOT_TOKEN ? (await threadUi(this.env, true)).keys(state) : undefined;
+		if (!set || !w.threadId) return undefined;
+		const last = await this.storage.get<KeysShown>(`keys:${w.chatId}:${w.threadId}`);
+		if (last?.state === state && last.view !== "commands") return undefined;
+		await this.storage.put(`keys:${w.chatId}:${w.threadId}`, { state, view: "session" } satisfies KeysShown);
+		if (last?.messageId) await tg({ BOT_TOKEN: this.env.BOT_TOKEN! }, "deleteMessage", { chat_id: w.chatId, message_id: last.messageId }).catch(() => {});
+		return set;
+	}
+
 	// Перемикає клавіші внизу теми між діями сесії й екраном загальних команд («⚙️ Команди» / «← Назад»).
 	async keyView(w: { chatId: number; threadId?: number }, view: KeyView): Promise<void> {
 		if (!w.threadId || !this.env.BOT_TOKEN) return;
 		const ui = await threadUi(this.env, true);
 		const last = await this.storage.get<KeysShown>(`keys:${w.chatId}:${w.threadId}`);
 		const state = last?.state ?? "done";
-		const set = view === "commands" ? ui.commands() : ui.keys(state);
+		// «Назад»: підпис нейтральний, щоб повідомлення-носій не повторювало статус, який уже є вище в темі.
+		const session = ui.keys(state);
+		const set = view === "commands" ? ui.commands() : session && { ...session, label: "↩️ Дії сесії" };
 		if (set) await this.drawKeys({ chatId: w.chatId, threadId: w.threadId }, set, state, view, last);
 	}
 
@@ -95,10 +110,13 @@ export class Posts {
 		const before = await this.storage.get<DeployInfo>(deployKey(post.postId));
 		await this.storage.put(deployKey(post.postId), deploy);
 		// Режим messages: зміна стану деплою ще й дописується новим повідомленням унизу теми (перший пост теж оновлюється нижче).
-		if (post.threadId && this.env.BOT_TOKEN && before?.text !== deploy.text && (await threadUi(this.env, true)).statusPerTurn) {
-			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, deploy.text, post.url, "none", undefined, undefined, post.threadId).catch((err) => console.error("deploy message failed:", err));
-		}
-		if (post.threadId) await this.keys({ chatId: post.chatId, threadId: post.threadId }, deploy.stage === "approval" ? "approval" : "done").catch((err) => console.error("keys failed:", err));
+		// Клавіші за станом деплою йдуть разом із цим повідомленням; без нього (текст не змінився) — окремим носієм, якщо стан інший.
+		const keyState = deploy.stage === "approval" ? "approval" : "done";
+		const message = !!post.threadId && !!this.env.BOT_TOKEN && before?.text !== deploy.text && (await threadUi(this.env, true)).statusPerTurn;
+		if (message) {
+			const keys = await this.nextKeys({ chatId: post.chatId, threadId: post.threadId }, keyState);
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN! }, post.chatId, deploy.text, post.url, "none", undefined, undefined, post.threadId, keys).catch((err) => console.error("deploy message failed:", err));
+		} else if (post.threadId) await this.keys({ chatId: post.chatId, threadId: post.threadId }, keyState).catch((err) => console.error("keys failed:", err));
 		if (post.threadId && deploy.stage && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, DEPLOY_ICON[deploy.stage]);
 		const last = (await this.storage.get<LastShown>(lastKey(post.postId))) ?? { status: "✅ Готово", final: true, mergeable: false };
 		return this.show({ chatId: post.chatId, url: post.url, postId: post.postId, header: post.header, ...(post.threadId && { threadId: post.threadId }) }, last.status, last.final);
