@@ -3,10 +3,11 @@
 
 import type { McpName } from "../../domain/agent";
 
-export type SessionAction = "stop" | "del" | "merge" | "ok";
+export type SessionAction = "stop" | "del" | "merge" | "ok" | "retry";
 
 export const callback = {
 	stop: (id: string) => `stop:${id}`,
+	retry: (id: string) => `retry:${id}`,
 	merge: (id: string) => `merge:${id}`,
 	del: (id: string) => `del:${id}`,
 	dismiss: "dismiss",
@@ -32,7 +33,7 @@ export type Callback =
 	| { kind: "mcp-live"; id: string; name: McpName; allow: boolean };
 
 const REVIEW = /^(appr|rej):([\w.-]+\/[\w.-]+):(\d+)$/;
-const SESSION = /^(stop|del|merge|ok):(tg-[\w-]+)$/;
+const SESSION = /^(stop|del|merge|ok|retry):(tg-[\w-]+)$/;
 const PICK = /^pick:(tg-[\w-]+):(\d+|-)$/;
 const MCP_START = /^mcps:(tg-[\w-]+):([yn])$/;
 const MCP_LIVE = /^mcpl:(tg-[\w-]+):(sure|silpo|calendar|cloudflare):([yn])$/;

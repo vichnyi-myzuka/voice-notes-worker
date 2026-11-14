@@ -36,13 +36,13 @@ export class Posts {
 	}
 
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
-	async show(w: WatchTarget, status: string, final = false, answers?: Answers, mergeable = false): Promise<boolean> {
+	async show(w: WatchTarget, status: string, final = false, answers?: Answers, mergeable = false, retry = false): Promise<boolean> {
 		if (!w.postId || !this.env.BOT_TOKEN) return false;
 		// Стан деплою цього PR (запит на схвалення, результат) дописується під станом сесії; останній показаний стан запам'ятовується,
 		// щоб вебхук GitHub міг перемалювати пост (див. applyDeploy).
 		const deploy = await this.storage.get<DeployInfo>(deployKey(w.postId));
 		await this.storage.put(lastKey(w.postId), { status, final, mergeable } satisfies LastShown);
-		const buttons: Buttons = deploy?.done ? "dismiss" : final ? (mergeable && !deploy ? "mergeable" : "done") : "working";
+		const buttons: Buttons = deploy?.done ? "dismiss" : final ? (retry ? "retry" : mergeable && !deploy ? "mergeable" : "done") : "working";
 		const review = deploy?.runId && deploy.repo ? { repo: deploy.repo, runId: deploy.runId } : undefined;
 		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
 		const text = deploy?.done ? this.text(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.text(w, deploy ? `${status}\n\n${deploy.text}` : status, final);

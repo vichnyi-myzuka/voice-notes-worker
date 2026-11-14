@@ -10,7 +10,7 @@ import { Computer } from "./computer";
 import { requestedMcp } from "./mcp";
 import { MCP_PROMPTS, type McpWanted } from "./payload";
 import { stamp, stopwatch } from "../../timing";
-import { JOB_ATTEMPTS, JOB_RETRY_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
+import { JOB_ATTEMPTS, JOB_RETRY_MS, LIMIT_POLL_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { Forms } from "./forms";
 import { extractImages, loadImages, sendImages, type OutImage } from "./images";
@@ -19,8 +19,9 @@ import { activeSessions, createSession, deleteSession, getSession, hasModel, int
 import { DEPLOY_ICON, Posts } from "./posts";
 import { calendarLogin, cloudflareLogin, silpoLogin } from "./logins";
 import { retitle } from "./title";
+import { fetchQuota, isBlocked, isLimitError, resetTime } from "../quota";
 import { WebProxy } from "./proxy";
-import { FORM_PREFIX, WATCH_PREFIX, SESSION_PREFIX, deployKey, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
+import { FORM_PREFIX, LIMIT_PREFIX, WATCH_PREFIX, limitKey, type LimitWait, SESSION_PREFIX, deployKey, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -68,6 +69,19 @@ export class AgentSession extends DurableObject<Env> {
 	// Alarm зберігає диск контейнера, коли агенти вільні і з минулого знімка щось змінилось. Перепланує себе лише поки
 	// є що зберігати: постійний alarm не давав би контейнеру заснути.
 	async alarm(): Promise<void> {
+		const next = await this.checkLimits();
+		try {
+			await this.work();
+		} finally {
+			// Чекаємо скидання лімітів: alarm має спрацювати ще раз, навіть якщо решта справ його не планувала.
+			if (next) {
+				const current = await this.ctx.storage.getAlarm();
+				if (current === null || current > next) await this.ctx.storage.setAlarm(next);
+			}
+		}
+	}
+
+	private async work(): Promise<void> {
 		if (await this.runJobs()) return void (await this.ctx.storage.setAlarm(Date.now() + JOB_RETRY_MS));
 		// Поки хтось працює чи за кимось стежать, опитуємо часто (підсумки, ліміти) й знімок відкладаємо.
 		if (await this.tick()) {
@@ -122,20 +136,22 @@ export class AgentSession extends DurableObject<Env> {
 			// Вільна: або вже відпрацювала, або ще не стартувала (дамо їй трохи часу).
 			if (!w.seenBusy && Date.now() - w.since < WATCH_INTERVAL_MS + 5000) continue;
 			const done = await this.summary(oc, w);
-			await this.finishWatch(key, w, done.text, done.images);
+			await this.finishWatch(key, w, done.text, done.images, done.limit);
 		}
 		return (await this.ctx.storage.list({ prefix: WATCH_PREFIX })).size > 0 || active.size > 0;
 	}
 
 	// Підсумок завершеної роботи: останнє повідомлення асистента, помилка чи нічого, якщо користувач сам зупинив.
 	// Зображення з відповіді агента (`![підпис](шлях)`) не потрапляють у текст, а йдуть у чат окремими фото (див. finishWatch).
-	private async summary(oc: Opencode, w: Watch): Promise<{ text: string; images?: OutImage[] }> {
+	private async summary(oc: Opencode, w: Watch): Promise<{ text: string; images?: OutImage[]; limit?: boolean }> {
 		const [info, last] = await Promise.all([getSession(oc, w.ocId), lastAssistant(oc, w.ocId)]);
 		if (info.outcome === "interrupted") return { text: "⏹ Зупинено. Відповідь на цей пост продовжить роботу." };
 		if (info.outcome === "failed") {
 			const error = last.error ?? (last.text || "невідома");
 			// Cloudflare перед API моделі інколи блокує IP контейнера (сторінка-челендж 403): це тимчасово, достатньо повторити.
 			if (/403/.test(error) && /Cloudflare/i.test(error)) return { text: "❌ Cloudflare тимчасово заблокував запит до API моделі (403 Attention Required). Це не помилка завдання: відповідь на цей пост повторить роботу за кілька хвилин." };
+			// Ліміти підписки Claude: це не помилка завдання, тож пропонуємо повторити, а коли вони скинуться, бот напише сам.
+			if (isLimitError(error)) return { text: `⏳ Ліміти Claude вичерпано. Коли вони скинуться, я напишу; повторити можна й зараз кнопкою.\n\n${error}`.slice(0, SUMMARY_MAX), limit: true };
 			return { text: `❌ Помилка: ${error}`.slice(0, SUMMARY_MAX) };
 		}
 		const { text: body, images } = extractImages(last.text);
@@ -243,7 +259,7 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
-	private async finishWatch(key: string, w: Watch, text: string, images: OutImage[] = []): Promise<void> {
+	private async finishWatch(key: string, w: Watch, text: string, images: OutImage[] = [], limit = false): Promise<void> {
 		if (!(await this.ctx.storage.get(key))) return; // уже показано (подія й опитування можуть збігтися)
 		await this.ctx.storage.delete(key);
 		await this.forms.drop(watchId(key)); // питання, що лишилось без відповіді, неактуальне
@@ -260,9 +276,10 @@ export class AgentSession extends DurableObject<Env> {
 		const check = text.startsWith("✅") ? await this.pullCheck(watchId(key)) : { ok: false };
 		const mergeable = check.ok;
 		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
-		const shown = await this.posts.show(w, text, true, undefined, mergeable);
+		if (limit) await this.waitForLimits(watchId(key), w);
+		const shown = await this.posts.show(w, text, true, undefined, mergeable, limit);
 		await this.retitle(watchId(key), w, text);
-		if (!shown) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
+		if (!shown) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, text, w.url, limit ? "retry" : mergeable ? "mergeable" : "done", undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
 	}
 
@@ -343,6 +360,7 @@ export class AgentSession extends DurableObject<Env> {
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
 		}
 		this.asks.set(id, text);
+		await this.ctx.storage.delete(limitKey(id)); // власник уже діє: чекати скидання лімітів заради цієї сесії не треба
 		await this.forms.cancel(id, text); // текст замість кнопки: відкрите питання не чекає далі
 		await prompt(this.opencode(), ocId, text, await this.images(images));
 		await this.computer.markActive();
@@ -415,6 +433,39 @@ export class AgentSession extends DurableObject<Env> {
 			if ("input" in job) await this.posts.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
 		}
 		return (await this.ctx.storage.list({ prefix: "job:" })).size > 0;
+	}
+
+	// Запам'ятовує, що сесія впала на лімітах, і планує перевірку їх скидання (без токена підписки перевіряти нічим).
+	private async waitForLimits(id: string, w: WatchTarget): Promise<void> {
+		if (!this.env.CLAUDE_CODE_OAUTH_TOKEN) return;
+		await this.ctx.storage.put(limitKey(id), { chatId: w.chatId, url: w.url, threadId: w.threadId, since: Date.now() } satisfies LimitWait);
+		const current = await this.ctx.storage.getAlarm();
+		const at = Date.now() + LIMIT_POLL_MS;
+		if (current === null || current > at) await this.ctx.storage.setAlarm(at);
+	}
+
+	// Якщо хтось чекає скидання лімітів: перевіряє їх (дешевий запит, контейнер не будить) і, коли вони скинулись, пише в чат у тему
+	// кожної такої сесії. Повертає, коли перевірити знову (мс від epoch), або undefined, якщо чекати нікого.
+	private async checkLimits(): Promise<number | undefined> {
+		const waiting = await this.ctx.storage.list<LimitWait>({ prefix: LIMIT_PREFIX });
+		const token = this.env.CLAUDE_CODE_OAUTH_TOKEN;
+		if (waiting.size === 0) return undefined;
+		if (!token || !this.env.BOT_TOKEN) {
+			for (const key of waiting.keys()) await this.ctx.storage.delete(key);
+			return undefined;
+		}
+		const quota = await fetchQuota(token).catch((err) => (console.error("quota check failed:", err), undefined));
+		if (!quota || isBlocked(quota)) {
+			// Ще вичерпано (чи перевірка не вдалась): наступного разу — на час скидання, але не рідше за LIMIT_POLL_MS і не пізніше за годину.
+			const reset = quota && resetTime(quota);
+			const wait = reset ? Math.min(Math.max(reset * 1000 - Date.now() + 5000, LIMIT_POLL_MS), 60 * 60 * 1000) : LIMIT_POLL_MS;
+			return Date.now() + wait;
+		}
+		for (const [key, w] of waiting) {
+			await this.ctx.storage.delete(key);
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", w.url, "retry", undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
+		}
+		return undefined;
 	}
 
 	private async reportFailure(job: Job): Promise<void> {
@@ -510,7 +561,7 @@ export class AgentSession extends DurableObject<Env> {
 			return;
 		}
 		const done = await this.summary(this.opencode(), w);
-		await this.finishWatch(key, w, done.text, done.images);
+		await this.finishWatch(key, w, done.text, done.images, done.limit);
 	}
 
 	// Агент просить підключити MCP (команда request-mcp): власнику йдуть кнопки в тему сесії. Підключене вже, невідоме чи без поста в чаті — ігноруємо.

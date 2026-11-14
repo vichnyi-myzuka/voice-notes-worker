@@ -708,6 +708,16 @@ describe("вебхук Telegram", () => {
 			expect(t.answers()).toEqual(["Відповідь: Яскравий", "Питання вже неактуальне.", "Відповідь: Мінімалізм", "Питання вже неактуальне."]);
 		});
 
+		it("«Повторити» просить агента продовжити в тій самій сесії, а коли він уже працює — нічого не дублює", async () => {
+			const t = await started();
+			t.sessions.get(SESSION)!.status = "idle";
+			await t.press(`retry:${SESSION}`);
+			expect(t.sessions.get(SESSION)!.messages.at(-1)).toContain("Ліміти скинулись");
+			await t.press(`retry:${SESSION}`); // після першого натискання агент уже працює
+			expect(t.sessions.get(SESSION)!.messages.filter((m) => m.includes("Ліміти скинулись"))).toHaveLength(1);
+			expect(t.answers()).toEqual(["🔄 Повторюю.", "Агент уже працює."]);
+		});
+
 		it("чужий користувач, чужий чат, невідома дія чи сесія — відмова без наслідків", async () => {
 			const t = await started();
 			await t.press(`del:${SESSION}`, 999);

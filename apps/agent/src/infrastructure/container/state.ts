@@ -36,3 +36,8 @@ export type LastShown = { status: string; final: boolean; mergeable: boolean };
 export const deployKey = (postId: number) => `deploy:${postId}`;
 export const lastKey = (postId: number) => `last:${postId}`;
 export const refKey = (key: string) => `ref:${key}`;
+
+// Сесія впала на лімітах Claude: чекаємо їх скидання, щоб написати в чат (лише для тих, хто справді впертися в ліміт).
+export type LimitWait = WatchTarget & { since: number };
+export const LIMIT_PREFIX = "limit:";
+export const limitKey = (id: string) => `${LIMIT_PREFIX}${id}`;
