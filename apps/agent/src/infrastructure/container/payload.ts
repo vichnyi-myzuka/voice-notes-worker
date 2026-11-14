@@ -5,6 +5,7 @@ import prePush from "../../../payload/pre-push.sh";
 import newReportSite from "../../../payload/new-report-site.sh";
 import publish from "../../../payload/publish.sh";
 import reportSiteSkill from "../../../payload/report-site-skill.md";
+import schedule from "../../../payload/schedule.sh";
 import sessionPrep from "../../../payload/session-prep.sh";
 import silpoAgent from "../../../payload/silpo-agent.md";
 import sureAgent from "../../../payload/sure-agent.md";
@@ -44,6 +45,7 @@ export const PAYLOAD: PayloadFile[] = [
 	// Скіл для сайтів-звітів: агент підхоплює його сам за description. OpenCode читає ~/.config/opencode/skills, claude — ~/.claude/skills.
 	{ path: "/root/.config/opencode/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
 	{ path: "/root/.claude/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
+	{ path: "/usr/local/bin/schedule", mode: "755", content: schedule },
 	{ path: "/usr/local/bin/session-prep", mode: "755", content: sessionPrep },
 	// Запобіжник: пуш у main/master відхиляється (core.hooksPath задано в образі)
 	{ path: "/usr/local/lib/git-hooks/pre-push", mode: "755", content: prePush },

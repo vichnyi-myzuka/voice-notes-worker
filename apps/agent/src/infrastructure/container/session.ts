@@ -16,6 +16,7 @@ import { describeCall, narrate, remember } from "./narrate";
 import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./posts";
 import { calendarLogin, silpoLogin } from "./logins";
+import { sessionToken } from "../session-token";
 import { retitle } from "./title";
 import { WebProxy } from "./proxy";
 import { WATCH_PREFIX, SESSION_PREFIX, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
@@ -88,8 +89,11 @@ export class AgentSession extends DurableObject<Env> {
 			if (!byOc.has(ocId)) await this.watchPrompted(ocId).catch((err) => console.error("rewatch failed:", err)); // працює без стеження (страховка до подій)
 			const info = await getSession(oc, ocId);
 			const tokens = totalTokens(info);
-			const over = (info.cost ?? 0) > maxCost ? `вартість $${(info.cost ?? 0).toFixed(2)} (ліміт $${maxCost})` : tokens > tokenLimit ? `${tokens} токенів (ліміт ${tokenLimit})` : "";
 			const watched = byOc.get(ocId);
+			const own = watched ? await this.ctx.storage.get<Tracked>(sessionKey(watchId(watched[0]))) : undefined;
+			if (watched) await this.recordCost(watchId(watched[0]), info.cost);
+			const limit = own?.maxCostUsd ?? maxCost;
+			const over = (info.cost ?? 0) > limit ? `вартість $${(info.cost ?? 0).toFixed(2)} (ліміт $${limit})` : tokens > tokenLimit ? `${tokens} токенів (ліміт ${tokenLimit})` : "";
 			if (over) {
 				// Спостереження знімаємо до зупинки: інакше подія «зупинено» покаже в чаті «⏹» замість причини.
 				if (watched) await this.finishWatch(watched[0], watched[1], `⛔ Сесію зупинено: ${over}. Напиши уточнення, щоб продовжити з новим лімітом.`);
@@ -110,10 +114,29 @@ export class AgentSession extends DurableObject<Env> {
 			if (!(await this.ctx.storage.get(key))) continue; // уже оброблено вище (ліміт)
 			// Вільна: або вже відпрацювала, або ще не стартувала (дамо їй трохи часу).
 			if (!w.seenBusy && Date.now() - w.since < WATCH_INTERVAL_MS + 5000) continue;
+			await this.recordCost(watchId(key), (await getSession(oc, w.ocId).catch(() => undefined))?.cost); // остання вартість: сесія вже не працює
 			const done = await this.summary(oc, w);
 			await this.finishWatch(key, w, done.text, done.images);
 		}
 		return (await this.ctx.storage.list({ prefix: WATCH_PREFIX })).size > 0 || active.size > 0;
+	}
+
+	// Запам'ятовує вартість сесії, щоб вона не губилась, коли контейнер засне (добовий бюджет розкладів, див. spent).
+	private async recordCost(id: string, cost: number | undefined): Promise<void> {
+		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		if (tracked && cost && cost > (tracked.cost ?? 0)) await this.ctx.storage.put(sessionKey(id), { ...tracked, cost } satisfies Tracked);
+	}
+
+	// Скільки (USD) коштували ці сесії разом: поки контейнер працює, береться жива вартість, інакше запам'ятована. Невідомі сесії не рахуються.
+	async spent(ids: string[]): Promise<number> {
+		let total = 0;
+		for (const id of ids) {
+			const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+			if (!tracked) continue;
+			const live = this.computer.running ? (await getSession(this.opencode(), tracked.ocId).catch(() => undefined))?.cost : undefined;
+			total += Math.max(tracked.cost ?? 0, live ?? 0);
+		}
+		return total;
 	}
 
 	// Підсумок завершеної роботи: останнє повідомлення асистента, помилка чи нічого, якщо користувач сам зупинив.
@@ -276,11 +299,11 @@ export class AgentSession extends DurableObject<Env> {
 			const silpo = input.silpo ? (await this.silpo.accessToken())?.access : undefined;
 			const calendar = input.calendar ? await this.calendar.accessToken() : undefined;
 			sw.mark("queue");
-			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar });
+			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar }, await this.agentApi(folder));
 			sw.mark("prepare");
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
 			sw.mark("create");
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }), ...(input.calendar && { calendar: true }) } satisfies Tracked);
+			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.maxCostUsd && { maxCostUsd: input.maxCostUsd }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }), ...(input.calendar && { calendar: true }) } satisfies Tracked);
 			// Сільпо просили, а входу немає (чи токен не оновився): агент скаже про це власнику замість мовчазної відсутності інструментів.
 			const notes = [
 				input.silpo && !silpo && "MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.",
@@ -304,7 +327,7 @@ export class AgentSession extends DurableObject<Env> {
 			ocId = await this.computer.serial(async () => {
 				const silpo = tracked.silpo ? (await this.silpo.accessToken())?.access : undefined;
 				const calendar = tracked.calendar ? await this.calendar.accessToken() : undefined;
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo, calendar });
+				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, { sure: tracked.sure, silpo, calendar }, await this.agentApi(tracked.folder ?? id));
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
@@ -339,6 +362,12 @@ export class AgentSession extends DurableObject<Env> {
 		return (await this.ctx.storage.get<Tracked>(sessionKey(id)))?.ocId ?? ((await this.ctx.storage.get(jobKey(id))) ? "pending" : undefined);
 	}
 
+	// Адреса воркера й секрет сесії для команди `schedule` у контейнері; без відомої адреси команда в сесії не працює.
+	private async agentApi(folder: string): Promise<{ origin: string; token: string } | undefined> {
+		const origin = await this.ctx.storage.get<string>("origin");
+		return origin ? { origin, token: await sessionToken(this.env.OPENCODE_PASSWORD, folder) } : undefined;
+	}
+
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
 	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
 		if (await this.link(id)) return;
@@ -351,6 +380,9 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	private async enqueue(job: Job): Promise<void> {
+		// Адреса воркера потрібна, щоб агент у контейнері міг звернутись до його API (команда `schedule`): беремо з посилання на сесію.
+		const origin = new URL(job.target.url).origin;
+		if ((await this.ctx.storage.get<string>("origin")) !== origin) await this.ctx.storage.put("origin", origin);
 		await this.ctx.storage.put(jobKey(job.id), { ...job, queuedAt: Date.now() } satisfies Job);
 		await this.ctx.storage.setAlarm(Date.now());
 	}

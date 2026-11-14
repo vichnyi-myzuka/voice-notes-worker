@@ -318,7 +318,7 @@ describe("AgentSession", () => {
 			await session.start(ID, { prompt: "Задача" });
 			expect(opencode.syncs).toHaveLength(1);
 			const byPath = Object.fromEntries(opencode.syncs[0].map((f) => [f.path, f]));
-			expect(Object.keys(byPath).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/session-prep", "/usr/local/lib/git-hooks/pre-push"]);
+			expect(Object.keys(byPath).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/schedule", "/usr/local/bin/session-prep", "/usr/local/lib/git-hooks/pre-push"]);
 			expect(byPath["/usr/local/bin/publish"].mode).toBe("755");
 			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("Publishing small static sites");
 			expect(byPath["/root/.claude/CLAUDE.md"].content).toBe(byPath["/root/.config/opencode/AGENTS.md"].content);
@@ -711,6 +711,34 @@ describe("AgentSession", () => {
 				expect(opencode.events).toHaveLength(2);
 			});
 
+			it("власний ліміт запуску (maxCostUsd) замінює загальний: нижчий зупиняє раніше, вищий дозволяє більше", async () => {
+				const low = setup({ BOT_TOKEN: "bot", AGENT_MAX_COST_USD: "5" });
+				await low.session.start(ID, { prompt: "Задача", maxCostUsd: 1 });
+				await low.session.watch(ID, TARGET);
+				low.opencode.info[ocId] = { cost: 2 };
+				await low.session.alarm();
+				expect(sent.map((c) => String(c.text ?? "")).join("\n")).toContain("ліміт $1");
+				sent.length = 0;
+				const high = setup({ BOT_TOKEN: "bot", AGENT_MAX_COST_USD: "1" });
+				await high.session.start(ID, { prompt: "Задача", maxCostUsd: 10 });
+				await high.session.watch(ID, TARGET);
+				high.opencode.info[ocId] = { cost: 2 };
+				await high.session.alarm();
+				expect(sent.map((c) => String(c.text ?? "")).join("\n")).not.toContain("зупинено");
+			});
+
+			it("spent: сума вартості сесій; після сну контейнера лишається остання відома, невідомі id не рахуються", async () => {
+				const { session, opencode, container, store } = await watched();
+				opencode.info[ocId] = { cost: 1.25 };
+				await session.alarm(); // запам'ятовує вартість
+				expect((store.get(`session:${ID}`) as { cost?: number }).cost).toBe(1.25);
+				expect(await session.spent([ID, "nope-nope"])).toBe(1.25);
+				opencode.info[ocId] = { cost: 2 };
+				expect(await session.spent([ID])).toBe(2); // живе значення вище
+				container.running = false;
+				expect(await session.spent([ID])).toBe(1.25); // контейнер спить: запам'ятоване
+			});
+
 			it("зупинка за лімітом показує причину, а не «Зупинено» від події", async () => {
 				const { session, opencode } = await watched({ AGENT_MAX_COST_USD: "1" });
 				opencode.info[ocId] = { cost: 2 };
@@ -791,6 +819,19 @@ describe("AgentSession", () => {
 				expect(await session.link(ID)).toBe("pending"); // вебхук-повтор побачить, що завдання вже є
 				await session.begin(ID, { prompt: "Інше" }, POST);
 				expect([...store.keys()].filter((k) => k.startsWith("job:"))).toEqual([`job:${ID}`]);
+			});
+
+			it("session-prep отримує адресу воркера й секрет сесії для команди schedule (з посилання на сесію); без begin — не отримує", async () => {
+				const { session, opencode, alarm } = setup({ BOT_TOKEN: "bot" });
+				await session.begin(ID, { prompt: "Задача" }, POST);
+				await session.alarm();
+				const env = opencode.execs.find((e) => e.cmd[0] === "session-prep")!.env!;
+				expect(env.AGENT_API_URL).toBe("https://agent.example");
+				expect(env.AGENT_API_TOKEN).toMatch(/^[0-9a-f]{64}$/);
+				expect(alarm.at).not.toBeNull();
+				const direct = setup();
+				await direct.session.start("session-0002", { prompt: "x" });
+				expect(direct.opencode.execs.find((e) => e.cmd[0] === "session-prep")!.env).not.toHaveProperty("AGENT_API_TOKEN");
 			});
 
 			it("alarm холодно запускає контейнер, створює сесію, стежить і змінює пост «Запускаю контейнер» → «Працює»", async () => {

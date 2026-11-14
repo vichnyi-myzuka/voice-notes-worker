@@ -4,7 +4,8 @@
 // name: коротка назва за змістом задачі (kebab-case); з неї складаються тека й гілка сесії, без неї — технічний id
 // model: модель сесії — «opus» (провайдер Claude Agent) або «провайдер/модель»; без неї — модель за замовчуванням воркера
 // images: фото від користувача (id файлів Telegram): агент отримує їх як зображення, а не як опис
-export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; sure?: boolean; silpo?: boolean; calendar?: boolean; images?: ImageRef[] };
+// maxCostUsd: свій ліміт вартості сесії (USD) замість загального AGENT_MAX_COST_USD (запуски за розкладом, ADR 0005)
+export type StartInput = { prompt: string; repo?: string; name?: string; model?: string; maxCostUsd?: number; sure?: boolean; silpo?: boolean; calendar?: boolean; images?: ImageRef[] };
 
 // Зображення в Telegram: id файлу й тип (завантажує його Durable Object, у завданні лише посилання: сховище не тримає великих значень).
 export type ImageRef = { fileId: string; mime: string };

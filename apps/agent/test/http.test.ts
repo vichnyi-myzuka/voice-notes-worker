@@ -220,3 +220,87 @@ describe("вхід у Google Calendar", () => {
 		expect((await handleFetch(call("/calendar/login"), accessEnv, agent)).status).toBe(503);
 	});
 });
+
+describe("розклади автоматизацій", () => {
+	const SID = "abcdef12";
+	const fakeSchedules = () => {
+		const calls: string[] = [];
+		const schedule = { id: SID, name: "n", prompt: "p", when: { at: 1 }, status: "active", createdBy: "owner", createdAt: 1, origin: "https://agent.example", runs: [{ at: 1, result: "ok" }] };
+		const schedules = {
+			list: async () => [schedule],
+			get: async (id: string) => (id === SID ? schedule : undefined),
+			create: async (input: { name: string }, by: string, origin: string) => (calls.push(`create ${input.name} ${by} ${origin}`), input.name === "bad" ? { ok: false, error: "nope", code: "invalid" } : { ok: true, value: schedule }),
+			update: async (id: string, patch: object) => (calls.push(`update ${id} ${JSON.stringify(patch)}`), { ok: true, value: schedule }),
+			pause: async (id: string) => (calls.push(`pause ${id}`), { ok: true, value: schedule }),
+			resume: async (id: string) => (calls.push(`resume ${id}`), { ok: false, error: "limit", code: "limit" }),
+			runNow: async (id: string) => (calls.push(`run ${id}`), { ok: true, value: { at: 2, result: "ok" } }),
+			remove: async (id: string) => (calls.push(`remove ${id}`), id === SID),
+		};
+		return { calls, schedules: schedules as unknown as import("../src/domain/schedule").Schedules };
+	};
+
+	it("список, створення (від власника, з адресою воркера), читання, зміна, дії, історія, видалення", async () => {
+		const { agent } = fakeAgent();
+		const { calls, schedules } = fakeSchedules();
+		const h = (path: string, method = "GET", body?: unknown) => handleFetch(call(path, method, body), env, agent, schedules);
+
+		expect((await (await h("/api/schedules")).json() as { schedules: unknown[] }).schedules).toHaveLength(1);
+		expect((await h("/api/schedules", "POST", { name: "ok", prompt: "x", cron: "0 9 * * *" })).status).toBe(200);
+		expect(calls).toContain("create ok owner https://agent.example");
+		const bad = await h("/api/schedules", "POST", { name: "bad" });
+		expect(bad.status).toBe(400);
+		expect(await bad.json()).toEqual({ error: "nope" });
+
+		expect((await h(`/api/schedules/${SID}`)).status).toBe(200);
+		expect((await h("/api/schedules/00000000")).status).toBe(404);
+		expect((await h("/api/schedules/xx")).status).toBe(400);
+		expect((await h(`/api/schedules/${SID}`, "PATCH", { prompt: "y" })).status).toBe(200);
+		expect(calls).toContain(`update ${SID} {"prompt":"y"}`);
+		expect((await h(`/api/schedules/${SID}/pause`, "POST")).status).toBe(200);
+		expect((await h(`/api/schedules/${SID}/resume`, "POST")).status).toBe(409);
+		expect(await (await h(`/api/schedules/${SID}/run`, "POST")).json()).toEqual({ run: { at: 2, result: "ok" } });
+		expect(await (await h(`/api/schedules/${SID}/runs`)).json()).toEqual({ runs: [{ at: 1, result: "ok" }] });
+		expect((await h(`/api/schedules/${SID}/pause`)).status).toBe(405);
+		expect((await h(`/api/schedules/${SID}`, "DELETE")).status).toBe(200);
+		expect((await h("/api/schedules/00000000", "DELETE")).status).toBe(404);
+	});
+
+	it("за Access, як і решта API", async () => {
+		const { agent } = fakeAgent();
+		const { schedules } = fakeSchedules();
+		const configured = { ...accessEnv, ACCESS_TEAM_DOMAIN: "t.cloudflareaccess.com", ACCESS_AUD: "aud" } as Env;
+		expect((await handleFetch(call("/api/schedules"), configured, agent, schedules)).status).toBe(403);
+	});
+});
+
+describe("веб-сторінка автоматизацій", () => {
+	const schedules = {} as import("../src/domain/schedule").Schedules;
+
+	it("віддається за Access лише з розкладами; скрипт синтаксично коректний і не вставляє дані через innerHTML", async () => {
+		const { agent } = fakeAgent();
+		const res = await handleFetch(call("/automations"), env, agent, schedules);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("text/html");
+		const html = await res.text();
+		expect(html).toContain("Автоматизації агента");
+		expect(html).not.toContain("innerHTML");
+		const script = /<script>([\s\S]*)<\/script>/.exec(html)![1];
+		expect(() => new Function(script)).not.toThrow();
+		const configured = { ...accessEnv, ACCESS_TEAM_DOMAIN: "t.cloudflareaccess.com", ACCESS_AUD: "aud" } as Env;
+		expect((await handleFetch(call("/automations"), configured, agent, schedules)).status).toBe(403);
+	});
+
+	it("попередній перегляд: найближчі запуски й помилки валідації", async () => {
+		const { agent } = fakeAgent();
+		const post = (body: unknown) => handleFetch(call("/api/schedules/preview", "POST", body), env, agent, schedules);
+		const ok = await post({ cron: "0 9 * * *", tz: "UTC" });
+		const { times } = (await ok.json()) as { times: number[] };
+		expect(times).toHaveLength(5);
+		expect(times.every((t, i) => i === 0 || t - times[i - 1] === 86_400_000)).toBe(true);
+		const bad = await post({ cron: "*/5 * * * *" });
+		expect(bad.status).toBe(400);
+		expect(((await bad.json()) as { error: string }).error).toContain("1 hour");
+		expect((await post({ at: "2020-01-01T00:00:00Z" })).status).toBe(400);
+		expect((await handleFetch(call("/api/schedules/preview"), env, agent, schedules)).status).toBe(405);
+	});
+});

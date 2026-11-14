@@ -1,8 +1,11 @@
 import type { CalendarLogin, Computer, Sessions, SilpoLogin } from "../../domain/agent";
+import { preview, type NewSchedule, type Outcome, type SchedulePatch, type Schedules } from "../../domain/schedule";
+import { AUTOMATIONS_HTML } from "./automations-page";
 import type { Env } from "../../env";
 import { verifyAccess } from "@voice-notes/core";
 
 const ID = /^[a-z0-9-]{8,64}$/;
+const SCHEDULE_ID = /^[a-f0-9]{8}$/;
 const REPO = /^[\w-][\w.-]*\/[\w-][\w.-]*$/;
 
 const NEUTRAL_SW = `self.addEventListener("install", () => self.skipWaiting());
@@ -17,6 +20,12 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   POST /api/sessions/<id>/messages {text}   → уточнення в ту саму сесію
 //   DELETE /api/sessions/<id>                 → видаляє сесію: історію й теку (гілка agent/<id> лишається)
 //   POST /api/sessions/<id>/abort             → зупиняє поточну роботу агента
+//   GET  /api/schedules, POST /api/schedules {name, prompt, at | cron+tz?, repo?, model?, expiresAt?}  → розклади автоматизацій (ADR 0005)
+//   GET|PATCH|DELETE /api/schedules/<id>      → один розклад: читання, зміна полів, видалення
+//   POST /api/schedules/<id>/pause|resume|run → пауза, відновлення (і підтвердження розкладу від агента), запуск зараз
+//   GET  /api/schedules/<id>/runs             → історія запусків
+//   POST /api/schedules/preview {at | cron+tz?} → {times}: найближчі запуски для форми (ті самі перевірки, що й при створенні)
+//   GET  /automations                         → веб-сторінка автоматизацій (таблиця, форма, історія) над /api/schedules
 //   GET  /silpo/login, /silpo/callback        → вхід у Сільпо (OAuth для MCP): редірект на Сільпо і завершення входу
 //   GET  /calendar/login, /calendar/callback  → вхід у Google Calendar (OAuth для MCP Google Workspace): те саме
 //   GET  /api/computer                        → стан контейнера для діагностики (чому не засинає, відкриті SSE-потоки)
@@ -25,7 +34,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 //   DELETE /api/computer/snapshot             → видаляє знімок і зупиняє контейнер: наступний старт з чистого образу (сесії зникають)
 //   GET  /s/<id>                              → редірект на сторінку цієї сесії у веб-інтерфейсі OpenCode
 //   будь-що інше                              → проксі у веб-інтерфейс OpenCode (спільний контейнер, усі сесії в одному списку)
-export async function handleFetch(req: Request, env: Env, agent: Sessions & Computer & SilpoLogin & CalendarLogin): Promise<Response> {
+export async function handleFetch(req: Request, env: Env, agent: Sessions & Computer & SilpoLogin & CalendarLogin, schedules?: Schedules): Promise<Response> {
 	if (!env.LOCAL_DEV) {
 		if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) return new Response("Access is not configured", { status: 503 });
 		if (!(await verifyAccess(req, { teamDomain: env.ACCESS_TEAM_DOMAIN, aud: env.ACCESS_AUD }))) return new Response("Forbidden", { status: 403 });
@@ -33,6 +42,9 @@ export async function handleFetch(req: Request, env: Env, agent: Sessions & Comp
 	const url = new URL(req.url);
 
 	if (req.method === "POST" && url.pathname === "/api/sessions") return create(req, agent);
+
+	if (schedules && url.pathname.startsWith("/api/schedules")) return scheduleApi(req, url, schedules);
+	if (schedules && req.method === "GET" && (url.pathname === "/automations" || url.pathname === "/automations/")) return new Response(AUTOMATIONS_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 
 	const api = url.pathname.match(/^\/api\/sessions\/([^/]+)(?:\/(messages|abort))?$/);
 	if (api) {
@@ -121,4 +133,49 @@ async function create(req: Request, agent: Sessions & Computer): Promise<Respons
 	if (!ID.test(id)) return json({ error: "bad id" }, 400);
 	if (body.repo && !REPO.test(body.repo)) return json({ error: "bad repo" }, 400);
 	return json(await agent.start(id, { prompt: body.prompt, repo: body.repo }));
+}
+
+const OUTCOME_STATUS = { invalid: 400, limit: 409, not_found: 404 } as const;
+const outcome = <T>(o: Outcome<T>, field: string) => (o.ok ? json({ [field]: o.value }) : json({ error: o.error }, OUTCOME_STATUS[o.code]));
+
+// Розклади автоматизацій: усі правила й ліміти живуть у Scheduler, тут лише розбір запиту.
+async function scheduleApi(req: Request, url: URL, schedules: Schedules): Promise<Response> {
+	if (url.pathname === "/api/schedules/preview") {
+		if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
+		const body = await req.json<NewSchedule>().catch(() => null);
+		if (!body || typeof body !== "object") return json({ error: "bad body" }, 400);
+		return outcome(preview({ at: body.at, cron: body.cron, tz: body.tz }, Date.now()), "times");
+	}
+	const m = url.pathname.match(/^\/api\/schedules(?:\/([^/]+)(?:\/(pause|resume|run|runs))?)?$/);
+	if (!m) return json({ error: "not found" }, 404);
+	const [, id, action] = m;
+	if (!id) {
+		if (req.method === "GET") return json({ schedules: await schedules.list() });
+		if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
+		const body = await req.json<NewSchedule>().catch(() => null);
+		if (!body || typeof body !== "object") return json({ error: "bad body" }, 400);
+		return outcome(await schedules.create(body, "owner", url.origin), "schedule");
+	}
+	if (!SCHEDULE_ID.test(id)) return json({ error: "bad id" }, 400);
+	if (!action) {
+		if (req.method === "GET") {
+			const s = await schedules.get(id);
+			return s ? json({ schedule: s }) : json({ error: "no such schedule" }, 404);
+		}
+		if (req.method === "DELETE") return (await schedules.remove(id)) ? json({ ok: true }) : json({ error: "no such schedule" }, 404);
+		if (req.method === "PATCH") {
+			const body = await req.json<SchedulePatch>().catch(() => null);
+			if (!body || typeof body !== "object") return json({ error: "bad body" }, 400);
+			return outcome(await schedules.update(id, body), "schedule");
+		}
+		return json({ error: "method not allowed" }, 405);
+	}
+	if (action === "runs" && req.method === "GET") {
+		const s = await schedules.get(id);
+		return s ? json({ runs: s.runs }) : json({ error: "no such schedule" }, 404);
+	}
+	if (req.method !== "POST" || action === "runs") return json({ error: "method not allowed" }, 405);
+	if (action === "pause") return outcome(await schedules.pause(id), "schedule");
+	if (action === "resume") return outcome(await schedules.resume(id), "schedule");
+	return outcome(await schedules.runNow(id), "run");
 }

@@ -76,7 +76,7 @@ describe("меню команд", () => {
 		const sets = calls.filter((c) => c.method === "setMyCommands");
 		expect(sets).toHaveLength(1);
 		expect(sets[0].body).toMatchObject({ scope: { type: "all_private_chats" } });
-		expect((sets[0].body.commands as { command: string }[]).map((c) => c.command)).toEqual(["status", "stop", "model", "delete", "quota", "update"]);
+		expect((sets[0].body.commands as { command: string }[]).map((c) => c.command)).toEqual(["status", "stop", "model", "delete", "automations", "quota", "update"]);
 	});
 });
 

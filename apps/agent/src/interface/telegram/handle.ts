@@ -1,10 +1,11 @@
 import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import type { Agent, ImageRef } from "../../domain/agent";
+import type { Schedules } from "../../domain/schedule";
 import type { Env } from "../../env";
 import { stamp, stopwatch } from "../../timing";
 import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
-import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
+import { automations, quotaText, sessionCommand, updateContainer, type Say } from "./commands";
 import { askRepo, launchSession, type Pending } from "./launch";
 import { routeTask, type KnownRepo } from "./repo";
 
@@ -13,7 +14,7 @@ export const TELEGRAM_PATH = "/telegram";
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
 // repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. repo.ts); без них репозиторій задає лише префікс.
 // syncCommands: виставляти меню `/`-команд (див. syncCommands); у тестах вимкнено.
-export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean };
+export type TelegramDeps = { agent: Agent; schedules?: Schedules; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean };
 
 // Меню `/`-команд у приваті. Єдине місце, де вони перелічені: додаєш команду в обробник — додай і сюди.
 export const COMMANDS = [
@@ -21,6 +22,7 @@ export const COMMANDS = [
 	{ command: "stop", description: "Зупинити сесію (відповіддю на пост)" },
 	{ command: "model", description: "Змінити модель сесії: /model opus (відповіддю на пост)" },
 	{ command: "delete", description: "Видалити сесію (відповіддю на пост)" },
+	{ command: "automations", description: "Автоматизації: розклади запусків агента" },
 	{ command: "quota", description: "Ліміти підписки Claude" },
 	{ command: "update", description: "Перезапустити контейнер з поточного образу" },
 ];
@@ -55,7 +57,7 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	if (deps.syncCommands) deps.defer(syncCommands(bot));
 	const update = await req.json<TgUpdate>().catch(() => null);
 	if (update?.callback_query) {
-		deps.defer(handleButton(bot, update.callback_query, env, deps.agent).catch((err) => console.error("telegram button failed:", err)));
+		deps.defer(handleButton(bot, update.callback_query, env, deps.agent, deps.schedules).catch((err) => console.error("telegram button failed:", err)));
 		return new Response("ok");
 	}
 	const msg = update?.message ?? update?.channel_post;
@@ -145,7 +147,7 @@ function parsePrefixes(transcript: string): { task: string; model?: string; sure
 	return { task: task.trim(), model, sure, silpo, calendar };
 }
 
-async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, schedules, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	// Фото (стиснене чи надіслане файлом) іде агентові як зображення; підпис до нього — текст задачі.
@@ -165,8 +167,9 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	if (!file && !image && (!text || text.startsWith("/"))) {
 		const command = text?.split(/[\s@]/)[0];
 		console.log(`telegram ${chat}/${msg.message_id}: command=${command ?? "(empty)"} reply-to-session=${replied?.[1] ?? "-"}`);
-		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /model opus змінює модель сесії (початок тексту «@opus задача» задає модель одразу), /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер з поточного образу.");
+		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /model opus змінює модель сесії (початок тексту «@opus задача» задає модель одразу), /delete видаляє сесію, /quota показує ліміти Claude, /automations — автоматизації за розкладом, /update перезапускає контейнер з поточного образу.");
 		else if (command === "/update") await updateContainer(sayTemp, agent, /\bforce\b/i.test(text ?? ""));
+		else if (command === "/automations") await automations(env, chat, schedules, say, threadId);
 		else if (command === "/quota") await sayTemp(await quotaText(claudeToken));
 		else if (command === "/model") {
 			const model = text?.split(/\s+/)[1];
@@ -179,7 +182,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 			else await sessionCommand(env, chat, agent, sayTemp, replied[1], command, msg.reply_to_message?.message_id);
 		}
 		// Команда виконана: саму команду з чату прибираємо (відповідь бота лишається), як і прийняті уточнення.
-		if (command === "/status" || command === "/stop" || command === "/delete" || command === "/update" || command === "/quota" || command === "/model") await removeMessage(env, chat, msg.message_id);
+		if (command === "/status" || command === "/stop" || command === "/delete" || command === "/update" || command === "/quota" || command === "/model" || command === "/automations") await removeMessage(env, chat, msg.message_id);
 		await Promise.all(cleanups); // відповідь зникне через EPHEMERAL_MS
 		return;
 	}

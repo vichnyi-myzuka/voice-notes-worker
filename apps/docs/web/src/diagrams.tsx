@@ -10,7 +10,7 @@ export function Overview() {
       <Box x={230} y={60} w={170} h={70} title="Канал нотаток" lines={["голос, текст, фото"]} color={4} />
       <Box x={230} y={300} w={170} h={80} title="Чат з агентом" lines={["завдання, кнопки", "пост на сесію"]} color={4} />
       <Box x={480} y={50} w={200} h={90} title="apps/notes" lines={["воркер нотаток", "R2, Queue, DLQ"]} color={0} />
-      <Box x={480} y={300} w={200} h={80} title="apps/agent" lines={["Durable Object main", "сесії й стеження"]} color={1} />
+      <Box x={480} y={300} w={200} h={80} title="apps/agent" lines={["DO main і DO Scheduler", "сесії, стеження, розклад"]} color={1} />
       <Box x={740} y={50} w={200} h={70} title="Todoist" lines={["задачі, тріаж"]} color={3} />
       <Box x={740} y={140} w={200} h={70} title="Whisper, gpt-6-luna" lines={["Workers AI, OpenAI"]} color={3} />
       <Box x={740} y={225} w={200} h={60} title="apps/sites" lines={["приватні й публічні сайти"]} color={2} />
@@ -96,11 +96,14 @@ export function AgentModules() {
       <Box x={20} y={160} w={460} h={80} title="infrastructure/chat" lines={["пости, клавіатури, callback_data,", "дії над повідомленнями"]} color={2} />
       <Box x={540} y={160} w={400} h={80} title="domain/agent (порт Agent)" lines={["Sessions & Computer & Deploys", "кожен модуль бере лише потрібне"]} color={1} />
       <Box x={540} y={300} w={400} h={80} title="infrastructure/container" lines={["Durable Object AgentSession,", "контейнер і знімки диска"]} color={1} />
+      <Box x={20} y={300} w={460} h={80} title="infrastructure/scheduler" lines={["Durable Object Scheduler (ADR 0005):", "розклади, alarm, ліміти й бюджет"]} color={1} />
       <Arrow points={[[120, 90], [120, 160]]} />
       <Arrow points={[[380, 90], [380, 160]]} />
       <Arrow points={[[640, 90], [640, 160]]} />
       <Arrow points={[[480, 200], [540, 200]]} label="Deploys" labelAt={[510, 192]} />
       <Arrow points={[[740, 300], [740, 240]]} label="реалізує" labelAt={[785, 275]} dashed />
+      <Arrow points={[[250, 240], [250, 300]]} label="пости, картки" labelAt={[320, 272]} dashed />
+      <Arrow points={[[480, 340], [540, 340]]} label="begin" labelAt={[510, 332]} />
     </DiagramCard>
   );
 }

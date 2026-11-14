@@ -48,3 +48,12 @@ class_name = "AgentSession"
 [exports.AgentSession]
 type = "durable-object"
 storage = "sqlite"
+
+# Розклади автоматизацій агента (ADR 0005): окремий Durable Object, alarm на найближчий запуск.
+[[durable_objects.bindings]]
+name = "SCHEDULER"
+class_name = "Scheduler"
+
+[exports.Scheduler]
+type = "durable-object"
+storage = "sqlite"

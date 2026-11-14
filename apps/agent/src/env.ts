@@ -1,8 +1,10 @@
 import type { AgentSession } from "./infrastructure/container";
+import type { Scheduler } from "./infrastructure/scheduler";
 
 // Прив'язки й секрети воркера агента (див. wrangler.toml і README).
 export interface Env {
 	AGENT_SESSION: DurableObjectNamespace<AgentSession>;
+	SCHEDULER: DurableObjectNamespace<Scheduler>; // розклади автоматизацій (ADR 0005)
 	// Cloudflare Access: team domain (`<team>.cloudflareaccess.com`) і AUD застосунку
 	ACCESS_TEAM_DOMAIN?: string;
 	ACCESS_AUD?: string;
@@ -22,6 +24,8 @@ export interface Env {
 	// Запобіжники сесії: вартість у USD (за замовчуванням 5) і токени без кешу (за замовчуванням 3 млн); понад ліміт сесію зупиняє alarm
 	AGENT_MAX_COST_USD?: string;
 	AGENT_MAX_TOKENS?: string;
+	// Добовий бюджет усіх запусків за розкладом, USD (ковзне вікно 24 години; за замовчуванням 10; 0 вимикає): див. ADR 0005
+	AGENT_SCHEDULE_DAILY_USD?: string;
 	AGENT_PROGRESS_MS?: string; // мінімальний інтервал оновлення поста з прогресом (мс; типово 4000)
 	// Чат з агентом у Telegram (окремий бот): токен, секрет вебхука, єдиний дозволений користувач. Whisper — через Workers AI.
 	BOT_TOKEN?: string;
