@@ -7,7 +7,7 @@ import { replyKeyboard, type KeySet } from "./thread-ui";
 export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
 export { KEYS, NEW_SESSION, keyAction, replyKeyboard, sendNewSessionKeyboard, showKeys, threadUi, type KeySet, type KeyState, type KeyView, type SessionKey, type ThreadUi } from "./thread-ui";
 export { callback, parseCallback, type Callback, type SessionAction } from "./callback";
-export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
+export { EPHEMERAL_MARK, EPHEMERAL_MS, createTopic, pinMessage, removeMessage, removeTopic, renameTopic, removeOriginal, sayTemporarily, setTopicIcon, type TopicState } from "./messages";
 
 // Кнопки під постом сесії: поки агент працює — «Стоп» і «Видалити», після завершення — лише «Видалити». Id сесії береться з її
 // посилання (…/s/<id>), у callback_data лежить `<дія>:<id>` (обробляє interface/telegram). Редагування без reply_markup кнопки

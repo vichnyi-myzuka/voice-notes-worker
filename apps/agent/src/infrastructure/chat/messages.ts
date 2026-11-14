@@ -44,7 +44,8 @@ const TOPIC_EMOJI: Record<TopicState, string[]> = {
 	deployFailed: ["❌", "❗"],
 };
 let iconIds: Promise<Map<string, string>> | undefined;
-const lastIcon = new Map<string, TopicState>(); // щоб не слати однаковий стан двічі
+const ICON_DEDUPE_MS = 60_000;
+const lastIcon = new Map<string, { state: TopicState; at: number }>(); // щоб не слати однаковий стан двічі поспіль (лише недавній: тему могли змінити вручну)
 
 // Для тестів: забуває набір іконок і останній стан тем.
 export function resetTopicIcons(): void {
@@ -55,19 +56,28 @@ export function resetTopicIcons(): void {
 // Ставить темі іконку стану; збій (немає прав, чат без тем, емодзі немає в наборі) не критичний.
 export async function setTopicIcon(env: BotEnv, chat: number, threadId: number, state: TopicState): Promise<void> {
 	const key = `${chat}:${threadId}`;
-	if (lastIcon.get(key) === state) return;
+	const last = lastIcon.get(key);
+	if (last?.state === state && Date.now() - last.at < ICON_DEDUPE_MS) return;
 	try {
 		iconIds ??= tg(env, "getForumTopicIconStickers", {}).then((list) => new Map(list.flatMap((s) => (s.emoji && s.custom_emoji_id ? [[s.emoji.replace(/️/g, ""), s.custom_emoji_id] as const] : []))));
 		const ids = await iconIds.catch((err) => ((iconIds = undefined), Promise.reject(err)));
 		const id = TOPIC_EMOJI[state].map((e) => ids.get(e)).find(Boolean);
-		if (!id) return;
+		if (!id) return void console.error(`topic icon: no emoji in the set for ${state}`);
 		await tg(env, "editForumTopic", { chat_id: chat, message_thread_id: threadId, icon_custom_emoji_id: id });
 		if (lastIcon.size > 500) lastIcon.clear();
-		lastIcon.set(key, state);
+		lastIcon.set(key, { state, at: Date.now() });
+		console.log(`topic icon ${key}: ${state}`);
 	} catch (err) {
 		console.error("topic icon failed:", err);
 	}
 }
+
+// Закріплює повідомлення (табло сесії) без сповіщення; збій (немає прав, чат без закріплень) не критичний.
+export const pinMessage = (env: BotEnv, chat: number, messageId: number) =>
+	tg(env, "pinChatMessage", { chat_id: chat, message_id: messageId, disable_notification: true }).then(
+		() => true,
+		(err) => (console.error("pin failed:", err), false),
+	);
 
 // Видаляє тему разом з усіма повідомленнями в ній.
 export const removeTopic = (env: BotEnv, chat: number, threadId: number) =>

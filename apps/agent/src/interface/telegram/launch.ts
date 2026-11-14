@@ -1,6 +1,6 @@
 import { tg, tgSendMessage, type BotEnv } from "@voice-notes/core";
 import { MCP_LABELS, folderFor, type Agent, type ImageRef, type McpName } from "../../domain/agent";
-import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, removeMessage, renameTopic, sendChat, type KeySet } from "../../infrastructure/chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, pinMessage, removeMessage, renameTopic, sendChat, type KeySet } from "../../infrastructure/chat";
 import { type Stopwatch } from "../../timing";
 import type { KnownRepo, Route } from "./repo";
 
@@ -52,12 +52,21 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
 	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : "", calendar ? "📅 Календар" : "", cloudflare ? "☁️ Cloudflare" : ""].filter(Boolean).join("\n");
+	// Режим messages (keys задано лише в ньому): першим у темі йде закріплене табло сесії (репозиторій, гілка, модель, сервіси і стан,
+	// який агент оновлює на місці), а задача окремим повідомленням після нього. Інакше (classic) задача й стан в одному пості.
+	const board = !!thread && !!p.keys;
+	const task = file ? `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}` : clipped;
 	const header = (
-		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
+		board ? where
+		: file ? [where, task].filter(Boolean).join("\n\n")
 		: `${moved ? `${clipped}\n\n` : ""}${where}`
 	).trim();
 	// Режим messages: клавіші внизу теми («Стоп» тощо) йдуть разом із цим постом, а не окремим повідомленням, що повторює статус.
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread, thread ? p.keys : undefined);
+	if (board && thread) {
+		await pinMessage(env, chat, postId);
+		if (moved || file) await sendChat(env, chat, task, undefined, "none", undefined, undefined, thread).catch((err) => console.error("task message failed:", err));
+	}
 	sw?.mark("post");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
 	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(cloudflare && { cloudflare }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...((created || renameFirst) && { title }) });
