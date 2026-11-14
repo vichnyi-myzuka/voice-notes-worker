@@ -22,7 +22,8 @@ import { calendarLogin, cloudflareLogin, silpoLogin } from "./logins";
 import { retitle } from "./title";
 import { fetchQuota, isBlocked, isLimitError, resetTime } from "../quota";
 import { WebProxy } from "./proxy";
-import { sessionDir, FORM_PREFIX, LIMIT_PREFIX, WATCH_PREFIX, limitKey, type LimitWait, SESSION_PREFIX, deployKey, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
+import { sessionDir, FORM_PREFIX, deployKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
+import { SessionStore } from "./store";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -34,6 +35,7 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly computer: Computer;
 	private readonly posts: Posts;
 	private readonly forms: Forms;
+	private readonly store: SessionStore;
 	private readonly proxy: WebProxy;
 	private readonly silpo: OAuthLogin;
 	private readonly calendar: OAuthLogin;
@@ -54,7 +56,8 @@ export class AgentSession extends DurableObject<Env> {
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.computer = new Computer(ctx, env);
-		this.posts = new Posts(ctx.storage, env);
+		this.store = new SessionStore(ctx.storage);
+		this.posts = new Posts(ctx.storage, env, this.store);
 		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.silpo = silpoLogin(ctx.storage);
@@ -97,18 +100,18 @@ export class AgentSession extends DurableObject<Env> {
 	// Один оберт опитування: зупиняє сесії, що перевищили ліміти, і повідомляє в чат про завершені. Повертає true, поки є що
 	// відстежувати (працюють сесії чи лишились спостереження).
 	private async tick(): Promise<boolean> {
-		const watches = await this.ctx.storage.list<Watch>({ prefix: WATCH_PREFIX });
+		const watches = await this.store.watches();
 		if (!this.computer.running) {
 			// Контейнер зупинився, а робота не завершилась: сказати про це й більше не стежити.
-			for (const [key, w] of watches) await this.finishWatch(key, w, "⚠️ Контейнер зупинився, не дочекавшись завершення. Напиши уточнення, щоб продовжити.");
+			for (const [id, w] of watches) await this.finishWatch(id, w, "⚠️ Контейнер зупинився, не дочекавшись завершення. Напиши уточнення, щоб продовжити.");
 			return false;
 		}
-		if (watches.size > 0) this.listen(); // потік міг обірватись
+		if (watches.length > 0) this.listen(); // потік міг обірватись
 		const oc = this.opencode();
 		const active = new Set(await activeSessions(oc));
 		const maxCost = maxCostUsd(this.env);
 		const tokenLimit = maxTokens(this.env);
-		const byOc = new Map([...watches].map(([key, w]) => [w.ocId, [key, w] as const]));
+		const byOc = new Map(watches.map(([id, w]) => [w.ocId, [id, w] as const]));
 
 		for (const ocId of active) {
 			if (!byOc.has(ocId)) await this.watchPrompted(ocId).catch((err) => console.error("rewatch failed:", err)); // працює без стеження (страховка до подій)
@@ -131,30 +134,30 @@ export class AgentSession extends DurableObject<Env> {
 				await interrupt(oc, ocId).catch((err) => console.error("limit interrupt failed:", err));
 				console.error(`session ${ocId} stopped: ${over}`);
 			} else if (watched && !watched[1].seenBusy) {
-				await this.ctx.storage.put(watched[0], { ...watched[1], seenBusy: true } satisfies Watch);
+				await this.store.saveWatch(watched[0], { ...watched[1], seenBusy: true });
 				watched[1].seenBusy = true;
-				console.log(`latency session ${watchId(watched[0])} first-busy=${Date.now() - watched[1].since}ms at=${stamp()} (poll)`);
+				console.log(`latency session ${watched[0]} first-busy=${Date.now() - watched[1].since}ms at=${stamp()} (poll)`);
 			}
 		}
 
-		for (const [ocId, [key, w]] of byOc) {
-			if (active.has(ocId) && (await this.ctx.storage.get(key))) {
-				if (Date.now() - w.since > WATCH_MAX_MS) await this.finishWatch(key, w, "⚠️ Сесія надто довго працює: перестав стежити. Напиши уточнення, щоб продовжити.");
+		for (const [ocId, [id, w]] of byOc) {
+			if (active.has(ocId) && (await this.store.watch(id))) {
+				if (Date.now() - w.since > WATCH_MAX_MS) await this.finishWatch(id, w, "⚠️ Сесія надто довго працює: перестав стежити. Напиши уточнення, щоб продовжити.");
 				continue;
 			}
-			if (!(await this.ctx.storage.get(key))) continue; // уже оброблено вище (ліміт)
+			if (!(await this.store.watch(id))) continue; // уже оброблено вище (ліміт)
 			// Вільна: або вже відпрацювала, або ще не стартувала (дамо їй трохи часу).
 			if (!w.seenBusy && Date.now() - w.since < WATCH_INTERVAL_MS + 5000) continue;
 			// Сесії OpenCode вже немає (диск не відновився, її видалили): підсумок не отримати, тож знімаємо спостереження. Інакше
 			// кожен оберт alarm знову впирався б у 404, і сесія стежила б вічно.
 			const done = await this.summary(oc, w).catch((err) => {
 				if (!String(err).includes("SessionNotFoundError")) throw err;
-				console.error(`session ${w.ocId} is gone, dropping watch ${watchId(key)}`);
+				console.error(`session ${w.ocId} is gone, dropping watch ${id}`);
 				return { text: "⚠️ Сесії OpenCode вже немає (диск контейнера не відновився). Напиши уточнення, щоб продовжити." };
 			});
-			await this.finishWatch(key, w, done.text, "images" in done ? done.images : undefined, "limit" in done && done.limit);
+			await this.finishWatch(id, w, done.text, "images" in done ? done.images : undefined, "limit" in done && done.limit);
 		}
-		return (await this.ctx.storage.list({ prefix: WATCH_PREFIX })).size > 0 || active.size > 0;
+		return (await this.store.watching()) || active.size > 0;
 	}
 
 	// Підсумок завершеної роботи: останнє повідомлення асистента, помилка чи нічого, якщо користувач сам зупинив.
@@ -186,12 +189,12 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Клавіші внизу теми сесії: дії сесії чи екран загальних команд.
 	async keyView(id: string, view: KeyView): Promise<void> {
-		const post = (await this.ctx.storage.get<Tracked>(sessionKey(id)))?.post;
+		const post = (await this.store.session(id))?.post;
 		if (post?.chatId) await this.posts.keyView({ chatId: post.chatId, ...(post.threadId && { threadId: post.threadId }) }, view);
 	}
 
 	async pendingReview(id: string): Promise<{ postId: number; repo: string; runId: number } | undefined> {
-		return this.posts.pendingReview(await this.ctx.storage.get<Tracked>(sessionKey(id)));
+		return this.posts.pendingReview(await this.store.session(id));
 	}
 
 	saveRef(key: string, ref: PostRef): Promise<void> {
@@ -265,7 +268,7 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Гілка сесії й репозиторій (для кнопки «Змерджити»); undefined, якщо сесія без репозиторію.
 	async pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined> {
-		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		const tracked = await this.store.session(id);
 		return tracked?.repo ? { repo: tracked.repo, branch: `agent/${tracked.folder ?? id}` } : undefined;
 	}
 
@@ -285,10 +288,10 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Забирає спостереження (щоб не повідомити двічі) і показує результат у пості сесії; без поста (чи якщо його видалили) шле нове повідомлення.
-	private async finishWatch(key: string, w: Watch, text: string, images: OutImage[] = [], limit = false): Promise<void> {
-		if (!(await this.ctx.storage.get(key))) return; // уже показано (подія й опитування можуть збігтися)
-		await this.ctx.storage.delete(key);
-		await this.forms.drop(watchId(key)); // питання, що лишилось без відповіді, неактуальне
+	private async finishWatch(id: string, w: Watch, text: string, images: OutImage[] = [], limit = false): Promise<void> {
+		if (!(await this.store.watch(id))) return; // уже показано (подія й опитування можуть збігтися)
+		await this.store.dropWatch(id);
+		await this.forms.drop(id); // питання, що лишилось без відповіді, неактуальне
 		this.lastProgress.delete(w.ocId);
 		this.recent.delete(w.ocId);
 		this.narration.delete(w.ocId);
@@ -297,18 +300,18 @@ export class AgentSession extends DurableObject<Env> {
 		if (!this.env.BOT_TOKEN) return;
 		// Якщо PR сесії вже в деплої, іконку лишає стадія деплою, а не «готово»
 		// Деплой PR записано на початковий пост сесії, а не на повідомлення стану ходу (воно може бути іншим).
-		const sessionPost = (await this.ctx.storage.get<Tracked>(sessionKey(watchId(key))))?.post?.postId ?? w.postId;
+		const sessionPost = (await this.store.session(id))?.post?.postId ?? w.postId;
 		const deploy = sessionPost ? await this.ctx.storage.get<DeployInfo>(deployKey(sessionPost)) : undefined;
 		await this.icon(w, deploy?.stage ? DEPLOY_ICON[deploy.stage] : /^[❌⛔⚠]/u.test(text) ? "failed" : "done");
 		// Підсумок успішної роботи: якщо агент відкрив PR, додаємо «Змерджити» (зупинену чи невдалу сесію не мерджимо з чату)
-		const check = text.startsWith("✅") ? await this.pullCheck(watchId(key)) : { ok: false };
+		const check = text.startsWith("✅") ? await this.pullCheck(id) : { ok: false };
 		const mergeable = check.ok;
 		if (check.why) text += `\n\nℹ️ Кнопку «Змерджити» не показано: ${check.why}.`;
-		if (limit) await this.waitForLimits(watchId(key), w);
+		if (limit) await this.waitForLimits(id, w);
 		// Що писати в пості й чи слати підсумок окремим повідомленням, вирішує вигляд сесії (THREAD_UI, див. chat/thread-ui.ts)
 		const summary = (await threadUi(this.env, !!w.threadId)).summary({ text, limit, mergeable });
 		const shown = await this.posts.show(w, summary.post, true, undefined, mergeable, limit);
-		await this.retitle(watchId(key), w, text);
+		await this.retitle(id, w, text);
 		// Клавіші внизу теми за станом: чіпляються до окремого підсумку (без повідомлення-носія, що повторює статус); якщо підсумок
 		// окремо не йде — самостійним повідомленням.
 		const keyState = limit ? "retry" : mergeable ? "mergeable" : "done";
@@ -329,12 +332,12 @@ export class AgentSession extends DurableObject<Env> {
 	private async retitle(id: string, w: Watch, result: string): Promise<void> {
 		try {
 			if (!result.startsWith("✅") || !w.threadId || !w.title || !this.env.BOT_TOKEN) return;
-			const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+			const tracked = await this.store.session(id);
 			const current = tracked?.post?.title;
 			if (!tracked?.post || !current) return;
 			const title = await retitle(workersLlm(this.env), current, (w.header ?? "").replace(/[]/g, ""), this.asks.get(id), result);
 			if (!title || title === current) return;
-			if (await renameTopic({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, title)) await this.ctx.storage.put(sessionKey(id), { ...tracked, post: { ...tracked.post, title } } satisfies Tracked);
+			if (await renameTopic({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, title)) await this.store.saveSession(id, { ...tracked, post: { ...tracked.post, title } } satisfies Tracked);
 		} catch (err) {
 			console.error("retitle failed:", err);
 		}
@@ -377,10 +380,10 @@ export class AgentSession extends DurableObject<Env> {
 		const sw = stopwatch(`session ${id} start`);
 		await this.computer.ensureRunning();
 		sw.mark("container");
-		const existing = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		const existing = await this.store.session(id);
 		if (existing) return { sessionId: existing.ocId };
 		return this.computer.serial(async () => {
-			const again = await this.ctx.storage.get<Tracked>(sessionKey(id));
+			const again = await this.store.session(id);
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
 			const { silpo, calendar, cloudflare } = await this.mcpWanted(input);
@@ -389,7 +392,7 @@ export class AgentSession extends DurableObject<Env> {
 			sw.mark("prepare");
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
 			sw.mark("create");
-			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(silpo && { silpo: true }), ...(calendar && { calendar: true }), ...(cloudflare && { cloudflare: true }) } satisfies Tracked);
+			await this.store.saveSession(id, { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(silpo && { silpo: true }), ...(calendar && { calendar: true }), ...(cloudflare && { cloudflare: true }) } satisfies Tracked);
 			// Сільпо просили, а входу немає (чи токен не оновився): агент скаже про це власнику замість мовчазної відсутності інструментів.
 			const notes = [
 				input.silpo && !silpo && "MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.",
@@ -406,7 +409,7 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Уточнення в сесію. Якщо сесії OpenCode вже немає (диск не відновився зі знімка), готуємо теку заново й створюємо нову.
 	async followUp(id: string, text: string, images?: ImageRef[]): Promise<void> {
-		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		const tracked = await this.store.session(id);
 		if (!tracked) throw new Error(`unknown session ${id}`);
 		await this.computer.ensureRunning();
 		let ocId = tracked.ocId;
@@ -415,11 +418,11 @@ export class AgentSession extends DurableObject<Env> {
 				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, await this.mcpWanted(tracked));
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
-			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
+			await this.store.saveSession(id, { ...tracked, ocId } satisfies Tracked);
 		}
 		await this.refreshMcp(id, tracked);
 		this.asks.set(id, text);
-		await this.ctx.storage.delete(limitKey(id)); // власник уже діє: чекати скидання лімітів заради цієї сесії не треба
+		await this.store.dropLimit(id); // власник уже діє: чекати скидання лімітів заради цієї сесії не треба
 		await this.forms.cancel(id, text); // текст замість кнопки: відкрите питання не чекає далі
 		await prompt(this.opencode(), ocId, text, await this.images(images));
 		await this.computer.markActive();
@@ -432,21 +435,21 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Змінює модель сесії для наступних ходів і запам'ятовує її (нова сесія OpenCode після сну теж піде на ній).
 	async setModel(id: string, requested: string): Promise<boolean> {
-		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		const tracked = await this.store.session(id);
 		if (!tracked) throw new Error(`unknown session ${id}`);
 		const model = this.computer.model(requested);
 		if (!model) return false;
 		await this.computer.ensureRunning();
 		if (!(await hasModel(this.opencode(), model))) return false;
 		if (await sessionExists(this.opencode(), tracked.ocId)) await switchModel(this.opencode(), tracked.ocId, model);
-		await this.ctx.storage.put(sessionKey(id), { ...tracked, model: requested } satisfies Tracked);
+		await this.store.saveSession(id, { ...tracked, model: requested } satisfies Tracked);
 		return true;
 	}
 
 	// Id сесії OpenCode для прямого посилання (контейнер не будимо). Прийняте, але ще не запущене завдання теж «є» (повторна
 	// доставка вебхука не створює другу сесію).
 	async link(id: string): Promise<string | undefined> {
-		return (await this.ctx.storage.get<Tracked>(sessionKey(id)))?.ocId ?? ((await this.ctx.storage.get(jobKey(id))) ? "pending" : undefined);
+		return (await this.store.session(id))?.ocId ?? ((await this.store.job(id)) ? "pending" : undefined);
 	}
 
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
@@ -462,17 +465,17 @@ export class AgentSession extends DurableObject<Env> {
 		// Клавіші «працює» прийдуть разом із повідомленням стану, яке watch надішле, коли завдання почне виконуватись.
 		// Завдання одне на сесію (ключ job:<id>): уточнення, що прийшло, поки попереднє ще не почало виконуватись, не затирає його, а
 		// додається до нього (інакше текст чи фото губиться, а в темі лишається «Працює» без відповіді).
-		const queued = await this.ctx.storage.get<Job>(jobKey(id));
+		const queued = await this.store.job(id);
 		if (queued && "text" in queued && !queued.startedAt) {
 			const merged = [...(queued.images ?? []), ...(images ?? [])];
-			await this.ctx.storage.put(jobKey(id), { ...queued, text: `${queued.text}\n\n${text}`, target, ...(merged.length && { images: merged }) } satisfies Job);
+			await this.store.saveJob({ ...queued, text: `${queued.text}\n\n${text}`, target, ...(merged.length && { images: merged }) } satisfies Job);
 			await this.ctx.storage.setAlarm(Date.now());
 			return;
 		}
 		// Старт ще не почався: уточнення дописується до задачі старту (інакше нове завдання з тим самим ключем стерло б сам старт).
 		if (queued && "input" in queued && !queued.startedAt) {
 			const merged = [...(queued.input.images ?? []), ...(images ?? [])];
-			await this.ctx.storage.put(jobKey(id), { ...queued, input: { ...queued.input, prompt: `${queued.input.prompt}\n\n${text}`, ...(merged.length && { images: merged }) } } satisfies Job);
+			await this.store.saveJob({ ...queued, input: { ...queued.input, prompt: `${queued.input.prompt}\n\n${text}`, ...(merged.length && { images: merged }) } } satisfies Job);
 			await this.ctx.storage.setAlarm(Date.now());
 			return;
 		}
@@ -480,7 +483,7 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	private async enqueue(job: Job): Promise<void> {
-		await this.ctx.storage.put(jobKey(job.id), { ...job, queuedAt: Date.now() } satisfies Job);
+		await this.store.saveJob({ ...job, queuedAt: Date.now() });
 		await this.ctx.storage.setAlarm(Date.now());
 	}
 
@@ -491,21 +494,21 @@ export class AgentSession extends DurableObject<Env> {
 	// повідомлення не стоїть за ним. Завдання з `startedAt` вважається виконуваним, доки не мине JOB_STALE_MS (страховка від
 	// вивантаження). Клони йдуть по черзі в computer.serial, старт контейнера спільний (ensureRunning). Повертає true, поки є завдання.
 	private async runJobs(): Promise<boolean> {
-		for (const [key, job] of await this.ctx.storage.list<Job>({ prefix: "job:" })) {
+		for (const job of await this.store.jobs()) {
 			if (this.activeJobs.has(job.id)) continue;
 			if (job.startedAt && Date.now() - job.startedAt < JOB_STALE_MS) continue;
 			const started: Job = { ...job, startedAt: Date.now() };
-			await this.ctx.storage.put(key, started);
+			await this.store.saveJob(started);
 			this.activeJobs.add(job.id);
-			this.ctx.waitUntil(this.runJob(key, started).catch((err) => console.error(`job ${job.id} crashed:`, err)).finally(() => this.activeJobs.delete(job.id)));
+			this.ctx.waitUntil(this.runJob(started).catch((err) => console.error(`job ${job.id} crashed:`, err)).finally(() => this.activeJobs.delete(job.id)));
 		}
-		return (await this.ctx.storage.list({ prefix: "job:" })).size > 0;
+		return (await this.store.jobs()).length > 0;
 	}
 
 	// Запам'ятовує, що сесія впала на лімітах, і планує перевірку їх скидання (без токена підписки перевіряти нічим).
 	private async waitForLimits(id: string, w: WatchTarget): Promise<void> {
 		if (!this.env.CLAUDE_CODE_OAUTH_TOKEN) return;
-		await this.ctx.storage.put(limitKey(id), { chatId: w.chatId, url: w.url, threadId: w.threadId, since: Date.now() } satisfies LimitWait);
+		await this.store.saveLimit(id, { chatId: w.chatId, url: w.url, threadId: w.threadId, since: Date.now() });
 		const current = await this.ctx.storage.getAlarm();
 		const at = Date.now() + LIMIT_POLL_MS;
 		if (current === null || current > at) await this.ctx.storage.setAlarm(at);
@@ -514,11 +517,11 @@ export class AgentSession extends DurableObject<Env> {
 	// Якщо хтось чекає скидання лімітів: перевіряє їх (дешевий запит, контейнер не будить) і, коли вони скинулись, пише в чат у тему
 	// кожної такої сесії. Повертає, коли перевірити знову (мс від epoch), або undefined, якщо чекати нікого.
 	private async checkLimits(): Promise<number | undefined> {
-		const waiting = await this.ctx.storage.list<LimitWait>({ prefix: LIMIT_PREFIX });
+		const waiting = await this.store.limits();
 		const token = this.env.CLAUDE_CODE_OAUTH_TOKEN;
-		if (waiting.size === 0) return undefined;
+		if (waiting.length === 0) return undefined;
 		if (!token || !this.env.BOT_TOKEN) {
-			for (const key of waiting.keys()) await this.ctx.storage.delete(key);
+			for (const [id] of waiting) await this.store.dropLimit(id);
 			return undefined;
 		}
 		const quota = await fetchQuota(token).catch((err) => (console.error("quota check failed:", err), undefined));
@@ -528,14 +531,14 @@ export class AgentSession extends DurableObject<Env> {
 			const wait = reset ? Math.min(Math.max(reset * 1000 - Date.now() + 5000, LIMIT_POLL_MS), 60 * 60 * 1000) : LIMIT_POLL_MS;
 			return Date.now() + wait;
 		}
-		for (const [key, w] of waiting) {
-			await this.ctx.storage.delete(key);
+		for (const [id, w] of waiting) {
+			await this.store.dropLimit(id);
 			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", w.url, (await threadUi(this.env, !!w.threadId)).noticeButtons("retry"), undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
 		}
 		return undefined;
 	}
 
-	private async runJob(key: string, job: Job): Promise<void> {
+	private async runJob(job: Job): Promise<void> {
 		// Скільки завдання чекало на alarm і попередні завдання: від прийняття (begin/resume) до початку виконання.
 		if (job.queuedAt && job.attempts === 0) console.log(`latency job ${job.id}: queued=${Date.now() - job.queuedAt}ms accepted=${stamp(job.queuedAt)} at=${stamp()} kind=${"input" in job ? "new" : "follow-up"} cold=${!this.computer.running}`);
 		try {
@@ -547,24 +550,24 @@ export class AgentSession extends DurableObject<Env> {
 			}
 		} catch (err) {
 			console.error(`job ${job.id} failed (attempt ${job.attempts + 1}):`, err);
-			if (!(await this.isCurrent(key, job))) return; // за цей час у чергу став новіший запис: його не чіпаємо
+			if (!(await this.isCurrent(job))) return; // за цей час у чергу став новіший запис: його не чіпаємо
 			if (job.attempts + 1 < JOB_ATTEMPTS) {
 				const { startedAt: _, ...rest } = job;
-				await this.ctx.storage.put(key, { ...rest, attempts: job.attempts + 1 } satisfies Job); // знову готове до запуску наступним alarm
+				await this.store.saveJob({ ...rest, attempts: job.attempts + 1 }); // знову готове до запуску наступним alarm
 				return;
 			}
-			await this.ctx.storage.delete(key);
+			await this.store.dropJob(job.id);
 			await this.reportFailure(job);
 			return;
 		}
-		if (await this.isCurrent(key, job)) await this.ctx.storage.delete(key); // запущено: далі повтор уточнення чи старту не потрібен
+		if (await this.isCurrent(job)) await this.store.dropJob(job.id); // запущено: далі повтор уточнення чи старту не потрібен
 		await this.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
 		if ("input" in job) await this.posts.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
 	}
 
 	// Чи запис черги досі той самий, що виконувався (уточнення, яке прийшло під час виконання, замінює запис новим queuedAt).
-	private async isCurrent(key: string, job: Job): Promise<boolean> {
-		const stored = await this.ctx.storage.get<Job>(key);
+	private async isCurrent(job: Job): Promise<boolean> {
+		const stored = await this.store.job(job.id);
 		return !stored || stored.queuedAt === job.queuedAt;
 	}
 
@@ -577,13 +580,13 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Статус не будить контейнер, що спить.
 	async status(id: string): Promise<AgentStatus> {
-		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		const tracked = await this.store.session(id);
 		if (!tracked || !this.computer.running) return "stopped";
 		return (await isBusy(this.opencode(), tracked.ocId)) ? "working" : "idle";
 	}
 
 	async report(id: string): Promise<SessionReport> {
-		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		const tracked = await this.store.session(id);
 		if (!tracked || !this.computer.running) return { status: "stopped" };
 		const [busy, info] = await Promise.all([isBusy(this.opencode(), tracked.ocId), getSession(this.opencode(), tracked.ocId)]);
 		const tokens = totalTokens(info);
@@ -592,20 +595,20 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Стежить за сесією до завершення (див. tick). Контейнер не будить: сесія вже має працювати.
 	async watch(id: string, target: WatchTarget): Promise<void> {
-		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		const tracked = await this.store.session(id);
 		if (!tracked) throw new Error(`unknown session ${id}`);
 		// Пост сесії: новий (з першого виклику) запам'ятовується, у наступних (уточнення) береться зі сховища.
 		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }), ...(target.title && { title: target.title }) } : tracked.post;
-		if (target.postId) await this.ctx.storage.put(sessionKey(id), { ...tracked, post } satisfies Tracked);
+		if (target.postId) await this.store.saveSession(id, { ...tracked, post } satisfies Tracked);
 		let full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
 		// Уточнення в темі (режим messages): окремого повідомлення стану немає, прогрес показує табло (пост сесії, редагується на місці),
 		// а клавіші «працює» міняє єдине повідомлення-носій.
 		if (!target.postId && post?.threadId && this.env.BOT_TOKEN && (await threadUi(this.env, true)).statusPerTurn) {
 			await this.posts.keys({ chatId: full.chatId, threadId: post.threadId }, "working").catch((err) => console.error("keys failed:", err));
 		}
-		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
+		const previous = await this.store.watch(id);
 		if (previous?.postId && previous.postId !== full.postId) await this.posts.mark(previous, false); // реакція не лишається на старому пості
-		await this.ctx.storage.put(watchKey(id), { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);
+		await this.store.saveWatch(id, { ocId: tracked.ocId, ...full, since: Date.now(), seenBusy: false } satisfies Watch);
 		await this.posts.mark(full, true);
 		await this.icon(full, "working");
 		if (!target.postId && post) await this.posts.show(full, WORKING); // уточнення: пост знову показує «Працює»
@@ -622,7 +625,7 @@ export class AgentSession extends DurableObject<Env> {
 		this.events = stop;
 		void readEvents(this.opencode(), stop.signal, async (event) => {
 			if (event) return this.onEvent(event);
-			if ((await this.ctx.storage.list({ prefix: WATCH_PREFIX })).size === 0) stop.abort();
+			if (!(await this.store.watching())) stop.abort();
 		})
 			.catch((err) => {
 				if (!stop.signal.aborted) console.error("event stream failed:", err);
@@ -653,38 +656,38 @@ export class AgentSession extends DurableObject<Env> {
 		}
 		const kind = event.type.startsWith("session.execution.") ? event.type.slice("session.execution.".length) : "";
 		if (!ocId || !["started", "succeeded", "failed", "interrupted"].includes(kind)) return;
-		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: WATCH_PREFIX }))].find(([, w]) => w.ocId === ocId);
+		const entry = await this.store.watchByOc(ocId);
 		if (!entry) {
 			// Сесія знову працює без стеження (агент сам продовжив хід, напр. після фонової команди): беремо її під нагляд, щоб підсумок дійшов у чат.
 			if (kind === "started") await this.watchPrompted(ocId).catch((err) => console.error("rewatch failed:", err));
 			return;
 		}
-		const [key, w] = entry;
+		const [id, w] = entry;
 		if (kind === "started") {
 			if (!w.seenBusy) {
-				await this.ctx.storage.put(key, { ...w, seenBusy: true } satisfies Watch);
-				console.log(`latency session ${watchId(key)} first-busy=${Date.now() - w.since}ms at=${stamp()} (event)`);
+				await this.store.saveWatch(id, { ...w, seenBusy: true });
+				console.log(`latency session ${id} first-busy=${Date.now() - w.since}ms at=${stamp()} (event)`);
 			}
 			return;
 		}
 		const done = await this.summary(this.opencode(), w);
-		await this.finishWatch(key, w, done.text, done.images, done.limit);
+		await this.finishWatch(id, w, done.text, done.images, done.limit);
 	}
 
 	// Агент повідомив репозиторій сесії (команда set-repo): запам'ятовуємо його, якщо на старті репозиторій не визначили.
 	private async adoptRepo(ocId: string, repo: string): Promise<void> {
-		const found = [...(await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX }))].find(([, t]) => t.ocId === ocId);
+		const found = await this.store.sessionByOc(ocId);
 		if (!found || found[1].repo) return;
-		await this.ctx.storage.put(found[0], { ...found[1], repo } satisfies Tracked);
+		await this.store.saveSession(found[0], { ...found[1], repo });
 	}
 
 	// Агент просить підключити MCP (команда request-mcp): власнику йдуть кнопки в тему сесії. Підключене вже, невідоме чи без поста в чаті — ігноруємо.
 	private async requestMcp(ocId: string, name: McpName): Promise<void> {
 		if (!this.env.BOT_TOKEN) return;
-		const found = [...(await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX }))].find(([, t]) => t.ocId === ocId);
+		const found = await this.store.sessionByOc(ocId);
 		const post = found?.[1].post;
 		if (!found || !post?.chatId || found[1][name]) return;
-		const id = sessionId(found[0]);
+		const [id] = found;
 		if (this.mcpAsked.has(`${id}:${name}`)) return;
 		this.mcpAsked.add(`${id}:${name}`);
 		await sendMcpQuestion({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, id, name, `🔌 Агентові потрібен доступ до ${MCP_LABELS[name]}. Підключити до цієї сесії?`);
@@ -694,7 +697,7 @@ export class AgentSession extends DurableObject<Env> {
 	// сервер з'являється в /api/mcp за кілька секунд без перезапуску), тож сесія й її історія лишаються. Агента про результат
 	// повідомляє нове повідомлення в сесію (як уточнення; для підключеного — разом з інструкціями сервісу).
 	async answerMcp(id: string, name: McpName, allow: boolean): Promise<McpAnswer> {
-		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		const tracked = await this.store.session(id);
 		if (!tracked) throw new Error(`unknown session ${id}`);
 		this.mcpAsked.delete(`${id}:${name}`);
 		if (!allow) {
@@ -713,7 +716,7 @@ export class AgentSession extends DurableObject<Env> {
 		await this.computer.ensureRunning();
 		const directory = await this.computer.serial(() => this.computer.prepare(tracked.folder ?? id, tracked.repo, wanted));
 		await this.refreshMcp(id, { ...tracked, [name]: true }, directory); // файл OpenCode наживо не перечитує: сервер вносимо явно
-		await this.ctx.storage.put(sessionKey(id), { ...tracked, [name]: true } satisfies Tracked);
+		await this.store.saveSession(id, { ...tracked, [name]: true } satisfies Tracked);
 		await this.tell(id, tracked, `The owner connected the ${name} MCP: its tools (names start with \`${name}_\`) are available from this step on. Continue the task. Instructions for this service:\n\n${MCP_PROMPTS[name]}`);
 		return "connected";
 	}
@@ -727,9 +730,9 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Питання агента: текст у пост, а для простих (один вибір, так/ні) ще й кнопки-відповіді.
 	private async ask(form: OpencodeForm): Promise<void> {
-		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: WATCH_PREFIX }))].find(([, w]) => w.ocId === form.sessionID);
+		const entry = form.sessionID ? await this.store.watchByOc(form.sessionID) : undefined;
 		if (!entry) return;
-		const id = watchId(entry[0]);
+		const [id] = entry;
 		const [first, ...next] = (form.id && formSteps(form)) || [];
 		const found = first ?? (form.id ? formChoices(form) : undefined);
 		const text = first?.text ?? describeForm(form);
@@ -745,7 +748,7 @@ export class AgentSession extends DurableObject<Env> {
 		if ((!tool && !announcement) || !this.env.BOT_TOKEN) return;
 		const now = Date.now();
 		if (!announcement && now - (this.lastProgress.get(ocId) ?? 0) < progressMs(this.env)) return;
-		const entry = [...(await this.ctx.storage.list<Watch>({ prefix: WATCH_PREFIX }))].find(([, w]) => w.ocId === ocId);
+		const entry = await this.store.watchByOc(ocId);
 		if (!entry?.[1].postId) return;
 		this.lastProgress.set(ocId, now);
 		const w = entry[1];
@@ -757,7 +760,7 @@ export class AgentSession extends DurableObject<Env> {
 		}
 		const text = announcement ?? `${WORKING} · ${activity || describeActivity(tool, input)}`;
 		await this.posts.enqueue(async () => {
-			if (await this.ctx.storage.get(entry[0])) await this.posts.show(w, text, false, answers); // спостереження могло закінчитись, поки чекали в черзі
+			if (await this.store.watch(entry[0])) await this.posts.show(w, text, false, answers); // спостереження могло закінчитись, поки чекали в черзі
 		});
 	}
 
@@ -769,7 +772,7 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	async abort(id: string): Promise<void> {
-		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		const tracked = await this.store.session(id);
 		if (!tracked || !this.computer.running) return;
 		await interrupt(this.opencode(), tracked.ocId);
 	}
@@ -778,8 +781,8 @@ export class AgentSession extends DurableObject<Env> {
 	// втрачено (див. CLEANUP); незакомічене зникає. Невідома сесія: нічого не робимо.
 	async remove(id: string): Promise<void> {
 		await this.forms.drop(id);
-		await this.ctx.storage.delete(jobKey(id)); // завдання, яке ще не запустилось, скасовується
-		const tracked = await this.ctx.storage.get<Tracked>(sessionKey(id));
+		await this.store.dropJob(id); // завдання, яке ще не запустилось, скасовується
+		const tracked = await this.store.session(id);
 		if (!tracked) return;
 		await this.computer.ensureRunning();
 		await interrupt(this.opencode(), tracked.ocId).catch(() => {});
@@ -789,8 +792,8 @@ export class AgentSession extends DurableObject<Env> {
 			const out = await this.computer.run(["sh", "-c", CLEANUP, "sh", tracked.folder ?? id], publishEnv(this.env));
 			if (out.exitCode !== 0) console.error(`remove ${id}: cleanup failed (${out.exitCode}): ${out.stderr}`);
 		});
-		await this.ctx.storage.delete(sessionKey(id));
-		await this.ctx.storage.delete(watchKey(id));
+		await this.store.dropSession(id);
+		await this.store.dropWatch(id);
 		this.asks.delete(id);
 		if (tracked.post) await this.posts.forget(tracked.post.postId);
 		// Тема сесії зникає разом із нею (усі шляхи видалення — чат, кнопка, веб, мердж PR — проходять тут).
@@ -799,13 +802,13 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Сесія з постом у темі (див. Sessions.byThread).
 	async byThread(chatId: number, threadId: number): Promise<string | undefined> {
-		for (const [key, tracked] of await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX })) {
-			if (tracked.post?.threadId === threadId && tracked.post.chatId === chatId) return sessionId(key);
+		for (const [id, tracked] of await this.store.sessions()) {
+			if (tracked.post?.threadId === threadId && tracked.post.chatId === chatId) return id;
 		}
 		// Сесія, що ще не запустилась (холодний старт, клон): її тема відома лише із завдання в черзі. Без цього повідомлення,
 		// надіслане в цей час, стартувало б у тій самій темі нову сесію.
-		for (const [key, job] of await this.ctx.storage.list<Job>({ prefix: jobKey("") })) {
-			if (job.target.threadId === threadId && job.target.chatId === chatId) return key.slice(jobKey("").length);
+		for (const job of await this.store.jobs()) {
+			if (job.target.threadId === threadId && job.target.chatId === chatId) return job.id;
 		}
 		return undefined;
 	}
@@ -813,30 +816,26 @@ export class AgentSession extends DurableObject<Env> {
 	// PR з гілки agent/<folder> змерджено: прибирає сесію цієї гілки (див. remove). Повертає сесію й її пост у чаті, щоб
 	// викликач прибрав і його; undefined, якщо такої сесії немає.
 	async removeByBranch(repo: string, folder: string): Promise<RemovedSession | undefined> {
-		const all = await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX });
-		for (const [key, tracked] of all) {
-			const id = sessionId(key);
-			if ((tracked.folder ?? id) !== folder || (tracked.repo && tracked.repo !== repo)) continue; // без репозиторію: назва гілки agent/<назва> унікальна
-			await this.remove(id);
-			return { id, chatId: tracked.post?.chatId, postId: tracked.post?.postId };
-		}
-		return undefined;
+		// Сесія без репозиторію теж підходить: назва гілки agent/<назва> унікальна.
+		const found = await this.store.sessionByBranch(repo, folder, true);
+		if (!found) return undefined;
+		const [id, tracked] = found;
+		await this.remove(id);
+		return { id, chatId: tracked.post?.chatId, postId: tracked.post?.postId };
 	}
 
 	// Сесія гілки agent/<folder> без змін (див. Sessions.findByBranch).
 	async findByBranch(repo: string, folder: string): Promise<FoundSession | undefined> {
-		for (const [key, tracked] of await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX })) {
-			if ((tracked.folder ?? sessionId(key)) === folder && tracked.repo === repo) return { id: sessionId(key), chatId: tracked.post?.chatId, threadId: tracked.post?.threadId };
-		}
-		return undefined;
+		const found = await this.store.sessionByBranch(repo, folder, false);
+		return found && { id: found[0], chatId: found[1].post?.chatId, threadId: found[1].post?.threadId };
 	}
 
 	// Повідомлення з веб-інтерфейсу в сесію, що має пост у чаті: стежимо за нею так само, як за запущеною з чату (стан, питання, підсумок
 	// у пості). Повідомлення з чату йдуть повз цей проксі, тому дублів немає.
 	private async watchPrompted(ocId: string): Promise<void> {
-		for (const [key, tracked] of await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX })) {
+		for (const [id, tracked] of await this.store.sessions()) {
 			if (tracked.ocId !== ocId || !tracked.post?.chatId || !tracked.post.url) continue;
-			return this.watch(sessionId(key), { chatId: tracked.post.chatId, url: tracked.post.url });
+			return this.watch(id, { chatId: tracked.post.chatId, url: tracked.post.url });
 		}
 	}
 }

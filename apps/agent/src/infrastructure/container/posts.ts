@@ -3,7 +3,8 @@ import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../domain
 import type { Env } from "../../env";
 import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, showKeys, threadUi, type Answers, type KeySet, type KeyState, type KeyView, type Buttons, type TopicState } from "../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "./config";
-import { SESSION_PREFIX, deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
+import { deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
+import type { SessionStore } from "./store";
 
 type KeysShown = { state: KeyState; view?: KeyView; messageId?: number };
 
@@ -18,6 +19,7 @@ export class Posts {
 	constructor(
 		private readonly storage: DurableObjectStorage,
 		private readonly env: Env,
+		private readonly sessions: SessionStore,
 	) {}
 
 	// 👨‍💻 на пості сесії, поки вона працює (як на нотатці, що редагується); збій не критичний.
@@ -126,10 +128,10 @@ export class Posts {
 
 	// Деплой PR з гілки agent/<folder> у репозиторії repo: показує його в пості цієї сесії. false — сесії з постом немає (тоді вебхук шле окреме повідомлення).
 	async setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean> {
-		for (const [key, tracked] of await this.storage.list<Tracked>({ prefix: SESSION_PREFIX })) {
+		for (const [id, tracked] of await this.sessions.sessions()) {
 			// Сесія без репозиторію (його не визначили й агент не повідомив): гілка agent/<назва> унікальна, тож прив'язуємо за нею.
-			if ((tracked.folder ?? key.slice(SESSION_PREFIX.length)) === folder && (!tracked.repo || tracked.repo === repo) && tracked.post) {
-				if (!tracked.repo) await this.storage.put(key, { ...tracked, repo } satisfies Tracked);
+			if ((tracked.folder ?? id) === folder && (!tracked.repo || tracked.repo === repo) && tracked.post) {
+				if (!tracked.repo) await this.sessions.saveSession(id, { ...tracked, repo });
 				return this.applyDeploy(tracked.post, deploy);
 			}
 		}
@@ -140,7 +142,7 @@ export class Posts {
 	// force: показати деплой, навіть якщо пост його ще не показував (напр. одразу після мерджу з чату).
 	async setDeployByPost(postId: number, deploy: DeployInfo, force = false): Promise<boolean> {
 		if (!force && !(await this.storage.get(deployKey(postId)))) return false;
-		for (const tracked of (await this.storage.list<Tracked>({ prefix: SESSION_PREFIX })).values()) {
+		for (const [, tracked] of await this.sessions.sessions()) {
 			if (tracked.post?.postId === postId) return this.applyDeploy(tracked.post, deploy);
 		}
 		return false;
