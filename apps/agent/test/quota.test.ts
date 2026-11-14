@@ -52,6 +52,8 @@ describe("розпізнавання вичерпаних лімітів", () =>
 		expect(isLimitError("Claude AI usage limit reached|1700000000")).toBe(true);
 		expect(isLimitError("API Error: 429 rate_limit_error")).toBe(true);
 		expect(isLimitError("You've hit your limit · resets 5pm")).toBe(true);
+		expect(isLimitError("You've hit your 5-hour limit · resets 8:10pm (UTC)")).toBe(true);
+		expect(isLimitError("You've hit your weekly limit")).toBe(true);
 		expect(isLimitError("Model unavailable")).toBe(false);
 		expect(isLimitError("403 Attention Required! | Cloudflare")).toBe(false);
 	});
