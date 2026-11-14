@@ -5,6 +5,7 @@ import prePush from "../../../payload/pre-push.sh";
 import newReportSite from "../../../payload/new-report-site.sh";
 import publish from "../../../payload/publish.sh";
 import requestMcp from "../../../payload/request-mcp.sh";
+import setRepo from "../../../payload/set-repo.sh";
 import reportSiteSkill from "../../../payload/report-site-skill.md";
 import sessionPrep from "../../../payload/session-prep.sh";
 import silpoAgent from "../../../payload/silpo-agent.md";
@@ -46,6 +47,8 @@ export const PAYLOAD: PayloadFile[] = [
 	{ path: "/usr/local/bin/new-report-site", mode: "755", content: newReportSite },
 	// Запит агента на підключення MCP посеред сесії (див. request-mcp.sh і requestedMcp у mcp.ts)
 	{ path: "/usr/local/bin/request-mcp", mode: "755", content: requestMcp },
+	// Агент повідомляє репозиторій сесії, не визначений на старті (див. set-repo.sh і settedRepo у repo.ts)
+	{ path: "/usr/local/bin/set-repo", mode: "755", content: setRepo },
 	// Скіл для сайтів-звітів: агент підхоплює його сам за description. OpenCode читає ~/.config/opencode/skills, claude — ~/.claude/skills.
 	{ path: "/root/.config/opencode/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
 	{ path: "/root/.claude/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },

@@ -8,6 +8,7 @@ import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
 import { requestedMcp } from "./mcp";
+import { settedRepo } from "./repo";
 import { MCP_PROMPTS, type McpWanted } from "./payload";
 import { stamp, stopwatch } from "../../timing";
 import { JOB_ATTEMPTS, JOB_RETRY_MS, JOB_STALE_MS, LIMIT_POLL_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
@@ -561,8 +562,10 @@ export class AgentSession extends DurableObject<Env> {
 		if (ocId && event.type === "session.tool.called" && event.data?.id) {
 			const tool = this.toolNames.get(event.data.id) ?? "";
 			if (tool) this.recent.set(ocId, remember(this.recent.get(ocId) ?? [], describeCall(tool, event.data.input)));
-			const wanted = tool === "bash" ? requestedMcp(event.data.input) : undefined;
+			const wanted = (tool === "bash" || tool === "shell") ? requestedMcp(event.data.input) : undefined;
 			if (wanted) await this.requestMcp(ocId, wanted).catch((err) => console.error("mcp request failed:", err));
+			const repo = (tool === "bash" || tool === "shell") ? settedRepo(event.data.input) : undefined;
+			if (repo) await this.adoptRepo(ocId, repo).catch((err) => console.error("set-repo failed:", err));
 			return this.progress(ocId, tool, event.data.input);
 		}
 		const kind = event.type.startsWith("session.execution.") ? event.type.slice("session.execution.".length) : "";
@@ -583,6 +586,13 @@ export class AgentSession extends DurableObject<Env> {
 		}
 		const done = await this.summary(this.opencode(), w);
 		await this.finishWatch(key, w, done.text, done.images, done.limit);
+	}
+
+	// Агент повідомив репозиторій сесії (команда set-repo): запам'ятовуємо його, якщо на старті репозиторій не визначили.
+	private async adoptRepo(ocId: string, repo: string): Promise<void> {
+		const found = [...(await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX }))].find(([, t]) => t.ocId === ocId);
+		if (!found || found[1].repo) return;
+		await this.ctx.storage.put(found[0], { ...found[1], repo } satisfies Tracked);
 	}
 
 	// Агент просить підключити MCP (команда request-mcp): власнику йдуть кнопки в тему сесії. Підключене вже, невідоме чи без поста в чаті — ігноруємо.
@@ -717,7 +727,7 @@ export class AgentSession extends DurableObject<Env> {
 		const all = await this.ctx.storage.list<Tracked>({ prefix: SESSION_PREFIX });
 		for (const [key, tracked] of all) {
 			const id = sessionId(key);
-			if ((tracked.folder ?? id) !== folder || tracked.repo !== repo) continue;
+			if ((tracked.folder ?? id) !== folder || (tracked.repo && tracked.repo !== repo)) continue; // без репозиторію: назва гілки agent/<назва> унікальна
 			await this.remove(id);
 			return { id, chatId: tracked.post?.chatId, postId: tracked.post?.postId };
 		}

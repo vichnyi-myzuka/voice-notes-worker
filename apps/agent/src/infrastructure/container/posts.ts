@@ -73,7 +73,11 @@ export class Posts {
 	// Деплой PR з гілки agent/<folder> у репозиторії repo: показує його в пості цієї сесії. false — сесії з постом немає (тоді вебхук шле окреме повідомлення).
 	async setDeploy(repo: string, folder: string, deploy: DeployInfo): Promise<boolean> {
 		for (const [key, tracked] of await this.storage.list<Tracked>({ prefix: SESSION_PREFIX })) {
-			if ((tracked.folder ?? key.slice(SESSION_PREFIX.length)) === folder && tracked.repo === repo && tracked.post) return this.applyDeploy(tracked.post, deploy);
+			// Сесія без репозиторію (його не визначили й агент не повідомив): гілка agent/<назва> унікальна, тож прив'язуємо за нею.
+			if ((tracked.folder ?? key.slice(SESSION_PREFIX.length)) === folder && (!tracked.repo || tracked.repo === repo) && tracked.post) {
+				if (!tracked.repo) await this.storage.put(key, { ...tracked, repo } satisfies Tracked);
+				return this.applyDeploy(tracked.post, deploy);
+			}
 		}
 		return false;
 	}
