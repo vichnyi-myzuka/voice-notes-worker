@@ -104,6 +104,14 @@ export const MCP_PROMPTS: Record<McpName, string> = { sure: sureAgent, silpo: si
 // потрібні, коли сервер за тунелем з Access. Токен Сільпо короткий і змінюється, тому лежить у файлі (права 600, з git виключений).
 // Основним стає агент під задачу: `sure`, `silpo`, `calendar`, `cloudflare` або `finance` (Sure і Сільпо разом: зіставляти чеки з платежами);
 // будь-яке інше поєднання (напр. календар разом із Sure чи Cloudflare) — `assistant` з усіма інструкціями.
+// Запис віддаленого сервера з коротким токеном (спільний для файлу конфігу й для PUT /api/experimental/mcp/{name} у живий OpenCode).
+export const remoteMcp = (url: string, token: string) => ({ type: "remote", url, oauth: false, headers: { Authorization: `Bearer ${token}` } });
+// Сервери з короткими токенами (Сільпо, Cloudflare): їх треба оновлювати в запущеному OpenCode, бо файл він наживо не перечитує.
+export const refreshableMcp = (want: McpWanted): Record<string, unknown> => ({
+	...(want.silpo && { silpo: remoteMcp(SILPO_MCP_URL, want.silpo) }),
+	...(want.cloudflare && { cloudflare: remoteMcp(CLOUDFLARE_MCP_URL, want.cloudflare) }),
+});
+
 export function mcpConfig(env: Env, dir: string, want: McpWanted): PayloadFile[] | undefined {
 	const servers: Record<string, unknown> = {};
 	if (want.sure && env.SURE_MCP_URL && env.SURE_MCP_TOKEN) {
@@ -114,10 +122,10 @@ export function mcpConfig(env: Env, dir: string, want: McpWanted): PayloadFile[]
 		}
 		servers.sure = { type: "remote", url: env.SURE_MCP_URL, oauth: false, headers };
 	}
-	if (want.silpo) servers.silpo = { type: "remote", url: SILPO_MCP_URL, oauth: false, headers: { Authorization: `Bearer ${want.silpo}` } };
+	if (want.silpo) servers.silpo = remoteMcp(SILPO_MCP_URL, want.silpo);
 	const cal = want.calendar && calendarFiles(dir, want.calendar);
 	if (cal) servers.calendar = cal.server;
-	if (want.cloudflare) servers.cloudflare = { type: "remote", url: CLOUDFLARE_MCP_URL, oauth: false, headers: { Authorization: `Bearer ${want.cloudflare}` } };
+	if (want.cloudflare) servers.cloudflare = remoteMcp(CLOUDFLARE_MCP_URL, want.cloudflare);
 	const prompts: [string, string][] = [["sure", sureAgent], ["silpo", silpoAgent], ["calendar", calendarAgent], ["cloudflare", cloudflareAgent]];
 	const on = prompts.filter(([name]) => name in servers);
 	if (!on.length) return undefined;

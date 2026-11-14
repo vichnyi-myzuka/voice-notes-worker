@@ -19,6 +19,7 @@ export async function handleKey(bot: BotEnv, env: Env, msg: TgMessage, key: Sess
 	const cleanups: Promise<unknown>[] = [];
 	const say = (text: string) => sayTemporarily(bot, chat, text, sleep, cleanups, threadId);
 	const id = await agent.byThread(chat, threadId);
+	console.log(`telegram ${chat}/${msg.message_id}: key=${key} thread=${threadId} session=${id ?? "-"}`);
 	if (!id || !(await agent.link(id))) {
 		await tgSendMessage(bot, chat, `⚠️ ${KEYS[key]}: у цій темі немає сесії.`, threadId).catch(() => {});
 		return;
@@ -76,6 +77,7 @@ async function review(env: Env, agent: Agent, id: string, approve: boolean, say:
 export async function handleNewSession(bot: BotEnv, msg: TgMessage): Promise<void> {
 	const chat = msg.chat.id;
 	const topic = await createTopic(bot, chat, "Нова сесія");
+	console.log(`telegram ${chat}/${msg.message_id}: new-session button, topic=${topic ?? "-"}`);
 	await removeMessage(bot, chat, msg.message_id);
 	if (!topic) return void (await tgSendMessage(bot, chat, "⚠️ Не вдалося створити тему: перевір, що в чаті з ботом увімкнено режим тем.").catch(() => {}));
 	await tgSendMessage(bot, chat, "✍️ Опиши задачу текстом чи голосом: тут почнеться сесія.", topic).catch(() => {});

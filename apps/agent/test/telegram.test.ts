@@ -711,6 +711,20 @@ describe("вебхук Telegram", () => {
 			expect(t.calls.some((c) => c.method === "deleteMessage" && c.body.message_id === 9)).toBe(false); // повідомлення лишається історією
 		});
 
+		it("THREAD_UI=messages: першим у темі йде закріплене табло зі станом без задачі, задача окремим повідомленням після нього; у classic закріплення немає", async () => {
+			const t = setup("Поправ README", () => ({ repo: "none", type: "docs", name: "readme", title: "Виправлення README" }));
+			t.mode.ui = "messages";
+			t.topics.id = THREAD;
+			await t.send(msg({ text: "Поправ README", message_thread_id: THREAD }, 9));
+			const order = t.calls.filter((c) => ["sendMessage", "pinChatMessage"].includes(c.method));
+			expect(order.map((c) => c.method)).toEqual(["sendMessage", "pinChatMessage"]); // задача лишилась оригіналом у темі (не «перенесена»)
+			expect(order[0].body.text as string).toContain("⏳ Запускаю");
+			expect(order[1].body).toMatchObject({ chat_id: OWNER, message_id: 1, disable_notification: true });
+			const classic = setup("Поправ README", () => ({ repo: "none", type: "docs", name: "readme", title: "Виправлення README" }));
+			await classic.send(msg({ text: "Поправ README" }));
+			expect(classic.calls.some((c) => c.method === "pinChatMessage")).toBe(false);
+		});
+
 		it("THREAD_UI=messages: у classic текст у головному чаті, як і раніше, створює сесію", async () => {
 			const t = setup();
 			t.topics.id = THREAD;

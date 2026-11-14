@@ -17,7 +17,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execStderr: "", execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execStderr: "", execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], mcpPuts: [] as { path: string; query: string; body: unknown }[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -105,6 +105,10 @@ function fakeContainer() {
 				}
 				if (req.method === "POST" && /^\/api\/session\/[^/]+\/form\/[^/]+\/reply$/.test(path)) {
 					opencode.formReplies.push({ path, body: await req.json() });
+					return new Response(null, { status: 204 });
+				}
+				if (req.method === "PUT" && path.startsWith("/api/experimental/mcp/")) {
+					opencode.mcpPuts.push({ path, query: decodeURIComponent(new URL(req.url).search), body: await req.json() });
 					return new Response(null, { status: 204 });
 				}
 				if (path === "/api/model") return ok(opencode.connected && ++opencode.modelChecks > opencode.modelsAfter ? [{ id: "sonnet", providerID: "claude-agent" }, { id: "opus", providerID: "claude-agent" }] : []);
@@ -644,6 +648,32 @@ describe("AgentSession", () => {
 		expect(JSON.stringify(out.opencode.prompts ?? out.opencode)).toContain("/cloudflare/login");
 	});
 
+	it("MCP: нове повідомлення передає свіжий токен Сільпо й Cloudflare у запущений OpenCode (PUT), збій не ламає уточнення", async () => {
+		const base = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "w", TG_OWNER_ID: "1", CHAT_ID: "-100", ACCESS_AUD: "aud", ACCESS_TEAM_DOMAIN: "t" };
+		const login = (access: string) => ({ client: { id: "cid", redirect: "r" }, tokens: { access, refresh: "ref", expiresAt: Date.now() + 3_600_000 } });
+		const t = setup(base);
+		t.store.set("silpo", login("silpo-1"));
+		t.store.set("cloudflare", login("cf-1"));
+		await t.session.start(ID, { prompt: "Привіт", silpo: true, cloudflare: true });
+		expect(t.opencode.mcpPuts).toEqual([]);
+		t.store.set("silpo", login("silpo-2"));
+		t.store.set("cloudflare", login("cf-2"));
+		await t.session.followUp(ID, "Ще");
+		expect(t.opencode.mcpPuts.map((p) => [p.path, p.query, p.body])).toEqual([
+			["/api/experimental/mcp/silpo", `?location[directory]=/workspace/sessions/${ID}`, { config: { type: "remote", url: "https://mcp.silpo.ua/mcp", oauth: false, headers: { Authorization: "Bearer silpo-2" } } }],
+			["/api/experimental/mcp/cloudflare", `?location[directory]=/workspace/sessions/${ID}`, { config: { type: "remote", url: "https://mcp.cloudflare.com/mcp", oauth: false, headers: { Authorization: "Bearer cf-2" } } }],
+		]);
+		expect(t.opencode.prompts.at(-1)?.text).toBe("Ще");
+		await t.session.followUp(ID, "І ще"); // токен не змінився: повторного PUT немає
+		expect(t.opencode.mcpPuts).toHaveLength(2);
+
+		// Сесія без Сільпо/Cloudflare нічого не надсилає
+		const plain = setup(base);
+		await plain.session.start(ID, { prompt: "Привіт" });
+		await plain.session.followUp(ID, "Ще");
+		expect(plain.opencode.mcpPuts).toEqual([]);
+	});
+
 	it("MCP Google Calendar: токен у конфігу теки (права 600), окремий агент `calendar`; разом зі Sure — `assistant`; без входу — примітка в завданні", async () => {
 		const base = { BOT_TOKEN: "bot", TG_WEBHOOK_SECRET: "w", TG_OWNER_ID: "1", CHAT_ID: "-100", ACCESS_AUD: "aud", ACCESS_TEAM_DOMAIN: "t" };
 		const login = { tokens: { access: "cal-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };
@@ -972,10 +1002,11 @@ describe("AgentSession", () => {
 				vi.spyOn(console, "error").mockImplementation(() => {});
 				await session.begin(ID, { prompt: "Задача" }, POST);
 				opencode.execFails = true;
+				alarm.at = null; // alarm спрацював: справжній Durable Object скидає його
 				await session.alarm();
 				expect(store.has(`job:${ID}`)).toBe(true);
 				expect(alarm.at).toBeGreaterThan(Date.now()); // повтор пізніше
-				for (let i = 0; i < 6; i++) await session.alarm();
+				for (let i = 0; i < 6; i++) (alarm.at = null), await session.alarm();
 				expect(store.has(`job:${ID}`)).toBe(false);
 				expect(texts().at(-1)).toContain("Не вдалося запустити агента");
 				expect(store.has(`watch:${ID}`)).toBe(false);
@@ -1038,6 +1069,25 @@ describe("AgentSession", () => {
 				expect(opencode.prompts.map((p) => p.text)).toEqual(["Задача", "Ще"]);
 			});
 
+			it("два уточнення поспіль до запуску завдання не затирають одне одного: йдуть одним запитом", async () => {
+				const { session, container, opencode } = setup({ BOT_TOKEN: "bot" });
+				await session.start(ID, { prompt: "Задача" });
+				container.running = false;
+				await session.resume(ID, "Перше", { chatId: 5, url: TARGET.url });
+				await session.resume(ID, "Друге", { chatId: 5, url: TARGET.url });
+				await session.alarm();
+				expect(opencode.prompts.map((p) => p.text)).toEqual(["Задача", "Перше\n\nДруге"]);
+			});
+
+			it("alarm не відсуває пізніше вже запланований ранній: уточнення, що прийшло під час довгого знімка диска, не чекає stopAt", async () => {
+				const { session, alarm } = setup({ BOT_TOKEN: "bot" });
+				await session.start(ID, { prompt: "Задача" });
+				const soon = Date.now();
+				alarm.at = soon; // власник написав, поки alarm ще виконувався (знімок): resume ставить alarm «зараз»
+				await session.alarm(); // після знімка settle планує наступний alarm набагато пізніше
+				expect(alarm.at).toBe(soon);
+			});
+
 			it("remove скасовує завдання, яке ще не запустилось", async () => {
 				const { session, store, container } = setup({ BOT_TOKEN: "bot" });
 				await session.begin(ID, { prompt: "Задача" }, POST);
@@ -1082,8 +1132,10 @@ describe("AgentSession", () => {
 				expect(keyboard.at(-1)!.reply_markup.keyboard[0].map((b) => b.text)).toEqual(["✅ Схвалити", "❌ Відхилити", "🗑 Видалити"]);
 				expect(await t.session.pendingReview(SID)).toEqual({ postId: 77, repo: "me/app", runId: 9 });
 				// стан деплою ще й окремим повідомленням унизу теми (повтор того самого тексту нового не шле)
-				const below = () => sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {})) && String(c.text).includes("Деплой чекає схвалення"));
+				const below = () => sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && String(c.text).includes("Деплой чекає схвалення"));
 				expect(below()).toHaveLength(1);
+				expect(keyboard).toHaveLength(1); // клавіші прикріплено до цього повідомлення, окремого носія з тим самим підписом немає
+				expect(JSON.stringify(below()[0])).toContain("✅ Схвалити");
 				await t.session.setDeploy("me/app", "card-1", { text: "🚀 Деплой чекає схвалення", repo: "me/app", runId: 9, stage: "approval" });
 				expect(below()).toHaveLength(1);
 			});
@@ -1095,9 +1147,10 @@ describe("AgentSession", () => {
 				await t.session.watch(SID, { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 });
 				sent.length = 0;
 				await t.session.watch(SID, { chatId: 5, url: "https://agent.example/s/tg-1-1" }); // уточнення: без postId
-				const fresh = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {}))) as unknown as { message_thread_id: number; text: string }[];
-				expect(fresh).toHaveLength(1);
+				const fresh = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c)) as unknown as { message_thread_id: number; text: string; reply_markup: { keyboard: { text: string }[][] } }[];
+				expect(fresh).toHaveLength(1); // одне повідомлення «Працює», а не станом і ще окремим носієм клавіш
 				expect(fresh[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Працює") });
+				expect(fresh[0].reply_markup.keyboard[0].map((b) => b.text)).toEqual(["⏹ Стоп", "🗑 Видалити"]);
 				expect(edits().filter((e) => e.message_id === 77)).toEqual([]); // початковий пост не редагується
 				t.opencode.lastText = "Друга відповідь";
 				await t.session.alarm();
@@ -1140,11 +1193,11 @@ describe("AgentSession", () => {
 				expect(edits().at(-1)!.text).toContain("✅ Готово");
 				expect(edits().at(-1)!.text).not.toContain("Готово: ok");
 				expect(JSON.stringify((edits().at(-1) as { reply_markup?: unknown }).reply_markup ?? null)).not.toContain("del:");
-				const summary = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c) && !("keyboard" in ((c as { reply_markup?: object }).reply_markup ?? {}))) as unknown as { message_thread_id: number; text: string }[];
+				const summary = sent.filter((c) => "chat_id" in c && "text" in c && !("message_id" in c)) as unknown as { message_thread_id: number; text: string }[];
 				expect(summary).toHaveLength(1);
 				expect(summary[0]).toMatchObject({ message_thread_id: 9, text: expect.stringContaining("Готово: <b>ok</b>") });
 				expect(summary[0].text).not.toContain("✅ Готово"); // статус «✅ Готово» уже в повідомленні стану: підсумок його не повторює
-				// клавіші внизу теми за станом: після завершення лише 🗑 Видалити (⏹ Стоп показує begin/resume)
+				// клавіші внизу теми за станом: після завершення лише 🗑 Видалити, і вони прикріплені до самого підсумку (summary.length === 1 вище)
 				const keyboards = sent.filter((c) => "reply_markup" in c && "keyboard" in (c as { reply_markup: object }).reply_markup) as unknown as { reply_markup: { keyboard: { text: string }[][] } }[];
 				expect(keyboards.map((k) => k.reply_markup.keyboard[0].map((b) => b.text))).toEqual([["🗑 Видалити"]]);
 			});
@@ -1586,9 +1639,12 @@ describe("AgentSession", () => {
 		}
 
 		it("після знімка alarm перепланується на момент зупинки через простій, а тоді контейнер зупиняється й більше не будить alarm", async () => {
-			const { session, alarm, container } = await finishedTask({ AGENT_IDLE_STOP_MS: "60000" });
+			const { session, alarm, container, background } = await finishedTask({ AGENT_IDLE_STOP_MS: "60000" });
 			alarm.at = null;
-			await session.alarm();
+			await session.alarm(); // знімок іде у фоні, alarm одразу повертається
+			await Promise.all(background.splice(0));
+			alarm.at = null;
+			await session.alarm(); // знімок готовий: наступний alarm — на момент зупинки через простій
 			expect(container.running).toBe(true);
 			expect(alarm.at).toBeGreaterThan(Date.now() + 30_000);
 			expect(alarm.at).toBeLessThanOrEqual(Date.now() + 60_000);
@@ -1642,6 +1698,24 @@ describe("AgentSession", () => {
 			await session.alarm();
 			expect(container.snapshots.size).toBe(1);
 			expect(store.get("snapshot")).toMatchObject({ id: "snap1", image: "image" });
+		});
+
+		it("знімок іде у фоні: alarm не чекає його, а поки він триває, другий не стартує й контейнер не зупиняється", async () => {
+			const { container, alarm, background, rawAlarm } = await finishedTask({ AGENT_IDLE_STOP_MS: "1" });
+			let release!: () => void;
+			const gate = new Promise<void>((r) => (release = r));
+			const original = container.snapshotContainer.bind(container);
+			container.snapshotContainer = async (...args: Parameters<typeof original>) => (await gate, original(...args));
+			alarm.at = null;
+			await rawAlarm(); // повертається, хоч знімок ще не завершився
+			expect(container.snapshots.size).toBe(0);
+			alarm.at = null;
+			await rawAlarm(); // знімок ще йде: нового немає, контейнер живий (навіть при простої)
+			expect(container.running).toBe(true);
+			expect(alarm.at).not.toBeNull();
+			release();
+			await Promise.all(background.splice(0));
+			expect(container.snapshots.size).toBe(1);
 		});
 
 		it("alarm нічого не знімає, поки агент працює, і чекає наступного разу", async () => {

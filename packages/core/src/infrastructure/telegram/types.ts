@@ -53,6 +53,7 @@ export type TgMethods = {
 	editForumTopic: { params: { chat_id: ChatId; message_thread_id: number; name?: string; icon_custom_emoji_id?: string }; result: boolean };
 	getForumTopicIconStickers: { params: Record<string, never>; result: { emoji?: string; custom_emoji_id?: string }[] };
 	deleteForumTopic: { params: { chat_id: ChatId; message_thread_id: number }; result: boolean };
+	pinChatMessage: { params: { chat_id: ChatId; message_id: number; disable_notification?: boolean }; result: boolean };
 	sendAudio: { params: { chat_id: ChatId; audio: string; title: string; caption: string }; result: MessageRef };
 	sendVoice: { params: { chat_id: ChatId; voice: string; caption: string }; result: MessageRef };
 	// photo — id файлу чи https-адреса (для завантаження файлу body — FormData)

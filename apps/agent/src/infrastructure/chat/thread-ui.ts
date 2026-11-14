@@ -17,6 +17,8 @@ export const keyAction = (text: string | undefined): SessionKey | undefined => (
 export type ThreadUi = {
 	// Кнопки під постом сесії. deployDone: деплой PR завершено (лишається лише «Видалити»); mergeable: можна змерджити.
 	postButtons(s: { final: boolean; retry: boolean; mergeable: boolean; deployDone: boolean }): Buttons;
+	// Кнопки службових повідомлень сесії (скидання лімітів, збій запуску): у messages ті самі дії вже є в клавішах внизу теми.
+	noticeButtons(b: Buttons): Buttons;
 	// Підсумок ходу агента: що писати в пості (post) і чи слати підсумок ще й окремим повідомленням (separate; без поста він іде завжди)
 	// з якими кнопками (buttons).
 	// message — текст окремого повідомлення (у «messages» без повтору «✅ Готово», яке вже є в повідомленні стану).
@@ -38,6 +40,7 @@ export type ThreadUi = {
 
 // Класичний вигляд: один пост, який оновлюється на місці, з кнопками керування під ним; підсумок усередині поста.
 export const classicUi: ThreadUi = {
+	noticeButtons: (b) => b,
 	postButtons: ({ final, retry, mergeable, deployDone }) => (deployDone ? "dismiss" : final ? (retry ? "retry" : mergeable ? "mergeable" : "done") : "working"),
 	summary: ({ text, limit, mergeable }) => ({ post: text, message: text, separate: false, buttons: limit ? "retry" : mergeable ? "mergeable" : "done" }),
 	statusPerTurn: false,
@@ -61,8 +64,10 @@ const KEYSETS: Record<KeyState, KeySet> = {
 };
 const COMMANDS_SET: KeySet = { label: "⚙️ Команди", keys: [["quota", "status"], ["update"], ["back"]] };
 export const messagesUi: ThreadUi = {
+	noticeButtons: () => "none",
 	postButtons: () => "none",
-	summary: ({ text, limit, mergeable }) => ({ post: STATUS(text, limit), message: text.replace(/^✅ Готово\n\n(?=\S)/, ""), separate: true, buttons: limit ? "retry" : mergeable ? "mergeable" : "none" }),
+	// Без кнопок під підсумком: «Змерджити» й «Повторити» уже є в клавішах внизу теми, які прикріплюються до цього повідомлення.
+	summary: ({ text, limit }) => ({ post: STATUS(text, limit), message: text.replace(/^✅ Готово\n\n(?=\S)/, ""), separate: true, buttons: "none" }),
 	statusPerTurn: true,
 	keepFollowUps: true,
 	topicOnlyStart: true,
@@ -89,9 +94,13 @@ export async function sendNewSessionKeyboard(env: BotEnv, chat: number, text: st
 
 // Показує клавіші внизу теми: Telegram міняє reply-клавіатуру лише новим повідомленням, тож шлемо коротке (з підписом стану), а
 // попереднє таке повідомлення (previous) прибираємо, щоб тема не заростала. Повертає id нового повідомлення.
+// Клавіатура внизу теми для набору клавіш. Telegram міняє її лише разом із новим повідомленням, тож її краще чіпляти до
+// повідомлення зі станом, яке й так надсилається (sendChat, параметр keys), а окремий showKeys лишити на випадок, коли такого немає.
+export const replyKeyboard = (set: KeySet) => ({ keyboard: set.keys.map((row) => row.map((k) => ({ text: KEYS[k] }))), resize_keyboard: true, is_persistent: true });
+
 export async function showKeys(env: BotEnv, chat: number, thread: number, set: KeySet, previous?: number): Promise<number | undefined> {
 	try {
-		const sent = await tg(env, "sendMessage", { chat_id: chat, message_thread_id: thread, text: set.label, reply_markup: { keyboard: set.keys.map((row) => row.map((k) => ({ text: KEYS[k] }))), resize_keyboard: true, is_persistent: true } } as never);
+		const sent = await tg(env, "sendMessage", { chat_id: chat, message_thread_id: thread, text: set.label, reply_markup: replyKeyboard(set) } as never);
 		if (previous) await tg(env, "deleteMessage", { chat_id: chat, message_id: previous }).catch(() => {});
 		return sent.message_id;
 	} catch (err) {

@@ -14,6 +14,16 @@ async function data<T>(res: Response): Promise<T> {
 
 const post = (body?: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 
+// Замінює MCP-сервер у запущеному OpenCode (з негайним підключенням) для теки сесії: так новий токен діє без перезапуску
+// (файл .opencode/opencode.json OpenCode після старту сесії не перечитує, і прострочений токен давав 401 до нової сесії).
+export async function putMcp(oc: Opencode, name: string, directory: string, config: unknown): Promise<void> {
+	const res = await oc.fetch(`/api/experimental/mcp/${encodeURIComponent(name)}?location[directory]=${encodeURIComponent(directory)}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ config }) });
+	const status = res.status;
+	const text = res.ok ? "" : await res.text();
+	await res.body?.cancel();
+	if (!res.ok) throw new Error(`opencode put mcp ${name}: ${status} ${text}`);
+}
+
 // Сервер готовий, коли відповідає /api/info.
 export async function isReady(oc: Opencode): Promise<boolean> {
 	const res = await oc.fetch("/api/info", { signal: AbortSignal.timeout(1500) });

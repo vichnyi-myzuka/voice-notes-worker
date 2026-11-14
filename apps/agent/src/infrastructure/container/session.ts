@@ -9,20 +9,20 @@ import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
 import { requestedMcp } from "./mcp";
 import { settedRepo } from "./repo";
-import { MCP_PROMPTS, type McpWanted } from "./payload";
+import { MCP_PROMPTS, refreshableMcp, type McpWanted } from "./payload";
 import { stamp, stopwatch } from "../../timing";
 import { JOB_ATTEMPTS, JOB_RETRY_MS, JOB_STALE_MS, LIMIT_POLL_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { Forms } from "./forms";
 import { extractImages, loadImages, sendImages, type OutImage } from "./images";
 import { describeCall, narrate, remember } from "./narrate";
-import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
+import { activeSessions, createSession, deleteSession, getSession, hasModel, interrupt, lastAssistant, totalTokens, isBusy, prompt, putMcp, readEvents, type OpencodeEvent, type OpencodeForm, sessionExists, switchModel, type Opencode } from "./opencode";
 import { DEPLOY_ICON, Posts } from "./posts";
 import { calendarLogin, cloudflareLogin, silpoLogin } from "./logins";
 import { retitle } from "./title";
 import { fetchQuota, isBlocked, isLimitError, resetTime } from "../quota";
 import { WebProxy } from "./proxy";
-import { FORM_PREFIX, LIMIT_PREFIX, WATCH_PREFIX, limitKey, type LimitWait, SESSION_PREFIX, deployKey, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
+import { sessionDir, FORM_PREFIX, LIMIT_PREFIX, WATCH_PREFIX, limitKey, type LimitWait, SESSION_PREFIX, deployKey, jobKey, sessionId, sessionKey, watchId, watchKey, type Job, type PendingForm, type Tracked, type Watch } from "./state";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -83,11 +83,11 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	private async work(): Promise<void> {
-		if (await this.runJobs()) return void (await this.ctx.storage.setAlarm(Date.now() + JOB_RETRY_MS));
+		if (await this.runJobs()) return void (await this.computer.alarmNoLater(Date.now() + JOB_RETRY_MS));
 		// Поки хтось працює чи за кимось стежать, опитуємо часто (підсумки, ліміти) й знімок відкладаємо.
 		if (await this.tick()) {
 			await this.computer.markUsed();
-			return void (await this.ctx.storage.setAlarm(Date.now() + WATCH_INTERVAL_MS));
+			return void (await this.computer.alarmNoLater(Date.now() + WATCH_INTERVAL_MS));
 		}
 		// Агент чекає відповіді на питання: питання живе в пам'яті OpenCode, тож контейнер тримаємо довше (FORM_HOLD_MS).
 		const forms = await this.ctx.storage.list<PendingForm>({ prefix: FORM_PREFIX });
@@ -309,8 +309,13 @@ export class AgentSession extends DurableObject<Env> {
 		const summary = (await threadUi(this.env, !!w.threadId)).summary({ text, limit, mergeable });
 		const shown = await this.posts.show(w, summary.post, true, undefined, mergeable, limit);
 		await this.retitle(watchId(key), w, text);
-		await this.posts.keys(w, limit ? "retry" : mergeable ? "mergeable" : "done").catch((err) => console.error("keys failed:", err));
-		if (!shown || summary.separate) await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, summary.message, w.url, summary.buttons, undefined, undefined, w.threadId).catch((err) => console.error("notify failed:", err));
+		// Клавіші внизу теми за станом: чіпляються до окремого підсумку (без повідомлення-носія, що повторює статус); якщо підсумок
+		// окремо не йде — самостійним повідомленням.
+		const keyState = limit ? "retry" : mergeable ? "mergeable" : "done";
+		if (!shown || summary.separate) {
+			const keys = await this.posts.nextKeys(w, keyState).catch((err) => (console.error("keys failed:", err), undefined));
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, summary.message, w.url, summary.buttons, undefined, undefined, w.threadId, keys).catch((err) => console.error("notify failed:", err));
+		} else await this.posts.keys(w, keyState).catch((err) => console.error("keys failed:", err));
 		if (images.length > 0) await sendImages({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, images, (path) => this.computer.readImage(path), w.threadId);
 	}
 
@@ -343,6 +348,28 @@ export class AgentSession extends DurableObject<Env> {
 			calendar: flags.calendar ? await this.calendar.accessToken() : undefined,
 			cloudflare: flags.cloudflare ? (await this.cloudflare.accessToken())?.access : undefined,
 		};
+	}
+
+	// Свіжі токени Сільпо й Cloudflare — у запущений OpenCode (PUT замінює сервер і одразу перепідключає його): файл конфігу він
+	// після старту не перечитує, тож без цього прострочений токен давав 401 до нової сесії. Збій не фатальний: лише лог.
+	private readonly pushedMcp = new Map<string, string>(); // що вже передано в OpenCode: тека:сервер → конфіг (у пам'яті; після вивантаження один зайвий PUT нешкідливий)
+
+	private async refreshMcp(id: string, tracked: Tracked, directory?: string): Promise<void> {
+		if (!tracked.silpo && !tracked.cloudflare) return;
+		try {
+			const dir = directory ?? sessionDir(tracked.folder ?? id);
+			const servers = refreshableMcp(await this.mcpWanted({ silpo: tracked.silpo, cloudflare: tracked.cloudflare }));
+			for (const [name, config] of Object.entries(servers)) {
+				// Токен живе близько години, а оновлюється за 5 хвилин до кінця: більшість повідомлень лишаються з тим самим, тоді PUT не потрібен.
+				const key = `${dir}:${name}`;
+				const body = JSON.stringify(config);
+				if (this.pushedMcp.get(key) === body) continue;
+				await putMcp(this.opencode(), name, dir, config);
+				this.pushedMcp.set(key, body);
+			}
+		} catch (err) {
+			console.error(`mcp refresh ${id} failed:`, err);
+		}
 	}
 
 	// Ідемпотентно за id: повторний виклик не створює другу сесію OpenCode й не готує теку вдруге.
@@ -390,6 +417,7 @@ export class AgentSession extends DurableObject<Env> {
 			});
 			await this.ctx.storage.put(sessionKey(id), { ...tracked, ocId } satisfies Tracked);
 		}
+		await this.refreshMcp(id, tracked);
 		this.asks.set(id, text);
 		await this.ctx.storage.delete(limitKey(id)); // власник уже діє: чекати скидання лімітів заради цієї сесії не треба
 		await this.forms.cancel(id, text); // текст замість кнопки: відкрите питання не чекає далі
@@ -424,13 +452,24 @@ export class AgentSession extends DurableObject<Env> {
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. runJobs). Ідемпотентно за id.
 	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
 		if (await this.link(id)) return;
-		await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
+		// З постом (його щойно надіслано з клавішами, див. launchSession) лише запам'ятовуємо стан; без нього клавіші йдуть окремо.
+		if (target.postId) await this.posts.nextKeys(target, "working").catch((err) => console.error("keys failed:", err));
+		else await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
 		await this.enqueue({ id, input, target, attempts: 0 });
 	}
 
 	// Те саме для уточнення; контейнер може спати.
 	async resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
-		await this.posts.keys(target, "working").catch((err) => console.error("keys failed:", err));
+		// Клавіші «працює» прийдуть разом із повідомленням стану, яке watch надішле, коли завдання почне виконуватись.
+		// Завдання одне на сесію (ключ job:<id>): уточнення, що прийшло, поки попереднє ще не почало виконуватись, не затирає його, а
+		// додається до нього (інакше текст чи фото губиться, а в темі лишається «Працює» без відповіді).
+		const queued = await this.ctx.storage.get<Job>(jobKey(id));
+		if (queued && "text" in queued && !queued.startedAt) {
+			const merged = [...(queued.images ?? []), ...(images ?? [])];
+			await this.ctx.storage.put(jobKey(id), { ...queued, text: `${queued.text}\n\n${text}`, target, ...(merged.length && { images: merged }) } satisfies Job);
+			await this.ctx.storage.setAlarm(Date.now());
+			return;
+		}
 		await this.enqueue({ id, text, target, attempts: 0, ...(images?.length && { images }) });
 	}
 
@@ -485,7 +524,7 @@ export class AgentSession extends DurableObject<Env> {
 		}
 		for (const [key, w] of waiting) {
 			await this.ctx.storage.delete(key);
-			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", w.url, "retry", undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
+			await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, "✅ Ліміти Claude скинулись. Можна повторити.", w.url, (await threadUi(this.env, !!w.threadId)).noticeButtons("retry"), undefined, undefined, w.threadId).catch((err) => console.error("limit notify failed:", err));
 		}
 		return undefined;
 	}
@@ -502,6 +541,7 @@ export class AgentSession extends DurableObject<Env> {
 			}
 		} catch (err) {
 			console.error(`job ${job.id} failed (attempt ${job.attempts + 1}):`, err);
+			if (!(await this.isCurrent(key, job))) return; // за цей час у чергу став новіший запис: його не чіпаємо
 			if (job.attempts + 1 < JOB_ATTEMPTS) {
 				const { startedAt: _, ...rest } = job;
 				await this.ctx.storage.put(key, { ...rest, attempts: job.attempts + 1 } satisfies Job); // знову готове до запуску наступним alarm
@@ -511,16 +551,22 @@ export class AgentSession extends DurableObject<Env> {
 			await this.reportFailure(job);
 			return;
 		}
-		await this.ctx.storage.delete(key); // запущено: далі повтор уточнення чи старту не потрібен
+		if (await this.isCurrent(key, job)) await this.ctx.storage.delete(key); // запущено: далі повтор уточнення чи старту не потрібен
 		await this.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
 		if ("input" in job) await this.posts.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
+	}
+
+	// Чи запис черги досі той самий, що виконувався (уточнення, яке прийшло під час виконання, замінює запис новим queuedAt).
+	private async isCurrent(key: string, job: Job): Promise<boolean> {
+		const stored = await this.ctx.storage.get<Job>(key);
+		return !stored || stored.queuedAt === job.queuedAt;
 	}
 
 	private async reportFailure(job: Job): Promise<void> {
 		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
 		if (!this.env.BOT_TOKEN) return;
 		if (job.target.postId && (await this.posts.show(job.target, text, true))) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, (await threadUi(this.env, !!job.target.threadId)).noticeButtons("done"), undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
 	}
 
 	// Статус не будить контейнер, що спить.
@@ -550,7 +596,8 @@ export class AgentSession extends DurableObject<Env> {
 		// початковий пост лишається як є (на ньому деплой, ідентичність сесії).
 		let fresh = false;
 		if (!target.postId && post?.threadId && this.env.BOT_TOKEN && (await threadUi(this.env, true)).statusPerTurn) {
-			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, full.url, "none", undefined, undefined, post.threadId).catch((err) => (console.error("status message failed:", err), undefined));
+			const keys = await this.posts.nextKeys({ chatId: full.chatId, threadId: post.threadId }, "working").catch((err) => (console.error("keys failed:", err), undefined));
+			const statusId = await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, full.chatId, WORKING, full.url, "none", undefined, undefined, post.threadId, keys).catch((err) => (console.error("status message failed:", err), undefined));
 			if (statusId) (full = { ...full, postId: statusId, header: "" }), (fresh = true);
 		}
 		const previous = await this.ctx.storage.get<Watch>(watchKey(id));
@@ -661,7 +708,8 @@ export class AgentSession extends DurableObject<Env> {
 			return "login";
 		}
 		await this.computer.ensureRunning();
-		await this.computer.serial(() => this.computer.prepare(tracked.folder ?? id, tracked.repo, wanted));
+		const directory = await this.computer.serial(() => this.computer.prepare(tracked.folder ?? id, tracked.repo, wanted));
+		await this.refreshMcp(id, { ...tracked, [name]: true }, directory); // файл OpenCode наживо не перечитує: сервер вносимо явно
 		await this.ctx.storage.put(sessionKey(id), { ...tracked, [name]: true } satisfies Tracked);
 		await this.tell(id, tracked, `The owner connected the ${name} MCP: its tools (names start with \`${name}_\`) are available from this step on. Continue the task. Instructions for this service:\n\n${MCP_PROMPTS[name]}`);
 		return "connected";
