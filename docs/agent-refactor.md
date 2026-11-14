@@ -9,7 +9,7 @@
 
 1. [x] **`SessionStore`** (`store.ts`): типізований доступ до записів `session:`, `watch:`, `job:`, `limit:` і пошук сесії за id
    OpenCode, темою чи гілкою. Прибирає дубльовані `storage.list(...).find(...)` із `session.ts` і `posts.ts`.
-2. [ ] **`Limits`** (`limits.ts`): очікування скидання лімітів Claude (`waitForLimits`, `checkLimits`).
+2. [x] **`Limits`** (`limits.ts`): очікування скидання лімітів Claude (`waitForLimits`, `checkLimits`).
 3. [ ] **`Mcp`** (`mcp.ts`): входи OAuth (Сільпо, Календар, Cloudflare), токени для конфігу теки, оновлення токенів у живому
    OpenCode, запит MCP агентом і відповідь власника.
 4. [ ] **`Jobs`** (`jobs.ts`): черга прийнятих завдань (`begin`, `resume`, повтори, звіт про збій).
