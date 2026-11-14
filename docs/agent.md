@@ -47,6 +47,20 @@ GET  /s/<id>                                           → редірект на
 - **Сон.** Контейнер засинає через годину без запитів (`AGENT_INACTIVITY_MS`); `exec`, відкриті з'єднання й SSE продовжують його життя (див. `GET /api/computer`).
 - **Ліміти.** Поки хтось працює, alarm кожні 15 с перевіряє всі активні сесії (і з чату, і з веб-інтерфейсу): вартість понад `AGENT_MAX_COST_USD` (за замовчуванням 5) чи токенів (вхід + вихід + reasoning, без кешу) понад `AGENT_MAX_TOKENS` (за замовчуванням 3 млн) перериває сесію, а для сесій із чату приходить `⛔ Сесію зупинено: …`. Перша перевірка сесії з веб-інтерфейсу може відбутись із затримкою до 5 хв (до першого alarm). За підписки Claude `cost` у OpenCode може бути нульовим чи умовним, тож надійніший ліміт за токенами; реальні значення подивись у `/status`.
 
+## Спостереження за затримками
+
+Усі рядки затримок містять слово `latency` (Workers Logs → пошук `latency`, чи `wrangler tail` у `apps/agent`) і мітки часу UTC. Тексту повідомлень там немає.
+
+- `latency telegram <чат>/<повідомлення>: …`: шлях вебхука. Поля: `flow` (`new-session` / `follow-up` / `ask-repo`), `kind` (voice/text/image), `sent` (коли повідомлення відправлено в Telegram), `lag-s` (скільки секунд минуло до початку обробки: доставка вебхука й черга), етапи `react`, `link`, `transcribe` (Whisper), `route` (LLM-роутер), `topic`, `post` (пост «⏳ Запускаю»), `begin` (передача в Durable Object), `start`/`end`/`total`.
+- `latency job <id>: queued=…`: скільки завдання чекало на alarm у Durable Object від прийняття (`accepted`) до виконання; `cold=true`, якщо контейнер спав.
+- `latency container: …`: лише холодний старт контейнера: `source` (snapshot/image), етапи `launch`, `ready` (OpenCode відповідає, модель доступна), `payload`.
+- `latency session <id> start: …`: `container` (очікування контейнера), `queue` (черга серійних завдань), `prepare` (тека й клон), `create` (сесія OpenCode), `prompt` (відправка промпта).
+- `latency session <id> first-busy=…`: від початку стеження (промпт відправлено) до першої ознаки, що модель працює.
+
+Повна хронологія запиту: `sent` → `start` (lag) → `begin` → `accepted` → `queued` → `session … start` → `first-busy`.
+
+Трейси Cloudflare (`[observability.traces]` у `wrangler.toml`) показують waterfall викликів воркера, Durable Object, R2 і `fetch`. Семплінг 0.2, бо інтерфейс OpenCode пінгує щосекунди; для розслідування конкретного запиту тимчасово постав 1.
+
 ## SSH у контейнер
 
 `npm run ssh -w apps/agent` (сам знаходить інстанс `main`; зі своєю командою: `npm run ssh -w apps/agent -- ls /workspace`) або вручну `npx wrangler containers ssh <INSTANCE_ID>` (id: `npx wrangler containers instances`). Якщо ключ має пароль, додай його в агент: `ssh-add --apple-use-keychain ~/.ssh/id_ed25519` (інакше wrangler відповідає `Permission denied (publickey)`). Публічний ed25519-ключ лежить у `wrangler.toml` (`[[containers.authorized_keys]]`), порту назовні немає, вхід лише через твій акаунт Cloudflare. Контейнер має вже працювати: SSH його не будить і **не утримує від сну**. Зміни, зроблені через SSH, воркер не бачить, тож після роботи виконай `POST /api/computer/snapshot` (за Access), інакше вони зникнуть разом із диском при сні. Агент не має доступу до `wrangler` і акаунта Cloudflare.

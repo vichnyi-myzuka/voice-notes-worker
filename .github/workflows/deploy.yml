@@ -4,14 +4,15 @@ name: deploy
 # Cloudflare-токен лежить тільки в environments (не в секретах репозиторію):
 #   production        — notes і sites, без схвалення;
 #   production-agent  — agent (замінює контейнер), з обов'язковим схваленням власника.
-# Запуск вручну (Actions → deploy → Run workflow): apps = all | notes | agent | sites.
+# docs — без умови changed: сайт залежить від усього репозиторію, тож перебудовується при кожному мержі.
+# Запуск вручну (Actions → deploy → Run workflow): apps = all | notes | agent | sites | docs.
 on:
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
       apps:
-        description: "Що розгортати: all, notes, agent або sites"
+        description: "Що розгортати: all, notes, agent, sites або docs"
         default: all
 
 permissions:
@@ -82,4 +83,13 @@ jobs:
     with:
       app: agent
       environment: production-agent
+    secrets: inherit
+
+  deploy-docs:
+    needs: [check]
+    if: github.event_name == 'push' || inputs.apps == 'all' || inputs.apps == 'docs'
+    uses: ./.github/workflows/deploy-app.yml
+    with:
+      app: docs
+      environment: production
     secrets: inherit

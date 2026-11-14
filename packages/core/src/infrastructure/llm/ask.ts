@@ -61,12 +61,12 @@ export async function askLuna(env: LlmEnv, req: JsonRequest): Promise<string> {
 	});
 	if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
 	const data = await res.json<{ output: { type: string; content?: { type: string; text?: string }[] }[] }>();
-	return data.output
+	// Лише перша текстова частина: модель іноді повторює відповідь у кількох частинах, і склеєні вони не парсяться як JSON.
+	const first = data.output
 		.filter((o) => o.type === "message")
 		.flatMap((o) => o.content ?? [])
-		.filter((c) => c.type === "output_text")
-		.map((c) => c.text ?? "")
-		.join("");
+		.find((c) => c.type === "output_text");
+	return first?.text ?? "";
 }
 
 export async function askGemma(env: LlmEnv, req: JsonRequest): Promise<string> {

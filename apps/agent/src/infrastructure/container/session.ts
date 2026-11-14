@@ -7,6 +7,7 @@ import { removeTopic, renameTopic, sendChat, setTopicIcon, type Answers, type To
 import { openPullNumber } from "../github";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
+import { stamp, stopwatch } from "../../timing";
 import { JOB_ATTEMPTS, JOB_RETRY_MS, SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { Forms } from "./forms";
@@ -99,6 +100,7 @@ export class AgentSession extends DurableObject<Env> {
 			} else if (watched && !watched[1].seenBusy) {
 				await this.ctx.storage.put(watched[0], { ...watched[1], seenBusy: true } satisfies Watch);
 				watched[1].seenBusy = true;
+				console.log(`latency session ${watchId(watched[0])} first-busy=${Date.now() - watched[1].since}ms at=${stamp()} (poll)`);
 			}
 		}
 
@@ -276,7 +278,9 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Ідемпотентно за id: повторний виклик не створює другу сесію OpenCode й не готує теку вдруге.
 	async start(id: string, input: StartInput): Promise<{ sessionId: string }> {
+		const sw = stopwatch(`session ${id} start`);
 		await this.computer.ensureRunning();
+		sw.mark("container");
 		const existing = await this.ctx.storage.get<Tracked>(sessionKey(id));
 		if (existing) return { sessionId: existing.ocId };
 		return this.computer.serial(async () => {
@@ -286,8 +290,11 @@ export class AgentSession extends DurableObject<Env> {
 			const silpo = input.silpo ? (await this.silpo.accessToken())?.access : undefined;
 			const calendar = input.calendar ? await this.calendar.accessToken() : undefined;
 			const cloudflare = input.cloudflare ? (await this.cloudflare.accessToken())?.access : undefined;
+			sw.mark("queue");
 			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar, cloudflare });
+			sw.mark("prepare");
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
+			sw.mark("create");
 			await this.ctx.storage.put(sessionKey(id), { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(input.silpo && { silpo: true }), ...(input.calendar && { calendar: true }), ...(input.cloudflare && { cloudflare: true }) } satisfies Tracked);
 			// Сільпо просили, а входу немає (чи токен не оновився): агент скаже про це власнику замість мовчазної відсутності інструментів.
 			const notes = [
@@ -296,6 +303,8 @@ export class AgentSession extends DurableObject<Env> {
 				input.cloudflare && !cloudflare && "MCP Cloudflare не підключено, бо власник ще не ввійшов у Cloudflare. Скажи йому відкрити сторінку /cloudflare/login на адресі агента (де веб-інтерфейс), увійти й повторити задачу. Не вигадуй стану акаунта.",
 			].filter(Boolean);
 			await prompt(this.opencode(), ocId, notes.length ? `${input.prompt}\n\n(Системна примітка: ${notes.join(" ")})` : input.prompt, await this.images(input.images));
+			sw.mark("prompt");
+			sw.log({ repo: input.repo ?? "-" });
 			await this.computer.markActive();
 			return { sessionId: ocId };
 		});
@@ -359,13 +368,15 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	private async enqueue(job: Job): Promise<void> {
-		await this.ctx.storage.put(jobKey(job.id), job);
+		await this.ctx.storage.put(jobKey(job.id), { ...job, queuedAt: Date.now() } satisfies Job);
 		await this.ctx.storage.setAlarm(Date.now());
 	}
 
 	// Виконує прийняті завдання по одному. Повертає true, поки є що повторювати чи виконувати.
 	private async runJobs(): Promise<boolean> {
 		for (const [key, job] of await this.ctx.storage.list<Job>({ prefix: "job:" })) {
+			// Скільки завдання чекало на alarm і попередні завдання: від прийняття (begin/resume) до початку виконання.
+			if (job.queuedAt && job.attempts === 0) console.log(`latency job ${job.id}: queued=${Date.now() - job.queuedAt}ms accepted=${stamp(job.queuedAt)} at=${stamp()} kind=${"input" in job ? "new" : "follow-up"} cold=${!this.computer.running}`);
 			try {
 				if ("input" in job) {
 					if (!this.computer.running) await this.posts.show(job.target, "⏳ Запускаю контейнер").catch(() => {});
@@ -473,7 +484,13 @@ export class AgentSession extends DurableObject<Env> {
 			return;
 		}
 		const [key, w] = entry;
-		if (kind === "started") return void (w.seenBusy || (await this.ctx.storage.put(key, { ...w, seenBusy: true } satisfies Watch)));
+		if (kind === "started") {
+			if (!w.seenBusy) {
+				await this.ctx.storage.put(key, { ...w, seenBusy: true } satisfies Watch);
+				console.log(`latency session ${watchId(key)} first-busy=${Date.now() - w.since}ms at=${stamp()} (event)`);
+			}
+			return;
+		}
 		const done = await this.summary(this.opencode(), w);
 		await this.finishWatch(key, w, done.text, done.images);
 	}

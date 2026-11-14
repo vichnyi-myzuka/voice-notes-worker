@@ -1,6 +1,7 @@
 import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
 import type { Agent, ImageRef } from "../../domain/agent";
 import type { Env } from "../../env";
+import { stamp, stopwatch } from "../../timing";
 import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
 import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
@@ -195,16 +196,25 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		await say("⚠️ Файл більший за 20 МБ: бот не може його завантажити.");
 		return;
 	}
+	// Затримки: lag — скільки секунд минуло між відправленням у Telegram і початком обробки (доставка вебхука + черга).
+	const sw = stopwatch(`telegram ${chat}/${msg.message_id}`);
+	const kind = file ? "voice" : image ? "image" : "text";
+	const lag = Math.max(0, Math.round(Date.now() / 1000 - msg.date));
 	await react(env, msg);
+	sw.mark("react");
 
 	// Відповідь на пост із сесією — уточнення в ту саму сесію.
 	if (replied) {
 		const [url, id] = replied;
 		console.log(`telegram ${chat}/${msg.message_id}: follow-up to session ${id}`);
 		if (!(await agent.link(id))) return void (await say("⚠️ Сесію не знайдено (можливо, вона з іншого агента)."));
+		sw.mark("link");
 		const followUp = (await transcribe(env, llm, file, text)) || (image ? IMAGE_ONLY : "");
+		sw.mark("transcribe");
 		if (!followUp) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 		await agent.resume(id, followUp, { chatId: chat, url, ...(threadId && { threadId }) }, images);
+		sw.mark("resume");
+		sw.log({ flow: "follow-up", kind, "lag-s": lag, sent: stamp(msg.date * 1000) });
 		// Уточнення прийнято: саме повідомлення прибираємо (як правку нотатки), стан видно в пості сесії (він оновлюється на місці) і за 👨‍💻.
 		await removeMessage(env, chat, msg.message_id);
 		return;
@@ -217,13 +227,16 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		return;
 	}
 
+	sw.mark("link");
 	const transcript = (await transcribe(env, llm, file, text)) || (image ? IMAGE_ONLY : "");
+	sw.mark("transcribe");
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
 	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo, calendar: forcedCalendar, cloudflare } = parsePrefixes(transcript);
 	const withRepo = REPO_PREFIX.exec(task);
 	const prompt = withRepo ? withRepo[2].trim() : task;
 	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
+	sw.mark("route");
 	const repo = withRepo ? withRepo[1] : route.repo;
 	// Sure підключається, коли власник назвав його явно («шур, …», «@sure») або модель побачила, що задача про його фінанси.
 	const sure = forcedSure || route.sure === true;
@@ -235,8 +248,13 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const model = requestedModel ?? route.model ?? (sure || silpo || calendar ? "haiku" : undefined);
 	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: !!file, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ...(images && { images }) };
 	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.
-	if (!repo && route.unsure) return void (await askRepo(env, agent, repos, pending));
-	await launchSession(env, agent, pending, repo);
+	if (!repo && route.unsure) {
+		await askRepo(env, agent, repos, pending);
+		sw.mark("ask");
+		return void sw.log({ flow: "ask-repo", kind, "lag-s": lag, sent: stamp(msg.date * 1000) });
+	}
+	await launchSession(env, agent, pending, repo, sw);
+	sw.log({ flow: "new-session", kind, "lag-s": lag, session: id });
 }
 
 // Слова, які Whisper часто псує в диктовці задач («Opus» → «опис», «воркер» → «ворки»): іде йому як initial_prompt.

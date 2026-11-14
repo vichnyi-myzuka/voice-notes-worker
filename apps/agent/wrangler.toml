@@ -21,6 +21,12 @@ enabled = true
 [observability.logs]
 invocation_logs = false # інтерфейс OpenCode пінгує щосекунди, подій забагато; console.log лишається
 
+# Трейси (waterfall вебхук → Durable Object → контейнер, виклики R2/fetch). Той самий пінг інтерфейсу дав би тисячі трейсів,
+# тому семплуємо; якщо шукаєш конкретний повільний запит, тимчасово піднеси до 1. Зберігання платне з 1 грудня 2026.
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.2
+
 # Сесія агента = Durable Object, що керує власним контейнером з OpenCode.
 [[containers]]
 class_name = "AgentSession"
