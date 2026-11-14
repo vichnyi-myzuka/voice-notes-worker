@@ -14,17 +14,5 @@
 
 1. **Access**: Zero Trust → Access → Applications → Self-hosted, hostname `docs.<BASE_DOMAIN>`, політика **Allow** лише твоя пошта. Запиши AUD.
 2. **Секрети воркера** (після першого деплою, з `apps/docs`): `npx wrangler secret put ACCESS_AUD` і `ACCESS_TEAM_DOMAIN` (той самий team domain, що в `sites`).
-3. **Workflow** (агент не має права змінювати `.github/`): додай у `.github/workflows/deploy.yml` задачу, яка розгортає `docs` після кожного мержу в `main` (без умови `changed`: сайт залежить від усього репозиторію):
-
-```yaml
-  deploy-docs:
-    needs: [check]
-    uses: ./.github/workflows/deploy-app.yml
-    with:
-      app: docs
-      environment: production
-    secrets: inherit
-```
-
-   `deploy-app.yml` сам підставить `--domain docs.<BASE_DOMAIN>` і виконає `npm run deploy -w apps/docs` (збірка + `wrangler deploy`). Збірці потрібна повна історія для списку мержів лише частково: у CI без неї розділ «Останні мержі» буде порожнім; щоб він з'явився, додай `fetch-depth: 0` до `actions/checkout` у `deploy-app.yml`.
+3. **Розгортання** робить CI: `deploy-docs` у `.github/workflows/deploy.yml` запускається після кожного мержу в `main` (без умови `changed`: сайт залежить від усього репозиторію). `deploy-app.yml` підставляє `--domain docs.<BASE_DOMAIN>` і виконує `npm run deploy -w apps/docs`; `fetch-depth: 0` потрібен, щоб розділ «Останні мержі» (`git log --merges`) не був порожнім.
 4. Токен Cloudflare в environment `production` вже має право на Workers Scripts і маршрути зони; нових прав сайт не потребує.

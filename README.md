@@ -175,7 +175,7 @@ source .env && curl -X POST https://notes.example.com -H "x-secret: $SECRET" \
 Зміни потрапляють у `main` лише через PR, розгортання робить GitHub Actions (`.github/workflows`):
 
 - `check.yml`: на кожен PR і перед кожним деплоєм `npm run check` (oxlint, tsc, vitest). Секретів у цьому job немає: код з PR (зокрема від агента) виконується тут, тож Cloudflare-токен йому недоступний.
-- `deploy.yml`: після мержу в `main` спершу `check`, потім розгортаються лише змінені застосунки (`notes`, `sites`, `agent`; зміни в `packages/`, `package-lock.json` зачіпають усі). Вручну: Actions → deploy → Run workflow (`apps`: `all`, `notes`, `agent`, `sites`).
+- `deploy.yml`: після мержу в `main` спершу `check`, потім розгортаються лише змінені застосунки (`notes`, `sites`, `agent`; зміни в `packages/`, `package-lock.json` зачіпають усі). Вручну: Actions → deploy → Run workflow (`apps`: `all`, `notes`, `agent`, `sites`, `docs`). `apps/docs` розгортається після кожного мержу в `main` без перевірки змін (environment `production`).
 - `notes` і `sites` розгортаються самі (environment `production`), `agent` чекає твого схвалення (environment `production-agent`): деплой замінює контейнер, а зміна образу скидає знімки. `CLOUDFLARE_API_TOKEN` і `CLOUDFLARE_ACCOUNT_ID` лежать лише в секретах environments, не репозиторію.
 - `CODEOWNERS` позначає власником `.github/`, `wrangler.toml`, `apps/agent/container/` і `apps/agent/payload/`.
 
