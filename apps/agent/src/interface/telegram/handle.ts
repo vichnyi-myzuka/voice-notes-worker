@@ -1,9 +1,10 @@
 import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
-import { folderFor, type Agent, type ImageRef } from "../../domain/agent";
+import type { Agent, ImageRef } from "../../domain/agent";
 import type { Env } from "../../env";
-import { QUOTE_CLOSE, QUOTE_OPEN, createTopic, removeMessage, sayTemporarily, sendChat } from "../../infrastructure/chat";
+import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
 import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
+import { askRepo, launchSession, type Pending } from "./launch";
 import { routeTask, type KnownRepo } from "./repo";
 
 export const TELEGRAM_PATH = "/telegram";
@@ -38,7 +39,6 @@ export async function syncCommands(bot: BotEnv): Promise<void> {
 
 // Задача для фото без підпису.
 const IMAGE_ONLY = "Користувач надіслав зображення (див. вкладення).";
-const POST_MAX = 3500; // запас до ліміту повідомлення Telegram (4096): решта — посилання
 
 // Вебхук чату з агентом: канал CHAT_ID (бот адмін) і особистий чат власника, як у боті нотаток. Це єдиний шлях повз
 // Cloudflare Access (Telegram не пройде логін), тому захист тут свій: секретний заголовок, а далі лише канал CHAT_ID
@@ -224,37 +224,10 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	const calendar = forcedCalendar || route.calendar === true;
 	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
 	const model = requestedModel ?? route.model ?? (sure || silpo || calendar ? "haiku" : undefined);
-
-	console.log(`telegram ${chat}/${msg.message_id}: route ${JSON.stringify(route)}`);
-	console.log(`telegram ${chat}/${msg.message_id}: new session ${id} repo=${repo ?? "-"} model=${model ?? "-"} sure=${sure} silpo=${silpo} calendar=${calendar}`);
-	const url = agent.url(id);
-	// Приватний чат: кожна нова сесія отримує свою тему, і далі розмова йде в ній. Теми не ввімкнено (чи збій) — усе в самому чаті.
-	// Повідомлення з уже наявної, не прив'язаної до сесії теми лишається в ній.
-	// Назва теми — семантична (від моделі), далі її оновлює агент, коли напрям розмови змінюється.
-	const title = route.title ?? route.name ?? prompt.replace(/\s+/g, " ").slice(0, 60);
-	const created = !inChannel && !threadId ? await createTopic(env, chat, title) : undefined;
-	const thread = created ?? threadId;
-	// У каналі й у новій темі оригінал замінюється постом із задачею (як у нотатках), у приваті без теми оригінал лишається, тож задачу не дублюємо.
-	// Фото теж замінюється постом (підпис до нього — текст задачі в пості), тому вважається «перенесеним».
-	const moved = inChannel || !!created || !!image;
-	const clipped = prompt.length > POST_MAX ? `${prompt.slice(0, POST_MAX)}…` : prompt;
-	// Без прев'ю: інакше Telegram показує картку сторінки за Access.
-	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
-	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
-	// Гілка agent/<тека> є лише в сесії з репозиторієм.
-	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", sure ? "💰 Sure" : "", silpo ? "🛒 Сільпо" : "", calendar ? "📅 Календар" : ""].filter(Boolean).join("\n");
-	const header = (
-		file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n")
-		: `${moved ? `${clipped}\n\n` : ""}${where}`
-	).trim();
-	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), url, "working", undefined, undefined, thread);
-	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...(sure && { sure }), ...(silpo && { silpo }), ...(calendar && { calendar }), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
-	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
-	if (moved || file) await removeMessage(env, chat, msg.message_id);
-	// Сільпо потрібне, а входу ще немає: одразу даємо посилання на вхід (агент про це теж скаже, але без повної адреси).
-	if (silpo && !(await agent.silpoConnected().catch(() => true))) await tgSendMessage(env, chat, `🛒 Сільпо ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/silpo/login`, thread);
-	if (calendar && !(await agent.calendarConnected().catch(() => true))) await tgSendMessage(env, chat, `📅 Календар ще не підключено. Увійди тут, потім повтори задачу: ${new URL(url).origin}/calendar/login`, thread);
+	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: !!file, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, ...(images && { images }) };
+	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.
+	if (!repo && route.unsure) return void (await askRepo(env, agent, repos, pending));
+	await launchSession(env, agent, pending, repo);
 }
 
 // Слова, які Whisper часто псує в диктовці задач («Opus» → «опис», «воркер» → «ворки»): іде йому як initial_prompt.

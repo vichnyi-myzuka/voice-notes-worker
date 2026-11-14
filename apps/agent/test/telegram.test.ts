@@ -15,7 +15,7 @@ const TEMP_ID = 500; // message_id, який мок Telegram віддає слу
 const CHANNEL = -1001;
 
 // Telegram Bot API на підміненому fetch: запам'ятовує виклики методів і віддає файл для getFile.
-function setup(transcript = "Поправ README", pick?: (user: string) => { repo?: string; type?: string; name?: string; title?: string; model?: string } | null) {
+function setup(transcript = "Поправ README", pick?: (user: string) => { repo?: string; type?: string; name?: string; title?: string; model?: string; unsure?: boolean } | null) {
 	const agent = fakeAgent();
 	const calls: { method: string; body: Record<string, unknown> }[] = [];
 	const topics = { id: 0 }; // id теми, яку «створює» Telegram; 0 — теми не підтримуються (як у чаті без режиму тем)
@@ -346,6 +346,53 @@ describe("вебхук Telegram", () => {
 			expect(sessions.has(SID)).toBe(false);
 			await send(msg({ text: "/status", reply_to_message: botPost() }, 9));
 			expect(replies()).toEqual(["⚠️ Сесію не знайдено."]); // про саме видалення бот мовчить
+		});
+
+		describe("вибір репозиторію кнопками", () => {
+			const vague = "Покращимо розпізнавання в проєкті";
+			const unsure = () => ({ unsure: true, type: "feat", name: "recognition" });
+			const keyboard = (calls: { method: string; body: Record<string, unknown> }[]) => (calls.find((c) => c.method === "sendMessage")!.body.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat();
+
+			it("роутер не впевнений: сесії ще немає, питання з кнопками (репозиторії + «Без репозиторію»)", async () => {
+				const { send, sessions, calls } = setup("", unsure);
+				await send(msg({ text: vague }));
+				expect(sessions.size).toBe(0);
+				expect(keyboard(calls).map((b) => b.text)).toEqual(["📦 me/bot", "📦 me/site", "Без репозиторію"]);
+				expect(keyboard(calls).map((b) => b.callback_data)).toEqual([`pick:${SID}:0`, `pick:${SID}:1`, `pick:${SID}:-`]);
+			});
+
+			it("натискання запускає сесію з вибраним репозиторієм (задача й назва збережені), друге натискання неактуальне", async () => {
+				const { send, press, sessions, answers, calls } = setup("", unsure);
+				await send(msg({ text: vague }));
+				await press(`pick:${SID}:1`);
+				expect(sessions.get(SID)?.input).toMatchObject({ prompt: vague, repo: "me/site", name: "feat-recognition" });
+				expect(calls.some((c) => c.method === "deleteMessage")).toBe(true); // питання з кнопками прибрано
+				await press(`pick:${SID}:0`);
+				expect(answers()).toEqual(["Запускаю.", "Вибір уже неактуальний."]);
+				expect(sessions.get(SID)?.input.repo).toBe("me/site");
+			});
+
+			it("«Без репозиторію» запускає сесію без repo; чужий номер і чужа людина нічого не запускають", async () => {
+				const a = setup("", unsure);
+				await a.send(msg({ text: vague }));
+				await a.press(`pick:${SID}:-`);
+				expect(a.sessions.get(SID)?.input.repo).toBeUndefined();
+				const b = setup("", unsure);
+				await b.send(msg({ text: vague }));
+				await b.press(`pick:${SID}:5`);
+				await b.press(`pick:${SID}:0`, 999);
+				expect(b.sessions.size).toBe(0);
+				expect(b.answers()).toEqual(["Вибір уже неактуальний.", "Недоступно."]);
+			});
+
+			it("явний репозиторій у фразі чи впевнений роутер: питання не потрібне", async () => {
+				const a = setup("", unsure);
+				await a.send(msg({ text: "acme/site: " + vague }));
+				expect(a.sessions.get(SID)?.input.repo).toBe("acme/site");
+				const b = setup("", () => ({ unsure: true, repo: "me/bot", evidence: "боті", name: "x" }));
+				await b.send(msg({ text: "Що в нашому боті можна покращити" }));
+				expect(b.sessions.get(SID)?.input.repo).toBe("me/bot");
+			});
 		});
 
 		describe("репозиторій і назва з вільної мови", () => {
