@@ -5,8 +5,8 @@ workers_dev = false
 preview_urls = false
 # Домен (agent.<BASE_DOMAIN>) підключає CI: wrangler deploy --domain (див. README, «CI/CD»)
 
-# payload/*.md і *.sh підключаються до коду як текст (їх воркер розкладає в контейнер)
-rules = [{ type = "Text", globs = ["**/*.md", "**/*.sh"], fallthrough = true }]
+# payload/*.md, *.sh і *.tpl (шаблон сайту-звіту) підключаються до коду як текст (їх воркер розкладає в контейнер)
+rules = [{ type = "Text", globs = ["**/*.md", "**/*.sh", "**/*.tpl"], fallthrough = true }]
 
 [ai]
 binding = "AI" # Whisper для голосових у Telegram

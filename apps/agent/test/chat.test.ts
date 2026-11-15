@@ -17,19 +17,19 @@ describe("sendChat", () => {
 
 	it("шле HTML з посиланням на сесію внизу, без прев'ю, і повертає id повідомлення", async () => {
 		const bodies = stub(false);
-		expect(await sendChat({ BOT_TOKEN: "b" }, 5, "**Готово**", "https://agent.example/s/x")).toBe(7);
+		expect(await sendChat({ BOT_TOKEN: "b" }, 5, "**Готово**", { id: "x", url: "https://agent.example/s/x" })).toBe(7);
 		expect(bodies).toEqual([{ chat_id: 5, text: '<b>Готово</b>\n\n🔗 <a href="https://agent.example/s/x">Відкрити сесію</a>', parse_mode: "HTML", link_preview_options: { is_disabled: true } }]);
 	});
 
 	it("Telegram відхилив розмітку: той самий текст надходить без неї", async () => {
 		const bodies = stub(true);
-		expect(await sendChat({ BOT_TOKEN: "b" }, 5, "**Готово**", "https://agent.example/s/x")).toBe(7);
+		expect(await sendChat({ BOT_TOKEN: "b" }, 5, "**Готово**", { id: "x", url: "https://agent.example/s/x" })).toBe(7);
 		expect(bodies[1]).toEqual({ chat_id: 5, text: "**Готово**\n\n🔗 https://agent.example/s/x", link_preview_options: { is_disabled: true } });
 	});
 });
 
 describe("кнопки під постом", () => {
-	const SESSION = "https://agent.example/s/tg-5-7";
+	const SESSION = { id: "tg-5-7", url: "https://agent.example/s/tg-5-7" };
 	const markup = async (call: (env: { BOT_TOKEN: string }) => Promise<unknown>) => {
 		const bodies: Record<string, unknown>[] = [];
 		vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => (bodies.push(JSON.parse(init.body as string)), Response.json({ ok: true, result: { message_id: 1 } })));
@@ -37,12 +37,14 @@ describe("кнопки під постом", () => {
 		return bodies[0].reply_markup;
 	};
 
-	it("працює: «Стоп» і «Видалити»; завершено: лише «Видалити»; без кнопок чи без посилання сесії — без клавіатури", async () => {
+	it("працює: «Стоп» і «Видалити»; завершено: лише «Видалити»; без кнопок чи без сесії — без клавіатури; id беруться явно, а не з посилання", async () => {
 		const row = (r: unknown) => (r as { inline_keyboard: { callback_data: string }[][] }).inline_keyboard[0].map((b) => b.callback_data);
 		expect(row(await markup((env) => editChat(env, 5, 9, "x", SESSION, "working")))).toEqual(["stop:tg-5-7", "del:tg-5-7"]);
 		expect(row(await markup((env) => editChat(env, 5, 9, "x", SESSION, "done")))).toEqual(["del:tg-5-7"]);
 		expect(await markup((env) => sendChat(env, 5, "x", SESSION))).toBeUndefined();
 		expect(await markup((env) => sendChat(env, 5, "x", undefined, "working"))).toBeUndefined();
+		expect(row(await markup((env) => editChat(env, 5, 9, "x", { id: "tg-5-7", url: "u" }, "done")))).toEqual(["del:tg-5-7"]); // посилання може бути яке завгодно
+		expect(await markup((env) => editChat(env, 5, 9, "x", { id: "web-1", url: SESSION.url }, "done"))).toBeUndefined(); // сесії не з чату кнопок не мають
 	});
 });
 

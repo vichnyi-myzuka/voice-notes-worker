@@ -1,11 +1,12 @@
 import type { OAuthLogin } from "@voice-notes/oauth";
-import { MCP_LABELS, MCP_NAMES, type McpAnswer, type McpName } from "../../domain/agent";
-import type { Env } from "../../env";
+import { MCP_LABELS, MCP_NAMES, MCP_SERVICES, OAUTH_MCP_NAMES, type McpAnswer, type McpFlags, type McpName, type OAuthMcpName } from "../../domain/agent";
+import type { ChatEnv, McpEnv } from "../../env";
 import { sendMcpQuestion } from "../chat";
 import type { Computer } from "./computer";
-import { calendarLogin, cloudflareLogin, silpoLogin } from "./logins";
+import type { Workspace } from "./workspace";
+import { mcpLogins } from "./logins";
 import { putMcp } from "./opencode";
-import { MCP_PROMPTS, refreshableMcp, type McpWanted } from "./payload";
+import { MCP_PROMPTS, REFRESHABLE_MCP, refreshableMcp, type McpWanted } from "./payload";
 import { sessionDir, type Tracked } from "./state";
 import type { SessionStore } from "./store";
 
@@ -21,9 +22,7 @@ export function requestedMcp(input: Record<string, unknown> | undefined): McpNam
 // Сервіси власника (MCP) для сесій: входи OAuth (Сільпо, Google Calendar, Cloudflare), короткі токени для конфігу теки сесії, їх
 // оновлення в живому OpenCode, запит агента на сервіс посеред роботи (кнопки власникові) і відповідь на нього.
 export class Mcp {
-	readonly silpo: OAuthLogin;
-	readonly calendar: OAuthLogin;
-	readonly cloudflare: OAuthLogin;
+	readonly logins: Record<OAuthMcpName, OAuthLogin>;
 	// Що вже передано в OpenCode: тека:сервер → конфіг (у пам'яті; після вивантаження один зайвий PUT нешкідливий).
 	private readonly pushed = new Map<string, string>();
 	// Запити, на які власник ще не відповів («<id сесії>:<сервіс>»): повторний запит агента не дублює кнопки.
@@ -31,44 +30,46 @@ export class Mcp {
 
 	constructor(
 		storage: DurableObjectStorage,
-		private readonly env: Env,
+		private readonly env: ChatEnv & McpEnv,
 		private readonly store: SessionStore,
 		private readonly computer: Computer,
+		private readonly workspace: Workspace,
 		// Повідомлення агентові від воркера (як уточнення від власника).
 		private readonly tell: (id: string, tracked: Tracked, text: string) => Promise<void>,
 	) {
-		this.silpo = silpoLogin(storage);
-		this.calendar = calendarLogin(storage, { id: env.GOOGLE_CLIENT_ID, secret: env.GOOGLE_CLIENT_SECRET });
-		this.cloudflare = cloudflareLogin(storage);
+		this.logins = mcpLogins(storage, { id: env.GOOGLE_CLIENT_ID, secret: env.GOOGLE_CLIENT_SECRET });
 	}
 
 	// Токени запитаних сервісів для конфігу теки (без входу токена немає: сервер не підключається). Короткі, тож беремо свіжі щоразу.
-	async wanted(flags: Partial<Record<McpName, boolean>>): Promise<McpWanted> {
-		return {
-			sure: flags.sure,
-			silpo: flags.silpo ? (await this.silpo.accessToken())?.access : undefined,
-			calendar: flags.calendar ? await this.calendar.accessToken() : undefined,
-			cloudflare: flags.cloudflare ? (await this.cloudflare.accessToken())?.access : undefined,
-		};
+	async wanted(flags: McpFlags): Promise<McpWanted> {
+		const wanted: McpWanted = { ...(flags.sure && { sure: true }) };
+		for (const name of OAUTH_MCP_NAMES) {
+			const token = flags[name] ? await this.logins[name].accessToken() : undefined;
+			if (token) wanted[name] = token;
+		}
+		return wanted;
+	}
+
+	// Прапорці запису сесії за тим, що справді підключилось (Sure — якщо просили, решта — якщо є токен).
+	static flags(wanted: McpWanted): McpFlags {
+		return Object.fromEntries(MCP_NAMES.filter((name) => wanted[name]).map((name) => [name, true]));
 	}
 
 	// Системна примітка агентові на старті: сервіс просили, а входу немає (чи токен не оновився). Агент скаже про це власнику замість
 	// мовчазної відсутності інструментів.
-	static missing(asked: Partial<Record<McpName, boolean>>, wanted: McpWanted): string[] {
-		return [
-			asked.silpo && !wanted.silpo && "MCP Сільпо не підключено, бо власник ще не ввійшов у Сільпо. Скажи йому відкрити сторінку /silpo/login на адресі агента (де веб-інтерфейс), ввійти в Сільпо й повторити задачу. Не вигадуй даних про покупки.",
-			asked.calendar && !wanted.calendar && "MCP Google Calendar не підключено, бо власник ще не ввійшов у Google. Скажи йому відкрити сторінку /calendar/login на адресі агента (де веб-інтерфейс), увійти й повторити задачу. Не вигадуй подій.",
-			asked.cloudflare && !wanted.cloudflare && "MCP Cloudflare не підключено, бо власник ще не ввійшов у Cloudflare. Скажи йому відкрити сторінку /cloudflare/login на адресі агента (де веб-інтерфейс), увійти й повторити задачу. Не вигадуй стану акаунта.",
-		].filter((note): note is string => !!note);
+	static missing(asked: McpFlags, wanted: McpWanted): string[] {
+		return OAUTH_MCP_NAMES.filter((name) => asked[name] && !wanted[name]).map(
+			(name) => `MCP ${MCP_SERVICES[name].title} не підключено, бо власник ще не ввійшов у ${MCP_SERVICES[name].title}. Скажи йому відкрити сторінку /${name}/login на адресі агента (де веб-інтерфейс), ввійти й повторити задачу. Не вигадуй даних із цього сервісу.`,
+		);
 	}
 
 	// Свіжі токени Сільпо й Cloudflare — у запущений OpenCode (PUT замінює сервер і одразу перепідключає його): файл конфігу він
 	// після старту не перечитує, тож без цього прострочений токен давав 401 до нової сесії. Збій не фатальний: лише лог.
 	async refresh(id: string, tracked: Tracked, directory?: string): Promise<void> {
-		if (!tracked.silpo && !tracked.cloudflare) return;
+		if (!REFRESHABLE_MCP.some((name) => tracked[name])) return;
 		try {
 			const dir = directory ?? sessionDir(tracked.folder ?? id);
-			const servers = refreshableMcp(await this.wanted({ silpo: tracked.silpo, cloudflare: tracked.cloudflare }));
+			const servers = refreshableMcp(await this.wanted(Object.fromEntries(REFRESHABLE_MCP.map((name) => [name, tracked[name]]))));
 			for (const [name, config] of Object.entries(servers)) {
 				// Токен живе близько години, а оновлюється за 5 хвилин до кінця: більшість повідомлень лишаються з тим самим, тоді PUT не потрібен.
 				const key = `${dir}:${name}`;
@@ -110,12 +111,12 @@ export class Mcp {
 			return "unavailable";
 		}
 		const wanted = await this.wanted({ ...tracked, [name]: true });
-		if (name !== "sure" && !wanted[name]) {
+		if (MCP_SERVICES[name].oauth && !wanted[name]) {
 			await this.tell(id, tracked, `The ${name} MCP is not connected because the owner has not logged in to it yet. Tell them to open /${name}/login on the agent address, log in, and repeat the request. Do not invent data.`);
 			return "login";
 		}
 		await this.computer.ensureRunning();
-		const directory = await this.computer.serial(() => this.computer.prepare(tracked.folder ?? id, tracked.repo, wanted));
+		const directory = await this.computer.serial(() => this.workspace.prepare(tracked.folder ?? id, tracked.repo, wanted));
 		await this.refresh(id, { ...tracked, [name]: true }, directory); // файл OpenCode наживо не перечитує: сервер вносимо явно
 		await this.store.saveSession(id, { ...tracked, [name]: true });
 		await this.tell(id, tracked, `The owner connected the ${name} MCP: its tools (names start with \`${name}_\`) are available from this step on. Continue the task. Instructions for this service:\n\n${MCP_PROMPTS[name]}`);

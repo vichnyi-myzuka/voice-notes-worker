@@ -1,6 +1,6 @@
 import { tg } from "@voice-notes/core";
 import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv } from "../../env";
 import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, type Answers, type Buttons, type TopicState } from "../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "./config";
 import { deployKey, lastKey, refKey, type LastShown, type Tracked } from "./state";
@@ -16,7 +16,7 @@ export class Posts {
 
 	constructor(
 		private readonly storage: DurableObjectStorage,
-		private readonly env: Env,
+		private readonly env: ChatEnv & ContainerEnv,
 		private readonly sessions: SessionStore,
 	) {}
 
@@ -38,7 +38,7 @@ export class Posts {
 	}
 
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
-	async show(w: WatchTarget, status: string, final = false, answers?: Answers, mergeable = false, retry = false): Promise<boolean> {
+	async show(id: string, w: WatchTarget, status: string, final = false, answers?: Answers, mergeable = false, retry = false): Promise<boolean> {
 		if (!w.postId || !this.env.BOT_TOKEN) return false;
 		// Стан деплою цього PR (запит на схвалення, результат) дописується під станом сесії; останній показаний стан запам'ятовується,
 		// щоб вебхук GitHub міг перемалювати пост (див. applyDeploy).
@@ -49,7 +49,7 @@ export class Posts {
 		const review = deploy?.runId && deploy.repo ? { repo: deploy.repo, runId: deploy.runId } : undefined;
 		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
 		const text = deploy?.done ? this.text(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.text(w, deploy ? `${status}\n\n${deploy.text}` : status, final);
-		const shown = await editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.turn ? undefined : w.url, buttons, answers, review);
+		const shown = await editChat({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.postId, text, w.turn ? undefined : { id, url: w.url }, buttons, answers, review);
 		// Табло й іконка теми завжди збігаються: фінальний стан у пості (✅ / ❌ чи стадія деплою) тут же виставляє й іконку
 		// (повтор того ж стану в setTopicIcon пропускається); проміжні стани й питання іконку ставлять самі.
 		if (final && w.threadId) {
@@ -72,12 +72,12 @@ export class Posts {
 	}
 
 	// Дописує в пост сесії її деплой (запит на схвалення, результат) і перемальовує пост на місці. false — поста немає чи правка не вдалась.
-	private async applyDeploy(post: NonNullable<Tracked["post"]>, deploy: DeployInfo): Promise<boolean> {
+	private async applyDeploy(id: string, post: NonNullable<Tracked["post"]>, deploy: DeployInfo): Promise<boolean> {
 		if (!post.chatId || !post.url) return false;
 		await this.storage.put(deployKey(post.postId), deploy);
 		if (post.threadId && deploy.stage && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, post.chatId, post.threadId, DEPLOY_ICON[deploy.stage]);
 		const last = (await this.storage.get<LastShown>(lastKey(post.postId))) ?? { status: "✅ Готово", final: true, mergeable: false };
-		return this.show({ chatId: post.chatId, url: post.url, postId: post.postId, header: post.header, ...(post.threadId && { threadId: post.threadId }) }, last.status, last.final);
+		return this.show(id, { chatId: post.chatId, url: post.url, postId: post.postId, header: post.header, ...(post.threadId && { threadId: post.threadId }) }, last.status, last.final);
 	}
 
 	// Деплой PR з гілки agent/<folder> у репозиторії repo: показує його в пості цієї сесії. false — сесії з постом немає (тоді вебхук шле окреме повідомлення).
@@ -86,7 +86,7 @@ export class Posts {
 			// Сесія без репозиторію (його не визначили й агент не повідомив): гілка agent/<назва> унікальна, тож прив'язуємо за нею.
 			if ((tracked.folder ?? id) === folder && (!tracked.repo || tracked.repo === repo) && tracked.post) {
 				if (!tracked.repo) await this.sessions.saveSession(id, { ...tracked, repo });
-				return this.applyDeploy(tracked.post, deploy);
+				return this.applyDeploy(id, tracked.post, deploy);
 			}
 		}
 		return false;
@@ -96,8 +96,8 @@ export class Posts {
 	// force: показати деплой, навіть якщо пост його ще не показував (напр. одразу після мерджу з чату).
 	async setDeployByPost(postId: number, deploy: DeployInfo, force = false): Promise<boolean> {
 		if (!force && !(await this.storage.get(deployKey(postId)))) return false;
-		for (const [, tracked] of await this.sessions.sessions()) {
-			if (tracked.post?.postId === postId) return this.applyDeploy(tracked.post, deploy);
+		for (const [id, tracked] of await this.sessions.sessions()) {
+			if (tracked.post?.postId === postId) return this.applyDeploy(id, tracked.post, deploy);
 		}
 		return false;
 	}

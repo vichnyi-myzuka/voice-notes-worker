@@ -1,6 +1,6 @@
 import { safeEqual, tg, type BotEnv } from "@voice-notes/core";
 import type { Deploys, Sessions } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, GithubEnv } from "../../env";
 import { commitPulls, deleteBranch } from "../../infrastructure/github";
 import { callback, removeMessage, removeOriginal } from "../../infrastructure/chat";
 import { reviewButtons } from "./review";
@@ -32,7 +32,7 @@ async function validSignature(body: string, header: string, secret: string): Pro
 //  • workflow_run completed (deploy на головній гілці): результат деплою й PR; після успіху ще й прибирання сесії PR бота
 //    (сесія, worktree, локальна й віддалена гілка, пост у чаті).
 // GitHub отримує 200 одразу, робота йде у фоні.
-export async function handleGithub(req: Request, env: Env, deps: GithubDeps): Promise<Response> {
+export async function handleGithub(req: Request, env: ChatEnv & GithubEnv, deps: GithubDeps): Promise<Response> {
 	if (req.method !== "POST" || !env.GITHUB_WEBHOOK_SECRET) return new Response("unauthorized", { status: 401 });
 	const body = await req.text();
 	if (!(await validSignature(body, req.headers.get("x-hub-signature-256") ?? "", env.GITHUB_WEBHOOK_SECRET))) return new Response("unauthorized", { status: 401 });
@@ -59,7 +59,7 @@ export async function handleGithub(req: Request, env: Env, deps: GithubDeps): Pr
 const DEPLOY_WORKFLOW = "deploy";
 const RESULT: Record<string, string> = { success: "✅ Деплой успішний", failure: "❌ Деплой не вдався", timed_out: "❌ Деплой не вдався (час вийшов)", cancelled: "⏹ Деплой скасовано" };
 
-async function onDeployFinished(bot: BotEnv, env: Env, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
+async function onDeployFinished(bot: BotEnv, env: ChatEnv & GithubEnv, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
 	const run = p.workflow_run;
 	const chat = env.TG_OWNER_ID ?? env.CHAT_ID;
 	const title = run?.conclusion ? RESULT[run.conclusion] : undefined;
@@ -91,7 +91,7 @@ const CHECK_FAILED = ["failure", "timed_out"];
 export const ciFailedPrompt = (branch: string, url: string, conclusion: string) =>
 	`The CI check for your pull request (branch ${branch}) ${conclusion === "timed_out" ? "timed out" : "failed"}: ${url}\nFind out why (for example \`gh run view <run id> --log-failed\`, the run id is the last number in the URL), fix it, run \`npm run check\` locally, then commit and push to the same branch. If the failure is not caused by your changes (flaky test, infrastructure), say so instead of changing unrelated code. If the branch also has merge conflicts with the default branch, merge or rebase it and resolve them.`;
 
-async function onCheckFailed(bot: BotEnv, env: Env, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
+async function onCheckFailed(bot: BotEnv, env: ChatEnv & GithubEnv, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
 	const run = p.workflow_run;
 	if (p.action !== "completed" || !run || run.name !== CHECK_WORKFLOW || !CHECK_FAILED.includes(run.conclusion ?? "")) return;
 	// Лише гілки бота з цього ж репозиторію (не форки)
@@ -104,7 +104,7 @@ async function onCheckFailed(bot: BotEnv, env: Env, { agent }: GithubDeps, repo:
 }
 
 // Прибирає сесію гілки (як /delete) і віддалену гілку; пост у чаті видаляє, лише якщо він не показує результату (keepPost). true, якщо сесію знайдено.
-async function cleanup(bot: BotEnv, env: Env, agent: Sessions & Deploys, repo: string, branch: string, keepPost: boolean): Promise<boolean> {
+async function cleanup(bot: BotEnv, env: ChatEnv & GithubEnv, agent: Sessions & Deploys, repo: string, branch: string, keepPost: boolean): Promise<boolean> {
 	const removed = await agent.removeByBranch(repo, branch.slice("agent/".length));
 	if (env.GITHUB_TOKEN) await deleteBranch(env.GITHUB_TOKEN, repo, branch).catch((err) => console.error("delete remote branch failed:", err));
 	if (!removed) return false;
@@ -117,7 +117,7 @@ async function cleanup(bot: BotEnv, env: Env, agent: Sessions & Deploys, repo: s
 const refKey = (repo: string, runId: number) => `deploy:${repo}:${runId}`;
 
 // Job чекає схвалення environment (workflow_job зі статусом waiting): пост із кнопками.
-async function onReviewRequested(bot: BotEnv, env: Env, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
+async function onReviewRequested(bot: BotEnv, env: ChatEnv & GithubEnv, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
 	const job = p.workflow_job;
 	const chat = env.TG_OWNER_ID ?? env.CHAT_ID;
 	if (p.action !== "waiting" || !job || !chat) return;

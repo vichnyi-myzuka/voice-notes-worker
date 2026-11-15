@@ -1,4 +1,4 @@
-import type { Env } from "../../env";
+import type { ContainerEnv, GithubEnv, McpEnv, PublishEnv } from "../../env";
 
 // Контейнер лишається живим, поки з ним працюють; потім засинає (ліміти й запобіжники — окремий тікет).
 export const DEFAULT_INACTIVITY_MS = 60 * 60 * 1000;
@@ -47,19 +47,19 @@ export function positiveInt(value: string | undefined): number | undefined {
 	return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
-export const inactivityMs = (env: Env): number => positiveInt(env.AGENT_INACTIVITY_MS) ?? DEFAULT_INACTIVITY_MS;
-export const snapshotIntervalMs = (env: Env): number => positiveInt(env.AGENT_SNAPSHOT_INTERVAL_MS) ?? DEFAULT_SNAPSHOT_INTERVAL_MS;
-export const idleStopMs = (env: Env): number => positiveInt(env.AGENT_IDLE_STOP_MS) ?? DEFAULT_IDLE_STOP_MS;
-export const progressMs = (env: Env): number => positiveInt(env.AGENT_PROGRESS_MS) ?? PROGRESS_INTERVAL_MS;
-export const maxCostUsd = (env: Env): number => positiveNumber(env.AGENT_MAX_COST_USD) ?? DEFAULT_MAX_COST_USD;
-export const maxTokens = (env: Env): number => positiveInt(env.AGENT_MAX_TOKENS) ?? DEFAULT_MAX_TOKENS;
+export const inactivityMs = (env: ContainerEnv): number => positiveInt(env.AGENT_INACTIVITY_MS) ?? DEFAULT_INACTIVITY_MS;
+export const snapshotIntervalMs = (env: ContainerEnv): number => positiveInt(env.AGENT_SNAPSHOT_INTERVAL_MS) ?? DEFAULT_SNAPSHOT_INTERVAL_MS;
+export const idleStopMs = (env: ContainerEnv): number => positiveInt(env.AGENT_IDLE_STOP_MS) ?? DEFAULT_IDLE_STOP_MS;
+export const progressMs = (env: ContainerEnv): number => positiveInt(env.AGENT_PROGRESS_MS) ?? PROGRESS_INTERVAL_MS;
+export const maxCostUsd = (env: ContainerEnv): number => positiveNumber(env.AGENT_MAX_COST_USD) ?? DEFAULT_MAX_COST_USD;
+export const maxTokens = (env: ContainerEnv): number => positiveInt(env.AGENT_MAX_TOKENS) ?? DEFAULT_MAX_TOKENS;
 
-export function publishEnv(env: Env): Record<string, string> {
+export function publishEnv(env: PublishEnv): Record<string, string> {
 	const vars = { R2_ACCESS_KEY_ID: env.R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY: env.R2_SECRET_ACCESS_KEY, R2_ENDPOINT: env.R2_ENDPOINT, SITES_BASE_URL: env.SITES_BASE_URL };
 	return Object.fromEntries(Object.entries(vars).filter((e): e is [string, string] => !!e[1]));
 }
 
-export function containerEnv(env: Env): Record<string, string> {
+export function containerEnv(env: ContainerEnv & GithubEnv & PublishEnv & McpEnv): Record<string, string> {
 	const vars: Record<string, string | undefined> = {
 		OPENCODE_PASSWORD: env.OPENCODE_PASSWORD,
 		ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,

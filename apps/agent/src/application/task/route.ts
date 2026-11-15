@@ -1,25 +1,6 @@
 import type { Llm } from "@voice-notes/core";
-import { MCP_NAMES, type McpName } from "../../domain/agent";
-
-// Відомі репозиторії: `repo` (owner/name) і `about` — як власник про нього говорить (для вибору з вільної мови).
-// `site` (необов'язково) — назва публічного сайту, який агент оновлює після мержу PR (репозиторії-сайти, напр. гра).
-export type KnownRepo = { repo: string; about: string; site?: string };
-
-const REPO = /^[\w-][\w.-]*\/[\w-][\w.-]*$/;
-const SITE = /^[a-z0-9][a-z0-9-]{1,39}$/;
-
-// AGENT_REPOS: JSON-масив [{repo, about, site?}]. Некоректні елементи й сам JSON тихо ігноруються: вибір репозиторію вимикається.
-export function parseRepos(raw: string | undefined): KnownRepo[] {
-	try {
-		const list: unknown = JSON.parse(raw ?? "[]");
-		if (!Array.isArray(list)) return [];
-		return list
-			.filter((r): r is KnownRepo => typeof r?.repo === "string" && REPO.test(r.repo) && typeof r.about === "string")
-			.map((r) => ({ repo: r.repo, about: r.about, ...(typeof r.site === "string" && SITE.test(r.site) && { site: r.site }) }));
-	} catch {
-		return [];
-	}
-}
+import { MCP_NAMES, type McpFlags, type McpName } from "../../domain/agent";
+import type { KnownRepo } from "./repos";
 
 const SYSTEM = `You route tasks for a coding agent. The owner dictates a task (usually in Ukrainian). Answer with:
 - "type": the kind of work, like a conventional-commit type: feat (new capability), fix (bug), docs, refactor, test, chore (tooling, config, maintenance).
@@ -37,7 +18,10 @@ const SYSTEM = `You route tasks for a coding agent. The owner dictates a task (u
 
 export const MODELS = ["opus", "sonnet", "haiku"] as const;
 
-export type Route = { repo?: string; unsure?: boolean; model?: string; name?: string; title?: string; sure?: boolean; silpo?: boolean; calendar?: boolean; cloudflare?: boolean; maybe?: McpName[] };
+export type Route = { repo?: string; unsure?: boolean; model?: string; name?: string; title?: string; maybe?: McpName[] } & McpFlags;
+
+// Як прапорці сервісів названі у відповіді моделі (див. SYSTEM): назва в схемі описує задачу, а не сервіс.
+const ROUTE_KEYS: Record<McpName, string> = { sure: "finance", silpo: "groceries", calendar: "calendar", cloudflare: "cloudflare" };
 
 const NAME = /^[a-z0-9][a-z0-9-]{1,39}$/;
 export const TYPES = ["feat", "fix", "docs", "refactor", "test", "chore"] as const;
@@ -55,7 +39,7 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 	const names = repos.map((r) => r.repo);
 	const list = repos.length ? `Known repositories:\n${repos.map((r) => `- ${r.repo}: ${r.about}`).join("\n")}\n\n` : "";
 	// evidence перед repo: модель спершу наводить цитату, а потім вирішує; порядок властивостей зберігається.
-	const properties = { type: { type: "string", enum: [...TYPES] }, name: { type: "string" }, title: { type: "string" }, finance: { type: "boolean" }, groceries: { type: "boolean" }, calendar: { type: "boolean" }, cloudflare: { type: "boolean" }, maybe: { type: "array", items: { type: "string", enum: [...MCP_NAMES] } }, model: { type: "string", enum: [...MODELS, "none"] }, ...(repos.length && { evidence: { type: "string" }, unsure: { type: "boolean" }, repo: { type: "string", enum: [...names, "none"] } }) };
+	const properties = { type: { type: "string", enum: [...TYPES] }, name: { type: "string" }, title: { type: "string" }, ...Object.fromEntries(MCP_NAMES.map((name) => [ROUTE_KEYS[name], { type: "boolean" }])), maybe: { type: "array", items: { type: "string", enum: [...MCP_NAMES] } }, model: { type: "string", enum: [...MODELS, "none"] }, ...(repos.length && { evidence: { type: "string" }, unsure: { type: "boolean" }, repo: { type: "string", enum: [...names, "none"] } }) };
 	const picked = await llm.askJson(
 		{
 			name: "agent_route",
@@ -64,7 +48,7 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 			schema: { type: "object", properties, required: Object.keys(properties), additionalProperties: false },
 			reasoning: "none",
 		},
-		(text) => JSON.parse(text) as { repo?: string; unsure?: boolean; evidence?: string; type?: string; name?: string; title?: string; finance?: boolean; groceries?: boolean; calendar?: boolean; cloudflare?: boolean; maybe?: unknown; model?: string },
+		(text) => JSON.parse(text) as { repo?: string; unsure?: boolean; evidence?: string; type?: string; name?: string; title?: string; maybe?: unknown; model?: string } & Record<string, unknown>,
 	);
 	if (!picked) return {};
 	// Тип іде префіксом (feat-…, fix-…): з гілки одразу видно, що це за робота; без придатного типу — лише назва.
@@ -76,10 +60,10 @@ export async function routeTask(llm: Llm, repos: KnownRepo[], task: string): Pro
 	const grounded = quote.length >= 3 && task.toLowerCase().includes(quote);
 	const model = MODELS.find((m) => m === picked.model);
 	// Сумнів роутера: лише відомі сервіси, яких він сам не визнав потрібними.
-	const flagged = { sure: picked.finance, silpo: picked.groceries, calendar: picked.calendar, cloudflare: picked.cloudflare };
+	const flagged = Object.fromEntries(MCP_NAMES.map((name) => [name, picked[ROUTE_KEYS[name]] === true])) as Record<McpName, boolean>;
 	const doubts: unknown[] = Array.isArray(picked.maybe) ? picked.maybe : [];
-	const maybe = MCP_NAMES.filter((n) => doubts.includes(n) && flagged[n] !== true);
+	const maybe = MCP_NAMES.filter((n) => doubts.includes(n) && !flagged[n]);
 	if (picked.repo && picked.repo !== "none" && !grounded) console.log(`route: repo ${picked.repo} відкинуто, цитата ${JSON.stringify(picked.evidence ?? "")} не знайдена у фразі`);
 	const repo = grounded && picked.repo && names.includes(picked.repo) ? picked.repo : undefined;
-	return { ...(!repo && picked.unsure === true && { unsure: true }), ...(model && { model }), ...(picked.finance === true && { sure: true }), ...(picked.groceries === true && { silpo: true }), ...(picked.calendar === true && { calendar: true }), ...(picked.cloudflare === true && { cloudflare: true }), ...(maybe.length > 0 && { maybe }), ...(repo && { repo }), ...(name && { name }), ...(title && { title }) };
+	return { ...(!repo && picked.unsure === true && { unsure: true }), ...(model && { model }), ...Object.fromEntries(MCP_NAMES.filter((name) => flagged[name]).map((name) => [name, true])), ...(maybe.length > 0 && { maybe }), ...(repo && { repo }), ...(name && { name }), ...(title && { title }) };
 }

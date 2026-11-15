@@ -1,6 +1,6 @@
 import { workersLlm } from "@voice-notes/core";
 import type { WatchTarget } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv } from "../../env";
 import { renameTopic, setTopicIcon, type Answers, type TopicState } from "../chat";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import { WORKING, progressMs } from "./config";
@@ -28,7 +28,7 @@ export class Progress {
 	private readonly asks = new Map<string, string>();
 
 	constructor(
-		private readonly env: Env,
+		private readonly env: ChatEnv & ContainerEnv,
 		private readonly store: SessionStore,
 		private readonly posts: Posts,
 		private readonly forms: Forms,
@@ -117,7 +117,7 @@ export class Progress {
 		}
 		const text = announcement ?? `${WORKING} · ${activity || describeActivity(tool, input)}`;
 		await this.posts.enqueue(async () => {
-			if (await this.store.watch(entry[0])) await this.posts.show(w, text, false, answers); // спостереження могло закінчитись, поки чекали в черзі
+			if (await this.store.watch(entry[0])) await this.posts.show(entry[0], w, text, false, answers); // спостереження могло закінчитись, поки чекали в черзі
 		});
 	}
 }

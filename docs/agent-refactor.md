@@ -22,12 +22,18 @@
 
 ## Етап 2 (окремими PR, після етапу 1)
 
-- Єдиний реєстр MCP-сервісів: назва, підпис, промпт, вхід, «вміє змінювати дані». Зараз сервіс додається в ~10 місцях
+- [x] Єдиний реєстр MCP-сервісів (`domain/agent/mcp.ts`, `MCP_SERVICES`; решта шарів тримає дані як `Record<McpName, …>`): назва, підпис, промпт, вхід, «вміє змінювати дані». Зараз сервіс додається в ~10 місцях
   (`McpName`, `Tracked`, `StartInput`, `parsePrefixes`, `mcpConfig`, `start`, логіни, HTTP-маршрути).
-- HTTP: одна функція для маршрутів OAuth замість трьох копій; прибрати дубль `/sw.js`; веб-запити через чергу завдань, як у чаті.
-- `Computer`: винести підготовку тек і MCP-конфігів (`prepare`, `enableMcp`) у `Workspace`; ключі сховища — у `state.ts`.
-- `Env`: розділити на групи (контейнер, чат, публікація, MCP).
-- `chat`: id сесії в кнопках не з URL, а явно.
-- `application/` для агента: вибір репозиторію, моделі й MCP з `interface/telegram/handle.ts`.
-- Правило лінтера на напрямок шарів (`interface` не імпортує `infrastructure` напряму).
-- Шаблон report-site — тека з файлами замість heredoc у `new-report-site.sh`.
+- [x] HTTP: одна функція для маршрутів OAuth замість трьох копій; прибрано дубль `/sw.js`; веб-запити (`POST /api/sessions`, `…/messages`) йдуть через чергу завдань (`begin`/`resume` без чату), як у чаті.
+- [x] `Computer`: підготовку тек і MCP-конфігів (`prepare`, `enableMcp`) винесено в `Workspace` (`workspace.ts`); ключі сховища контейнера — `computerKey` у `state.ts`.
+- [x] `Env` розділено на групи (`AccessEnv`, `ContainerEnv`, `ChatEnv`, `GithubEnv`, `PublishEnv`, `McpEnv` у `env.ts`); модулі просять лише свою групу.
+- [x] `chat`: id сесії в кнопках передається явно (`SessionLink { id, url }`), а не добувається з URL.
+- [x] `application/task` для агента: вибір репозиторію, моделі й MCP (`planTask`, префікси, роутер) винесено з `interface/telegram/handle.ts`; interface лишає лише Telegram.
+- [x] Правила лінтера на напрямок шарів (`.oxlintrc.json`): `domain` не імпортує інші шари; `application` агента не імпортує `infrastructure` і `interface`; `interface` не імпортує `infrastructure/container` (до Durable Object лише через порт `Agent`). Спільні адаптери `infrastructure/chat`, `github`, `quota` дозволені (ADR 0004). `application` застосунку нотаток правило поки не охоплює: його типи `Env`/`Job` лежать в `infrastructure/env`.
+- [x] Шаблон report-site — тека `payload/report-site/` з `.tpl`-файлами замість heredoc у `new-report-site.sh`; список файлів — `infrastructure/container/report-site.ts` (тест звіряє його з диском).
+
+## Етап 3 (окремим PR, після етапу 2)
+
+- [ ] `apps/notes`: типи `Env` і `Job` винести з `infrastructure/env` у `domain`/`application`, щоб `application` не імпортував `infrastructure`.
+- [ ] Поширити правило лінтера на напрямок шарів (`.oxlintrc.json`) на `apps/notes/src/application/**` (`application` не імпортує `infrastructure` і `interface`), перевірити навмисним порушенням.
+- [ ] Оновити `docs/agent-refactor.md` (цей файл) і сайт архітектури (`apps/docs/web/src/diagrams.tsx` або `content.ts`), якщо зміниться структура модулів.

@@ -1,5 +1,5 @@
 import type { ImageRef, StartInput, WatchTarget } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv } from "../../env";
 import { stamp } from "../../timing";
 import { sendChat } from "../chat";
 import { JOB_ATTEMPTS, JOB_STALE_MS, WORKING } from "./config";
@@ -23,7 +23,7 @@ export class Jobs {
 
 	constructor(
 		private readonly ctx: DurableObjectState,
-		private readonly env: Env,
+		private readonly env: ChatEnv & ContainerEnv,
 		private readonly store: SessionStore,
 		private readonly posts: Posts,
 		private readonly runner: JobRunner,
@@ -35,19 +35,19 @@ export class Jobs {
 	}
 
 	// Приймає нову сесію: зберігає завдання й будить alarm, сам запуск іде там (див. run). Ідемпотентно за id.
-	async begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
+	async begin(id: string, input: StartInput, target?: WatchTarget): Promise<void> {
 		if (await this.known(id)) return;
-		await this.enqueue({ id, input, target, attempts: 0 });
+		await this.enqueue({ id, input, ...(target && { target }), attempts: 0 });
 	}
 
 	// Те саме для уточнення; контейнер може спати.
-	async resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
+	async resume(id: string, text: string, target?: WatchTarget, images?: ImageRef[]): Promise<void> {
 		// Завдання одне на сесію (ключ job:<id>): уточнення, що прийшло, поки попереднє ще не почало виконуватись, не затирає його, а
 		// додається до нього (інакше текст чи фото губиться, а в темі лишається «Працює» без відповіді).
 		const queued = await this.store.job(id);
 		if (queued && "text" in queued && !queued.startedAt) {
 			const merged = [...(queued.images ?? []), ...(images ?? [])];
-			await this.store.saveJob({ ...queued, text: `${queued.text}\n\n${text}`, target, ...(merged.length && { images: merged }) } satisfies Job);
+			await this.store.saveJob({ ...queued, text: `${queued.text}\n\n${text}`, ...(target && { target }), ...(merged.length && { images: merged }) } satisfies Job);
 			await this.ctx.storage.setAlarm(Date.now());
 			return;
 		}
@@ -58,7 +58,7 @@ export class Jobs {
 			await this.ctx.storage.setAlarm(Date.now());
 			return;
 		}
-		await this.enqueue({ id, text, target, attempts: 0, ...(images?.length && { images }) });
+		await this.enqueue({ id, text, ...(target && { target }), attempts: 0, ...(images?.length && { images }) });
 	}
 
 	// Нове завдання без злиття з тим, що вже в черзі (напр. повідомлення агентові від воркера).
@@ -87,7 +87,7 @@ export class Jobs {
 		if (job.queuedAt && job.attempts === 0) console.log(`latency job ${job.id}: queued=${Date.now() - job.queuedAt}ms accepted=${stamp(job.queuedAt)} at=${stamp()} kind=${"input" in job ? "new" : "follow-up"} cold=${!this.runner.running()}`);
 		try {
 			if ("input" in job) {
-				if (!this.runner.running()) await this.posts.show(job.target, "⏳ Запускаю контейнер").catch(() => {});
+				if (!this.runner.running() && job.target) await this.posts.show(job.id, job.target, "⏳ Запускаю контейнер").catch(() => {});
 				await this.runner.start(job.id, job.input);
 			} else {
 				await this.runner.followUp(job.id, job.text, job.images);
@@ -105,8 +105,9 @@ export class Jobs {
 			return;
 		}
 		if (await this.isCurrent(job)) await this.store.dropJob(job.id); // запущено: далі повтор уточнення чи старту не потрібен
+		if (!job.target) return; // запит з веб-API: чату, куди писати підсумок, немає
 		await this.runner.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
-		if ("input" in job) await this.posts.show(job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
+		if ("input" in job) await this.posts.show(job.id, job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
 	}
 
 	// Чи запис черги досі той самий, що виконувався (уточнення, яке прийшло під час виконання, замінює запис новим queuedAt).
@@ -117,8 +118,9 @@ export class Jobs {
 
 	private async reportFailure(job: Job): Promise<void> {
 		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
+		if (!job.target) return console.error(`job ${job.id} dropped after ${JOB_ATTEMPTS} attempts (no chat to report to)`);
 		if (!this.env.BOT_TOKEN) return;
-		if (job.target.postId && (await this.posts.show(job.target, text, true))) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, job.target.url, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
+		if (job.target.postId && (await this.posts.show(job.id, job.target, text, true))) return;
+		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, { id: job.id, url: job.target.url }, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
 	}
 }

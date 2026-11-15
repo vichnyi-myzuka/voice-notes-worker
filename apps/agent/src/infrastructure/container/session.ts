@@ -1,10 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "../../env";
-import { folderFor, type McpAnswer, type McpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import { folderFor, type McpAnswer, type McpName, type OAuthMcpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { stopwatch } from "../../timing";
 import { removeTopic } from "../chat";
 import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
+import { Workspace } from "./workspace";
 import { JOB_RETRY_MS, WATCH_INTERVAL_MS, publishEnv } from "./config";
 import { Forms } from "./forms";
 import { loadImages } from "./images";
@@ -25,10 +26,11 @@ import { Watcher } from "./watcher";
 //
 // Сам клас — фасад: публічні методи — RPC-вхід порту Agent, alarm і складання модулів; тут же старт, уточнення й видалення сесії.
 // Решту роблять модулі поруч: SessionStore (записи сховища), Jobs (черга прийнятих завдань), Watcher (стеження до підсумку),
-// Progress (опис дії, питання, іконка й назва теми), Limits (ліміти Claude), Mcp (сервіси власника), Computer (контейнер і знімки),
+// Progress (опис дії, питання, іконка й назва теми), Limits (ліміти Claude), Mcp (сервіси власника), Computer (контейнер і знімки), Workspace (теки сесій і конфіг MCP),
 // Posts (пост у чаті й деплой), Forms (питання агента), WebProxy (веб-інтерфейс).
 export class AgentSession extends DurableObject<Env> {
 	private readonly computer: Computer;
+	private readonly workspace: Workspace;
 	private readonly posts: Posts;
 	private readonly forms: Forms;
 	private readonly store: SessionStore;
@@ -41,12 +43,13 @@ export class AgentSession extends DurableObject<Env> {
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.computer = new Computer(ctx, env);
+		this.workspace = new Workspace(ctx, env);
 		this.store = new SessionStore(ctx.storage);
 		this.limits = new Limits(env, this.store, (at) => this.computer.alarmNoLater(at));
 		this.posts = new Posts(ctx.storage, env, this.store);
 		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
 		this.proxy = new WebProxy(ctx, env, this.computer);
-		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, (id, tracked, text) => this.tell(id, tracked, text));
+		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, this.workspace, (id, tracked, text) => this.tell(id, tracked, text));
 		this.progress = new Progress(env, this.store, this.posts, this.forms);
 		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp);
 		this.jobs = new Jobs(ctx, env, this.store, this.posts, {
@@ -104,40 +107,16 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Контейнер: знімки, скидання, діагностика (див. Computer).
-	silpoLoginUrl(origin: string): Promise<string> {
-		return this.mcp.silpo.loginUrl(origin);
+	loginUrl(name: OAuthMcpName, origin: string): Promise<string> {
+		return this.mcp.logins[name].loginUrl(origin);
 	}
 
-	silpoCallback(code: string, state: string): Promise<boolean> {
-		return this.mcp.silpo.callback(code, state);
+	loginCallback(name: OAuthMcpName, code: string, state: string): Promise<boolean> {
+		return this.mcp.logins[name].callback(code, state);
 	}
 
-	silpoConnected(): Promise<boolean> {
-		return this.mcp.silpo.connected();
-	}
-
-	calendarLoginUrl(origin: string): Promise<string> {
-		return this.mcp.calendar.loginUrl(origin);
-	}
-
-	calendarCallback(code: string, state: string): Promise<boolean> {
-		return this.mcp.calendar.callback(code, state);
-	}
-
-	calendarConnected(): Promise<boolean> {
-		return this.mcp.calendar.connected();
-	}
-
-	cloudflareLoginUrl(origin: string): Promise<string> {
-		return this.mcp.cloudflare.loginUrl(origin);
-	}
-
-	cloudflareCallback(code: string, state: string): Promise<boolean> {
-		return this.mcp.cloudflare.callback(code, state);
-	}
-
-	cloudflareConnected(): Promise<boolean> {
-		return this.mcp.cloudflare.connected();
+	loginConnected(name: OAuthMcpName): Promise<boolean> {
+		return this.mcp.logins[name].connected();
 	}
 
 	snapshot(): Promise<SnapshotInfo> {
@@ -181,14 +160,14 @@ export class AgentSession extends DurableObject<Env> {
 			const again = await this.store.session(id);
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
-			const { silpo, calendar, cloudflare } = await this.mcp.wanted(input);
+			const wanted = await this.mcp.wanted(input);
 			sw.mark("queue");
-			const directory = await this.computer.prepare(folder, input.repo, { sure: input.sure, silpo, calendar, cloudflare });
+			const directory = await this.workspace.prepare(folder, input.repo, wanted);
 			sw.mark("prepare");
 			const ocId = await createSession(this.opencode(), input.prompt.slice(0, 80), directory, this.computer.model(input.model));
 			sw.mark("create");
-			await this.store.saveSession(id, { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...(input.sure && { sure: true }), ...(silpo && { silpo: true }), ...(calendar && { calendar: true }), ...(cloudflare && { cloudflare: true }) } satisfies Tracked);
-			const notes = Mcp.missing(input, { silpo, calendar, cloudflare });
+			await this.store.saveSession(id, { ocId, repo: input.repo, folder, ...(input.model && { model: input.model }), ...Mcp.flags(wanted) } satisfies Tracked);
+			const notes = Mcp.missing(input, wanted);
 			await prompt(this.opencode(), ocId, notes.length ? `${input.prompt}\n\n(Системна примітка: ${notes.join(" ")})` : input.prompt, await this.images(input.images));
 			sw.mark("prompt");
 			sw.log({ repo: input.repo ?? "-" });
@@ -205,7 +184,7 @@ export class AgentSession extends DurableObject<Env> {
 		let ocId = tracked.ocId;
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
-				const directory = await this.computer.prepare(tracked.folder ?? id, tracked.repo, await this.mcp.wanted(tracked));
+				const directory = await this.workspace.prepare(tracked.folder ?? id, tracked.repo, await this.mcp.wanted(tracked));
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.store.saveSession(id, { ...tracked, ocId } satisfies Tracked);
@@ -243,11 +222,11 @@ export class AgentSession extends DurableObject<Env> {
 	}
 
 	// Приймає нову сесію чи уточнення в чергу завдань (див. Jobs).
-	begin(id: string, input: StartInput, target: WatchTarget): Promise<void> {
+	begin(id: string, input: StartInput, target?: WatchTarget): Promise<void> {
 		return this.jobs.begin(id, input, target);
 	}
 
-	resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void> {
+	resume(id: string, text: string, target?: WatchTarget, images?: ImageRef[]): Promise<void> {
 		return this.jobs.resume(id, text, target, images);
 	}
 
@@ -320,7 +299,7 @@ export class AgentSession extends DurableObject<Env> {
 		// Сесія, що ще не запустилась (холодний старт, клон): її тема відома лише із завдання в черзі. Без цього повідомлення,
 		// надіслане в цей час, стартувало б у тій самій темі нову сесію.
 		for (const job of await this.store.jobs()) {
-			if (job.target.threadId === threadId && job.target.chatId === chatId) return job.id;
+			if (job.target?.threadId === threadId && job.target?.chatId === chatId) return job.id;
 		}
 		return undefined;
 	}

@@ -1,4 +1,4 @@
-import type { Env } from "../../env";
+import type { ChatEnv, ContainerEnv } from "../../env";
 import type { Computer } from "./computer";
 import { STREAM_MAX_MS } from "./config";
 import { OPENCODE_PORT, basicAuth } from "./opencode";
@@ -11,7 +11,7 @@ export class WebProxy {
 
 	constructor(
 		private readonly ctx: DurableObjectState,
-		private readonly env: Env,
+		private readonly env: ChatEnv & ContainerEnv,
 		private readonly computer: Computer,
 	) {}
 
