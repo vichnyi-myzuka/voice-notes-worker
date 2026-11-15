@@ -288,7 +288,7 @@ export function GithubFlow() {
     <DiagramCard title="Агент: GitHub і чат" description="Вебхуки GitHub повертають збій CI, схвалення, деплой і мерж у сесію" viewBox="0 0 960 380" className="lg:col-span-2">
       <Box x={20} y={150} w={190} h={80} title="GitHub" lines={["workflow_job, _run", "POST /github"]} color={3} />
       <Box x={265} y={150} w={190} h={80} title="interface/github" lines={["підпис X-Hub-Signature", "знаходить сесію за PR"]} color={0} />
-      <Box x={560} y={30} w={380} h={80} title="Збій CI" lines={["❌ у тему сесії", "агентові дописується завдання «виправ»"]} color={3} />
+      <Box x={560} y={30} w={380} h={80} title="Збій CI" lines={["❌ у тему сесії, агентові завдання «виправ»", "бейбісітинг: до 3 спроб на гілку, далі 🛑"]} color={3} />
       <Box x={560} y={150} w={380} h={80} title="Схвалення деплою" lines={["🚀 пост із кнопками ✅ ❌", "pending_deployments через GITHUB_APPROVE_TOKEN"]} color={4} />
       <Box x={560} y={270} w={380} h={80} title="Деплой успішний" lines={["✅ у пості, іконка теми 🎉", "прибирання сесії, worktree й гілки"]} color={2} />
       <Box x={20} y={290} w={235} h={70} title="🔀 Змерджити" lines={["PUT /pulls/N/merge", "відмова: причини в чаті"]} color={4} />
