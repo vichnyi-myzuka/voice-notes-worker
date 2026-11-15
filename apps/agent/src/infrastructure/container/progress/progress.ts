@@ -1,7 +1,7 @@
 import { workersLlm } from "@voice-notes/core";
-import type { WatchTarget } from "../../../domain/agent";
+import type { TopicState, WatchTarget } from "../../../domain/agent";
 import type { ChatEnv, ContainerEnv } from "../../../env";
-import { renameTopic, setTopicIcon, type Answers, type TopicState } from "../../chat";
+import type { Answers } from "../../chat";
 import { describeActivity, describeForm, formChoices, formSteps } from "../../../application/progress";
 import { WORKING } from "../../../application/jobs";
 import { progressMs } from "../config";
@@ -67,7 +67,7 @@ export class Progress {
 
 	// Іконка теми показує стан сесії (працює, питання, готово, збій); поза темою нічого не робить.
 	async icon(w: Watch | WatchTarget, state: TopicState): Promise<void> {
-		if (w.threadId && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, state);
+		await this.posts.icon(w, state);
 	}
 
 	// Після ходу агента назва теми або лишається, або оновлюється, якщо напрям розмови змінився (лише для тем, створених ботом).
@@ -80,7 +80,7 @@ export class Progress {
 			if (!tracked?.post || !current) return;
 			const title = await retitle(workersLlm(this.env), current, (w.header ?? "").replace(QUOTES, ""), this.asks.get(id), result);
 			if (!title || title === current) return;
-			if (await renameTopic({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, title)) await this.store.saveSession(id, { ...tracked, post: { ...tracked.post, title } } satisfies Tracked);
+			if (await this.posts.rename(w, title)) await this.store.saveSession(id, { ...tracked, post: { ...tracked.post, title } } satisfies Tracked);
 		} catch (err) {
 			console.error("retitle failed:", err);
 		}

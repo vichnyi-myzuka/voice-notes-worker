@@ -17,3 +17,31 @@ export type Tracked = { ocId: string; repo?: string; folder?: string; model?: st
 
 // Сесія впала на лімітах Claude: чекаємо їх скидання, щоб написати в чат (лише для тих, хто справді впертися в ліміт).
 export type LimitWait = WatchTarget & { since: number };
+
+// Модель OpenCode: провайдер і id.
+export type ModelRef = { providerID: string; id: string };
+
+// Зображення як вкладення до запиту (uri — data:-посилання): модель бачить їх як фото.
+export type PromptFile = { uri: string; name: string };
+
+// Сесія OpenCode з лічильниками: вартість, токени й чим закінчилась остання робота (outcome з'являється після першої).
+export type SessionInfo = {
+	cost?: number;
+	tokens?: { input?: number; output?: number; reasoning?: number };
+	outcome?: "succeeded" | "failed" | "interrupted";
+	time?: { idle?: number };
+};
+
+// Подія сервера OpenCode (SSE `/api/event`): тип і, якщо стосується сесії, її id. Форма — питання агента.
+export type FormField = { key?: string; type?: string; hidden?: boolean; title?: string; description?: string; maxItems?: number; options?: { value?: string; label?: string; description?: string }[] };
+export type OpencodeForm = { id?: string; sessionID?: string; title?: string; fields?: FormField[] };
+export type OpencodeEvent = { type: string; data?: { sessionID?: string; id?: string; name?: string; input?: Record<string, unknown>; form?: OpencodeForm } };
+
+// Відповіді на форму: ключ поля → значення.
+export type FormAnswers = Record<string, string | boolean | string[]>;
+
+// Кнопки-відповіді під постом: підписи й чи можна вибрати кілька.
+export type PostAnswers = { labels: string[]; multiple?: boolean };
+
+// Іконка теми за станом сесії.
+export type TopicState = "working" | "question" | "done" | "failed" | "approval" | "deploying" | "deployed" | "deployFailed";

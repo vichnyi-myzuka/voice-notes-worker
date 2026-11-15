@@ -1,4 +1,4 @@
-import type { Job, LimitWait, Tracked, Watch } from "./records";
+import type { FormAnswers, Job, LimitWait, OpencodeEvent, PostAnswers, PromptFile, SessionInfo, Tracked, TopicState, Watch } from "./records";
 import type { WatchTarget } from "./types";
 
 // Порти, через які ядро агента (application) торкається зовнішнього світу. Реалізації — в infrastructure/container.
@@ -48,4 +48,30 @@ export interface Notices {
 export interface LimitProbe {
 	readonly configured: boolean;
 	read(): Promise<{ blocked: boolean; resetAt?: number } | undefined>; // resetAt — unix-секунди; undefined — перевірка не вдалась
+}
+
+// Клієнт OpenCode (сервер усередині контейнера): запити, форми (питання агента), стан і потік подій сесій. Id — сесії OpenCode.
+export interface OpencodeClient {
+	prompt(ocId: string, text: string, files?: PromptFile[]): Promise<void>;
+	replyForm(ocId: string, formId: string, answer: FormAnswers): Promise<void>;
+	cancelForm(ocId: string, formId: string, message?: string): Promise<void>;
+	session(ocId: string): Promise<SessionInfo>;
+	interrupt(ocId: string): Promise<void>;
+	activeSessions(): Promise<string[]>;
+	lastAssistant(ocId: string): Promise<{ text: string; error?: string }>;
+	// Читає потік подій, поки він не закінчиться чи не спрацює signal; onEvent(undefined) — службовий рядок (heartbeat).
+	events(signal: AbortSignal, onEvent: (event: OpencodeEvent | undefined) => Promise<void>): Promise<void>;
+}
+
+// Пост сесії в чаті: показ стану на місці, реакція, іконка й назва теми. Чат без бота нічого не робить (false / нічого).
+export interface PostBoard {
+	// Оновлює пост на місці. false — поста немає чи редагування не вдалось.
+	show(id: string, w: WatchTarget, status: string, final?: boolean, answers?: PostAnswers, mergeable?: boolean, retry?: boolean): Promise<boolean>;
+	// Правки поста йдуть у черзі: запізніла проміжна правка не має затирати підсумок.
+	enqueue(edit: () => Promise<unknown>): Promise<unknown>;
+	settled(): Promise<void>;
+	// 👨‍💻 на пості, поки сесія працює.
+	mark(w: WatchTarget, on: boolean): Promise<void>;
+	icon(w: WatchTarget, state: TopicState): Promise<void>;
+	rename(w: WatchTarget, title: string): Promise<boolean>;
 }

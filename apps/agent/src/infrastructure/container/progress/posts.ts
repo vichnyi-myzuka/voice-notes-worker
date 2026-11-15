@@ -1,7 +1,7 @@
 import { tg } from "@voice-notes/core";
-import type { DeployInfo, DeployStage, PostRef, WatchTarget } from "../../../domain/agent";
+import type { DeployInfo, DeployStage, PostBoard, PostRef, WatchTarget } from "../../../domain/agent";
 import type { ChatEnv, ContainerEnv } from "../../../env";
-import { QUOTE_CLOSE, QUOTE_OPEN, editChat, setTopicIcon, type Answers, type Buttons, type TopicState } from "../../chat";
+import { QUOTE_CLOSE, QUOTE_OPEN, editChat, renameTopic, setTopicIcon, type Answers, type Buttons, type TopicState } from "../../chat";
 import { HEADER_DEPLOYED_MAX, HEADER_FINAL_MAX } from "../config";
 import { deployKey, lastKey, refKey, type LastShown, type Tracked } from "../state";
 import type { SessionStore } from "../state";
@@ -10,7 +10,7 @@ import type { SessionStore } from "../state";
 export const DEPLOY_ICON: Record<DeployStage, TopicState> = { approval: "approval", deploying: "deploying", deployed: "deployed", failed: "deployFailed" };
 
 // Пост сесії в чаті: шапка (завдання) і поточний стан чи підсумок, який агент оновлює на місці, плюс стан деплою PR цієї сесії.
-export class Posts {
+export class Posts implements PostBoard {
 	// Черга правок поста: запізніла проміжна правка не має затирати підсумок, тож підсумок чекає на неї (див. settled).
 	private queue: Promise<unknown> = Promise.resolve();
 
@@ -24,6 +24,17 @@ export class Posts {
 	async mark(w: WatchTarget, on: boolean): Promise<void> {
 		if (!w.postId || !this.env.BOT_TOKEN) return;
 		await tg({ BOT_TOKEN: this.env.BOT_TOKEN }, "setMessageReaction", { chat_id: w.chatId, message_id: w.postId, reaction: on ? [{ type: "emoji", emoji: "👨‍💻" }] : [] }).catch((err) => console.error("reaction failed:", err));
+	}
+
+	// Іконка теми показує стан сесії (працює, питання, готово, збій); поза темою нічого не робить.
+	async icon(w: WatchTarget, state: TopicState): Promise<void> {
+		if (w.threadId && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, state);
+	}
+
+	// Нова назва теми; false — теми немає чи перейменування не вдалось.
+	async rename(w: WatchTarget, title: string): Promise<boolean> {
+		if (!w.threadId || !this.env.BOT_TOKEN) return false;
+		return renameTopic({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, title);
 	}
 
 	// Шапка (завдання) і стан. З підсумком шапка скорочується, щоб усе влізло в 4096 символів.
