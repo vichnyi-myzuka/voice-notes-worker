@@ -1,6 +1,9 @@
 // Короткі описи роботи системи (з docs/notes.md, docs/agent*.md). Змінилась поведінка: онови тут і в docs/.
-export const how = [
+export type Page = "overview" | "notes" | "agent" | "sites" | "decisions";
+
+export const how: { page: Page; title: string; subtitle: string; points: string[] }[] = [
   {
+    page: "notes",
     title: "Бот нотаток (apps/notes)",
     subtitle: "Голос, текст і фото стають нотатками в Telegram і задачами в Todoist",
     points: [
@@ -10,6 +13,7 @@ export const how = [
     ],
   },
   {
+    page: "agent",
     title: "Агент (apps/agent)",
     subtitle: "Кодувальні сесії OpenCode в одному контейнері Cloudflare",
     points: [
@@ -19,10 +23,12 @@ export const how = [
       "PoC (interface/managed-bots): /newbot дає посилання на створення керованого бота (Telegram Managed Bots), вебхук /managed/<id> відповідає луною. Це експеримент «бот на проєкт» замість тем.",
       "Агент може передати роботу в нову сесію командою handoff (текст задачі в heredoc): воркер бачить виклик у потоці подій, створює в чаті нову тему з постом і запускає там окрему сесію.",
       "Ядро агента (черга завдань, стеження, пости, питання, MCP, ліміти) живе в application і торкається світу лише через порти domain/agent: клієнт OpenCode, чат, сховище, контейнер, GitHub. Durable Object, Telegram і OpenCode — адаптери в infrastructure/container, а тести йдуть на фейкових портах.",
-      "Агент пушить лише у свою гілку й відкриває PR. Вебхуки GitHub повертають мерж, CI і рев'ю назад у чат.",
+      "Агент пушить лише у свою гілку й відкриває PR. Вебхуки GitHub повертають мерж, CI і рев'ю назад у чат; бейбісітинг не дає зупинитись до зеленого PR без конфліктів (до 3 спроб на гілку).",
+      "Порядок роботи в AGENTS.md агента: дослідити, погодити план, тоді реалізувати. Допомагають скіли grilling, tdd, diagnosing-bugs, codebase-design і code-review, які воркер розкладає в контейнер.",
     ],
   },
   {
+    page: "sites",
     title: "Сайти й документація (apps/sites, apps/docs)",
     subtitle: "Статичні сторінки під Cloudflare Access",
     points: [
@@ -31,6 +37,7 @@ export const how = [
     ],
   },
   {
+    page: "overview",
     title: "Принципи коду",
     subtitle: "Правила з AGENTS.md",
     points: [

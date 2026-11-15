@@ -144,3 +144,159 @@ export function Cicd() {
     </DiagramCard>
   );
 }
+
+export function SessionLifecycle() {
+  return (
+    <DiagramCard title="Агент: життєвий цикл сесії" description="Від прийнятого завдання до видалення; диск переживає сон знімками" viewBox="0 0 960 340" className="lg:col-span-2">
+      <Box x={20} y={30} w={190} h={80} title="Завдання" lines={["Telegram, Shortcut, API", "id сесії = ключ"]} color={4} />
+      <Box x={265} y={30} w={190} h={80} title="Черга" lines={["запис job:<id>", "alarm будить Jobs"]} color={0} />
+      <Box x={510} y={30} w={190} h={80} title="Підготовка теки" lines={["session-prep: clone", "worktree agent/назва"]} color={1} />
+      <Box x={755} y={30} w={185} h={80} title="Робота" lines={["сесія OpenCode", "Watcher стежить"]} color={1} />
+      <Box x={755} y={200} w={185} h={80} title="Підсумок" lines={["пост ✅ Готово", "кнопки: мерж, видалити"]} color={4} />
+      <Box x={510} y={200} w={190} h={80} title="Сон і знімок" lines={["20 хв без роботи", "диск знімається"]} color={2} />
+      <Box x={265} y={200} w={190} h={80} title="Відновлення" lines={["контейнер зі знімка", "сесії й worktree на місці"]} color={2} />
+      <Box x={20} y={200} w={190} h={80} title="Видалення" lines={["сесія, worktree, пост", "гілка, якщо не втрачено"]} color={3} dashed />
+      <Arrow points={[[210, 70], [265, 70]]} />
+      <Arrow points={[[455, 70], [510, 70]]} />
+      <Arrow points={[[700, 70], [755, 70]]} />
+      <Arrow points={[[847, 110], [847, 200]]} />
+      <Arrow points={[[755, 240], [700, 240]]} label="простій" labelAt={[728, 232]} dashed />
+      <Arrow points={[[510, 240], [455, 240]]} label="завдання" labelAt={[483, 232]} dashed />
+      <Arrow points={[[360, 200], [360, 110]]} label="у чергу" labelAt={[392, 160]} />
+      <Arrow points={[[847, 280], [847, 315], [115, 315], [115, 280]]} label="/delete, мерж і деплой" labelAt={[480, 307]} dashed />
+    </DiagramCard>
+  );
+}
+
+export function JobsWatcher() {
+  return (
+    <DiagramCard title="Агент: черга завдань і Watcher" description="Вебхук лише приймає завдання, виконує alarm; стежать потік подій і опитування" viewBox="0 0 960 420" className="lg:col-span-2">
+      <Box x={20} y={30} w={190} h={80} title="Вхідний обробник" lines={["interface/telegram, http", "лише кладе завдання"]} color={0} />
+      <Box x={265} y={30} w={190} h={80} title="application/jobs" lines={["Jobs: job:<id>", "до 6 спроб, пауза 15 с"]} color={0} />
+      <Box x={510} y={30} w={190} h={80} title="alarm AgentSession" lines={["запуск у фоні", "start, followUp, watch"]} color={1} />
+      <Box x={755} y={30} w={185} h={80} title="OpenCode" lines={["працює над завданням", "події інструментів"]} color={1} />
+      <Box x={755} y={200} w={185} h={80} title="Потік подій (SSE)" lines={["підсумок у чат одразу", "set-repo, handoff, MCP"]} color={1} />
+      <Box x={510} y={200} w={190} h={80} title="application/watch" lines={["tick кожні 15 с: страховка", "контейнер, сесія зникла"]} color={0} />
+      <Box x={265} y={200} w={190} h={80} title="Ліміти витрат" lines={["AGENT_MAX_COST_USD", "AGENT_MAX_TOKENS → abort"]} color={3} />
+      <Box x={510} y={330} w={190} h={70} title="Пост і чат" lines={["✅ Готово, ⛔, ⏹, ❗"]} color={4} />
+      <Box x={265} y={330} w={190} h={70} title="Limits" lines={["ліміти Claude: 5 хв"]} color={2} dashed />
+      <Arrow points={[[210, 70], [265, 70]]} />
+      <Arrow points={[[455, 70], [510, 70]]} />
+      <Arrow points={[[700, 70], [755, 70]]} />
+      <Arrow points={[[847, 110], [847, 200]]} label="події" labelAt={[875, 160]} />
+      <Arrow points={[[755, 240], [700, 240]]} />
+      <Arrow points={[[510, 240], [455, 240]]} label="перевищено" labelAt={[483, 232]} />
+      <Arrow points={[[605, 280], [605, 330]]} label="підсумок" labelAt={[640, 310]} />
+      <Arrow points={[[510, 365], [455, 365]]} label="помилка лімітів" labelAt={[483, 357]} dashed />
+    </DiagramCard>
+  );
+}
+
+export function McpFlow() {
+  return (
+    <DiagramCard title="MCP: як сервіс потрапляє в сесію" description="Роутер вирішує на старті, а команда request-mcp просить додати сервіс посеред роботи" viewBox="0 0 960 340" className="lg:col-span-2">
+      <Box x={20} y={30} w={190} h={80} title="Завдання" lines={["вільна фраза власника"]} color={4} />
+      <Box x={265} y={30} w={190} h={80} title="application/task" lines={["route: прапорці сервісів", "і список «можливо»"]} color={0} />
+      <Box x={510} y={30} w={190} h={80} title="McpAccess" lines={["токен, конфіг теки", "оновлення в OpenCode"]} color={1} />
+      <Box x={755} y={30} w={185} h={80} title="Сесія OpenCode" lines={["інструменти MCP", "Sure, Сільпо, Calendar…"]} color={1} />
+      <Box x={755} y={200} w={185} h={80} title="request-mcp" lines={["команда агента в bash", "посеред роботи"]} color={1} />
+      <Box x={510} y={200} w={190} h={80} title="Watcher" lines={["бачить виклик у потоці", "requestedMcp"]} color={0} />
+      <Box x={265} y={200} w={190} h={80} title="application/mcp" lines={["Mcp.request без дублів", "Notices.askMcp"]} color={0} />
+      <Box x={20} y={200} w={190} h={80} title="Власник у Telegram" lines={["кнопки: підключити", "чи ні"]} color={4} />
+      <Arrow points={[[210, 70], [265, 70]]} />
+      <Arrow points={[[455, 70], [510, 70]]} label="сервіси" labelAt={[483, 62]} />
+      <Arrow points={[[700, 70], [755, 70]]} />
+      <Arrow points={[[360, 110], [360, 200]]} label="сумнів" labelAt={[388, 160]} dashed />
+      <Arrow points={[[755, 240], [700, 240]]} />
+      <Arrow points={[[510, 240], [455, 240]]} />
+      <Arrow points={[[265, 240], [210, 240]]} label="питання" labelAt={[238, 232]} />
+      <Arrow points={[[115, 280], [115, 315], [605, 315], [605, 110]]} label="так: підключення і повідомлення агентові" labelAt={[360, 307]} dashed />
+    </DiagramCard>
+  );
+}
+
+export function HandoffFlow() {
+  return (
+    <DiagramCard title="Агент: handoff між сесіями" description="Агент передає окрему роботу в нову сесію; результат назад не повертається" viewBox="0 0 960 330">
+      <Box x={20} y={30} w={190} h={80} title="Агент" lines={["handoff --repo --name", "завдання в heredoc"]} color={1} />
+      <Box x={265} y={30} w={190} h={80} title="payload/handoff.sh" lines={["перевіряє, що текст", "на stdin не порожній"]} color={2} />
+      <Box x={510} y={30} w={190} h={80} title="application/watch" lines={["бачить bash у потоці", "id: <батьківська>-h<хеш>"]} color={0} />
+      <Box x={755} y={30} w={185} h={80} title="HandoffSpawner" lines={["тема й пост у чаті", "↪️ Передано з іншої"]} color={1} />
+      <Box x={755} y={200} w={185} h={80} title="Нова сесія" lines={["Jobs.begin → черга", "свій worktree й гілка"]} color={1} />
+      <Box x={510} y={200} w={190} h={80} title="Нова тема" lines={["задача в цитаті", "назва з тексту задачі"]} color={4} />
+      <Box x={20} y={200} w={190} h={80} title="Батьківська сесія" lines={["триває далі", "контекст лише в тексті"]} color={2} dashed />
+      <Arrow points={[[210, 70], [265, 70]]} />
+      <Arrow points={[[455, 70], [510, 70]]} />
+      <Arrow points={[[700, 70], [755, 70]]} />
+      <Arrow points={[[847, 110], [847, 200]]} />
+      <Arrow points={[[755, 240], [700, 240]]} label="пост" labelAt={[728, 232]} />
+      <Arrow points={[[115, 110], [115, 200]]} dashed />
+    </DiagramCard>
+  );
+}
+
+export function PostsForms() {
+  return (
+    <DiagramCard title="Агент: пости й питання в чаті" description="Один пост на сесію оновлюється на місці; питання агента йдуть кнопками" viewBox="0 0 960 340" className="lg:col-span-2">
+      <Box x={20} y={30} w={190} h={80} title="Події OpenCode" lines={["tool.input.started,", "tool.called"]} color={1} />
+      <Box x={265} y={30} w={190} h={80} title="Progress" lines={["підпис дії від gpt-6-luna", "збій: технічний підпис"]} color={0} />
+      <Box x={510} y={30} w={190} h={80} title="Posts" lines={["шапка, кнопки, деплой", "оновлення раз на 4 с"]} color={0} />
+      <Box x={755} y={30} w={185} h={80} title="infrastructure/chat" lines={["HTML Telegram, таблиці", "клавіатури, callback"]} color={2} />
+      <Box x={755} y={200} w={185} h={80} title="Власник" lines={["кнопка або текст"]} color={4} />
+      <Box x={510} y={200} w={190} h={80} title="interface/telegram" lines={["callback_data", "текст → Forms.cancel"]} color={0} />
+      <Box x={265} y={200} w={190} h={80} title="Forms" lines={["форма у сховищі DO", "відповідь → агентові"]} color={0} />
+      <Box x={20} y={200} w={190} h={80} title="Інструмент question" lines={["питання агента", "з варіантами"]} color={1} />
+      <Arrow points={[[210, 70], [265, 70]]} />
+      <Arrow points={[[455, 70], [510, 70]]} />
+      <Arrow points={[[700, 70], [755, 70]]} />
+      <Arrow points={[[847, 110], [847, 200]]} label="пост" labelAt={[875, 160]} />
+      <Arrow points={[[755, 240], [700, 240]]} />
+      <Arrow points={[[510, 240], [455, 240]]} label="відповідь" labelAt={[483, 232]} />
+      <Arrow points={[[210, 240], [265, 240]]} />
+      <Arrow points={[[360, 200], [360, 155], [605, 155], [605, 110]]} label="показати питання" labelAt={[482, 147]} dashed />
+    </DiagramCard>
+  );
+}
+
+export function PortsAdapters() {
+  return (
+    <DiagramCard title="Агент: порти й адаптери" description="Application бачить лише порти domain/agent; адаптери в infrastructure, а тести підміняють їх фейками" viewBox="0 0 960 440" className="lg:col-span-2">
+      <Box x={20} y={30} w={230} h={80} title="application/jobs" lines={["Jobs, Limits", "політика повторів"]} color={0} />
+      <Box x={20} y={130} w={230} h={80} title="application/watch" lines={["Watcher", "розбір set-repo, handoff"]} color={0} />
+      <Box x={20} y={230} w={230} h={80} title="application/progress" lines={["Progress, Forms, Posts", "чисті activity, title"]} color={0} />
+      <Box x={20} y={330} w={230} h={80} title="application/mcp" lines={["Mcp", "розбір request-mcp"]} color={0} />
+      <Box x={365} y={30} w={230} h={80} title="SessionStore, Scheduler" lines={["Notices, LimitProbe"]} color={1} />
+      <Box x={365} y={130} w={230} h={80} title="OpencodeClient" lines={["Container, PullRequests"]} color={1} />
+      <Box x={365} y={230} w={230} h={80} title="PostBoard, PostChat" lines={["PostStore"]} color={1} />
+      <Box x={365} y={330} w={230} h={80} title="McpAccess" lines={["HandoffSpawner", "Notices.askMcp"]} color={1} />
+      <Box x={710} y={30} w={230} h={80} title="state, adapters.ts" lines={["сховище DO, alarm", "ліміти Claude, чат"]} color={2} />
+      <Box x={710} y={130} w={230} h={80} title="opencode, computer" lines={["HTTP-клієнт OpenCode", "контейнер, GitHub"]} color={2} />
+      <Box x={710} y={230} w={230} h={80} title="progress, chat" lines={["пости Telegram", "PostRecords на сховищі"]} color={2} />
+      <Box x={710} y={330} w={230} h={80} title="mcp, jobs" lines={["McpServers: токени", "Handoffs: тема й пост"]} color={2} />
+      {[70, 170, 270, 370].map((y) => (
+        <g key={y}>
+          <Arrow points={[[250, y], [365, y]]} label="викликає" labelAt={[307, y - 8]} />
+          <Arrow points={[[710, y], [595, y]]} label="реалізує" labelAt={[652, y - 8]} dashed />
+        </g>
+      ))}
+    </DiagramCard>
+  );
+}
+
+export function GithubFlow() {
+  return (
+    <DiagramCard title="Агент: GitHub і чат" description="Вебхуки GitHub повертають збій CI, схвалення, деплой і мерж у сесію" viewBox="0 0 960 380" className="lg:col-span-2">
+      <Box x={20} y={150} w={190} h={80} title="GitHub" lines={["workflow_job, _run", "POST /github"]} color={3} />
+      <Box x={265} y={150} w={190} h={80} title="interface/github" lines={["підпис X-Hub-Signature", "знаходить сесію за PR"]} color={0} />
+      <Box x={560} y={30} w={380} h={80} title="Збій CI" lines={["❌ у тему сесії, агентові завдання «виправ»", "бейбісітинг: до 3 спроб на гілку, далі 🛑"]} color={3} />
+      <Box x={560} y={150} w={380} h={80} title="Схвалення деплою" lines={["🚀 пост із кнопками ✅ ❌", "pending_deployments через GITHUB_APPROVE_TOKEN"]} color={4} />
+      <Box x={560} y={270} w={380} h={80} title="Деплой успішний" lines={["✅ у пості, іконка теми 🎉", "прибирання сесії, worktree й гілки"]} color={2} />
+      <Box x={20} y={290} w={235} h={70} title="🔀 Змерджити" lines={["PUT /pulls/N/merge", "відмова: причини в чаті"]} color={4} />
+      <Arrow points={[[210, 190], [265, 190]]} />
+      <Arrow points={[[455, 190], [500, 190], [500, 70], [560, 70]]} />
+      <Arrow points={[[455, 190], [560, 190]]} />
+      <Arrow points={[[455, 190], [500, 190], [500, 310], [560, 310]]} />
+      <Arrow points={[[115, 290], [115, 230]]} label="мерж" labelAt={[145, 262]} />
+    </DiagramCard>
+  );
+}
