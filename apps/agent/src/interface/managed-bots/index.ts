@@ -38,8 +38,14 @@ export async function handleManagedBotCreated(bot: BotEnv, env: Env, managed: Tg
 	if (!env.TG_OWNER_ID || String(managed.user.id) !== env.TG_OWNER_ID) return console.log(`managed bot ${managed.bot.id}: ignored, not the owner`);
 	const child = { BOT_TOKEN: await managedToken(bot, managed.bot.id) };
 	await tg(child, "setWebhook", { url: `${origin}${MANAGED_PATH}${managed.bot.id}`, secret_token: await webhookSecret(env, managed.bot.id), allowed_updates: ["message"] });
-	await tg(bot, "sendMessage", { chat_id: managed.user.id, text: `✅ Бот ${managed.bot.username ? `@${managed.bot.username}` : managed.bot.id} створено. Напиши йому щось.` });
+	await tg(bot, "sendMessage", { chat_id: managed.user.id, text: `✅ Бот ${managed.bot.username ? `@${managed.bot.username}` : managed.bot.id} створено; ${await topicsNote(child)}. Напиши йому щось.` });
 	console.log(`managed bot ${managed.bot.id}: webhook set`);
+}
+
+// Чи ввімкнені теми в приваті цього бота (Threaded Mode у BotFather Mini App): головне питання PoC, бо менеджер, схоже, не може увімкнути їх сам.
+async function topicsNote(child: BotEnv): Promise<string> {
+	const me = await tg(child, "getMe", {});
+	return me.has_topics_enabled ? "теми в приваті: ✅ увімкнено" : "теми в приваті: ❌ вимкнено (BotFather Mini App → Bot Settings → Threads Settings → Threaded Mode)";
 }
 
 // Вебхук керованого бота (/managed/<id>): секретний заголовок, далі лише власник. PoC відповідає луною.
@@ -53,7 +59,7 @@ export async function handleManagedWebhook(req: Request, env: Env, defer: (work:
 	if (msg?.text && msg.chat.type === "private" && String(msg.from?.id) === env.TG_OWNER_ID) {
 		defer(
 			managedToken({ BOT_TOKEN: env.BOT_TOKEN }, botId)
-				.then((token) => tg({ BOT_TOKEN: token }, "sendMessage", { chat_id: msg.chat.id, text: `🤖 Луна з бота-сесії: «${msg.text}»` }))
+				.then(async (token) => tg({ BOT_TOKEN: token }, "sendMessage", { chat_id: msg.chat.id, text: `🤖 Луна з бота-сесії: «${msg.text}»\n${await topicsNote({ BOT_TOKEN: token })}` }))
 				.catch((err) => console.error("managed bot reply failed:", err)),
 		);
 	}

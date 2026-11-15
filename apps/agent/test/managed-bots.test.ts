@@ -18,7 +18,7 @@ function setup() {
 		vi.fn(async (input: string, init?: RequestInit) => {
 			const [, token, method] = /\/bot([^/]+)\/(\w+)/.exec(input)!;
 			calls.push({ token, method, body: JSON.parse(init!.body as string) });
-			const result = method === "getMe" ? { id: 1, username: "mgr_bot" } : method === "getManagedBotToken" ? "child-token" : method === "sendMessage" ? { message_id: 1 } : true;
+			const result = method === "getMe" ? { id: 1, username: "mgr_bot", has_topics_enabled: token === "child-token" } : method === "getManagedBotToken" ? "child-token" : method === "sendMessage" ? { message_id: 1 } : true;
 			return Response.json({ ok: true, result });
 		}),
 	);
@@ -38,7 +38,8 @@ describe("керовані боти (PoC)", () => {
 	it("managed_bot від власника: токен у менеджера, вебхук дитини, повідомлення власнику", async () => {
 		const calls = setup();
 		await handleManagedBotCreated({ BOT_TOKEN: "manager" }, env, { user: { id: 42 }, bot: { id: CHILD, username: "x_bot" } }, "https://agent.example");
-		expect(calls.map((c) => `${c.token}:${c.method}`)).toEqual(["manager:getManagedBotToken", "child-token:setWebhook", "manager:sendMessage"]);
+		expect(calls.map((c) => `${c.token}:${c.method}`)).toEqual(["manager:getManagedBotToken", "child-token:setWebhook", "child-token:getMe", "manager:sendMessage"]);
+		expect(String(calls[3].body.text)).toContain("теми в приваті: ✅");
 		expect(calls[1].body).toMatchObject({ url: `https://agent.example${MANAGED_PATH}${CHILD}`, allowed_updates: ["message"] });
 	});
 
@@ -71,6 +72,7 @@ describe("керовані боти (PoC)", () => {
 		await post(42);
 		await Promise.all(pending);
 		expect(calls.filter((c) => c.method === "sendMessage")).toHaveLength(1);
+		expect(String(calls.find((c) => c.method === "sendMessage")!.body.text)).toContain("теми в приваті");
 		expect(calls.find((c) => c.method === "sendMessage")).toMatchObject({ token: "child-token", body: { chat_id: 42, text: expect.stringContaining("привіт") } });
 	});
 });

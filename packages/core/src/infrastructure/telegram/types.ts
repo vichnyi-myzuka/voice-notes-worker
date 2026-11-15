@@ -75,7 +75,7 @@ export type TgMethods = {
 		result: boolean;
 	};
 	getFile: { params: { file_id: string }; result: { file_path: string } };
-	getMe: { params: Record<string, never>; result: { id: number; username?: string } };
+	getMe: { params: Record<string, never>; result: { id: number; username?: string; has_topics_enabled?: boolean; allows_users_to_create_topics?: boolean } };
 	// Керовані боти (Bot API 9.6): токен бота, створеного власником через менеджера
 	getManagedBotToken: { params: { user_id: number }; result: string };
 	setWebhook: { params: { url: string; secret_token: string; allowed_updates: string[] }; result: boolean };
