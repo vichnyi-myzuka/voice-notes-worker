@@ -1,4 +1,4 @@
-import type { ConnectionsInfo, PortInfo } from "../../../domain/agent";
+import type { ConnectionsInfo, PortInfo } from "../../domain/agent";
 
 export const SSH_PORT = 22;
 

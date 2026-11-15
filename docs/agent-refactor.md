@@ -41,3 +41,5 @@
 ## Етап 4
 
 - [x] `infrastructure/container` більше не плоский: модулі розкладено по теках `state`, `opencode`, `logins`, `computer`, `mcp`, `progress`, `jobs` (кожна з `index.ts`; опис у `docs/agent.md`). Поведінка й ключі сховища не змінилися.
+- [x] Ядро винесено з `infrastructure/container` в `application` через порти (`domain/agent/ports.ts`: `SessionStore`, `Scheduler`, `Notices`, `LimitProbe`; типи записів — `domain/agent/records.ts`): `Jobs`, `Limits`, чисті `activity`, `narrate`, `title`, розбір `set-repo` і з'єднань, `extractImages`. Адаптери — `container/adapters.ts`; тести на фейкових портах (`test/jobs.test.ts`).
+- [ ] Лишилось перенести так само `Watcher`, `Progress`, `Forms`, `Posts` (порти: клієнт OpenCode, чат, контейнер) і потік запиту MCP з `Mcp`; ці модулі ще напряму беруть `DurableObjectStorage`, клієнт OpenCode і функції чату.

@@ -1,11 +1,6 @@
-import type { ImageRef, StartInput, WatchTarget } from "../../../domain/agent";
-import type { ChatEnv, ContainerEnv } from "../../../env";
-import { stamp } from "../../../timing";
-import { sendChat } from "../../chat";
-import { JOB_ATTEMPTS, JOB_STALE_MS, WORKING } from "../config";
-import type { Posts } from "../progress";
-import type { Job } from "../state";
-import type { SessionStore } from "../state";
+import type { ImageRef, Job, Notices, Scheduler, SessionStore, StartInput, WatchTarget } from "../../domain/agent";
+import { stamp } from "../../timing";
+import { JOB_ATTEMPTS, JOB_STALE_MS, WORKING } from "./policy";
 
 // Що завдання робить, коли до нього дійшла черга: старт сесії, уточнення й стеження (реалізує AgentSession).
 export type JobRunner = {
@@ -22,10 +17,9 @@ export class Jobs {
 	private readonly active = new Set<string>();
 
 	constructor(
-		private readonly ctx: DurableObjectState,
-		private readonly env: ChatEnv & ContainerEnv,
+		private readonly scheduler: Scheduler,
 		private readonly store: SessionStore,
-		private readonly posts: Posts,
+		private readonly notices: Notices,
 		private readonly runner: JobRunner,
 	) {}
 
@@ -48,14 +42,14 @@ export class Jobs {
 		if (queued && "text" in queued && !queued.startedAt) {
 			const merged = [...(queued.images ?? []), ...(images ?? [])];
 			await this.store.saveJob({ ...queued, text: `${queued.text}\n\n${text}`, ...(target && { target }), ...(merged.length && { images: merged }) } satisfies Job);
-			await this.ctx.storage.setAlarm(Date.now());
+			await this.scheduler.now();
 			return;
 		}
 		// Старт ще не почався: уточнення дописується до задачі старту (інакше нове завдання з тим самим ключем стерло б сам старт).
 		if (queued && "input" in queued && !queued.startedAt) {
 			const merged = [...(queued.input.images ?? []), ...(images ?? [])];
 			await this.store.saveJob({ ...queued, input: { ...queued.input, prompt: `${queued.input.prompt}\n\n${text}`, ...(merged.length && { images: merged }) } } satisfies Job);
-			await this.ctx.storage.setAlarm(Date.now());
+			await this.scheduler.now();
 			return;
 		}
 		await this.enqueue({ id, text, ...(target && { target }), attempts: 0, ...(images?.length && { images }) });
@@ -64,7 +58,7 @@ export class Jobs {
 	// Нове завдання без злиття з тим, що вже в черзі (напр. повідомлення агентові від воркера).
 	async enqueue(job: Job): Promise<void> {
 		await this.store.saveJob({ ...job, queuedAt: Date.now() });
-		await this.ctx.storage.setAlarm(Date.now());
+		await this.scheduler.now();
 	}
 
 	// Запускає прийняті завдання у фоні й одразу повертається: alarm не чекає довгого старту (clone, контейнер), тож нове
@@ -77,7 +71,7 @@ export class Jobs {
 			const started: Job = { ...job, startedAt: Date.now() };
 			await this.store.saveJob(started);
 			this.active.add(job.id);
-			this.ctx.waitUntil(this.runOne(started).catch((err) => console.error(`job ${job.id} crashed:`, err)).finally(() => this.active.delete(job.id)));
+			this.scheduler.background(this.runOne(started).catch((err) => console.error(`job ${job.id} crashed:`, err)).finally(() => this.active.delete(job.id)));
 		}
 		return (await this.store.jobs()).length > 0;
 	}
@@ -87,7 +81,7 @@ export class Jobs {
 		if (job.queuedAt && job.attempts === 0) console.log(`latency job ${job.id}: queued=${Date.now() - job.queuedAt}ms accepted=${stamp(job.queuedAt)} at=${stamp()} kind=${"input" in job ? "new" : "follow-up"} cold=${!this.runner.running()}`);
 		try {
 			if ("input" in job) {
-				if (!this.runner.running() && job.target) await this.posts.show(job.id, job.target, "⏳ Запускаю контейнер").catch(() => {});
+				if (!this.runner.running() && job.target) await this.notices.show(job.id, job.target, "⏳ Запускаю контейнер").catch(() => {});
 				await this.runner.start(job.id, job.input);
 			} else {
 				await this.runner.followUp(job.id, job.text, job.images);
@@ -107,7 +101,7 @@ export class Jobs {
 		if (await this.isCurrent(job)) await this.store.dropJob(job.id); // запущено: далі повтор уточнення чи старту не потрібен
 		if (!job.target) return; // запит з веб-API: чату, куди писати підсумок, немає
 		await this.runner.watch(job.id, job.target).catch((err) => console.error("watch failed:", err));
-		if ("input" in job) await this.posts.show(job.id, job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
+		if ("input" in job) await this.notices.show(job.id, job.target, WORKING).catch(() => {}); // пост із «Запускаю» → «Працює»
 	}
 
 	// Чи запис черги досі той самий, що виконувався (уточнення, яке прийшло під час виконання, замінює запис новим queuedAt).
@@ -119,8 +113,8 @@ export class Jobs {
 	private async reportFailure(job: Job): Promise<void> {
 		const text = "⚠️ Не вдалося запустити агента. Надішли завдання ще раз.";
 		if (!job.target) return console.error(`job ${job.id} dropped after ${JOB_ATTEMPTS} attempts (no chat to report to)`);
-		if (!this.env.BOT_TOKEN) return;
-		if (job.target.postId && (await this.posts.show(job.id, job.target, text, true))) return;
-		await sendChat({ BOT_TOKEN: this.env.BOT_TOKEN }, job.target.chatId, text, { id: job.id, url: job.target.url }, "done", undefined, undefined, job.target.threadId).catch((err) => console.error("notify failed:", err));
+		if (!this.notices.enabled) return;
+		if (job.target.postId && (await this.notices.show(job.id, job.target, text, true))) return;
+		await this.notices.send(job.id, job.target, text, "done").catch((err) => console.error("notify failed:", err));
 	}
 }

@@ -1,9 +1,9 @@
 import type { ComputerInfo, ConnectionsInfo, SnapshotInfo } from "../../../domain/agent";
 import type { ContainerEnv, GithubEnv, McpEnv, PublishEnv } from "../../../env";
 import { stopwatch } from "../../../timing";
-import { parseConnections } from "./connections";
+import { parseConnections } from "../../../application/computer";
 import { FORM_HOLD_MS, READY_ATTEMPTS, SNAPSHOT_CHECK_MS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "../config";
-import { IMAGE_MAX_BYTES } from "../progress";
+import { IMAGE_MAX_BYTES } from "../../../application/progress";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "../opencode";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
 import { computerKey, type SavedSnapshot } from "../state";

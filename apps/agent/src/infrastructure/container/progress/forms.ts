@@ -1,5 +1,5 @@
+import { WORKING } from "../../../application/jobs";
 import type { Posts } from "./posts";
-import { WORKING } from "../config";
 import { formKey, watchKey, type PendingForm, type Watch } from "../state";
 import { cancelForm, replyForm, type Opencode } from "../opencode";
 

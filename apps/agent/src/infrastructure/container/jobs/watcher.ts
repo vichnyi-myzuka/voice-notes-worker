@@ -1,3 +1,4 @@
+import { WORKING } from "../../../application/jobs";
 import type { DeployInfo, WatchTarget } from "../../../domain/agent";
 import type { ChatEnv, ContainerEnv, GithubEnv } from "../../../env";
 import { stamp } from "../../../timing";
@@ -5,15 +6,16 @@ import { sendChat } from "../../chat";
 import { openPullNumber } from "../../github";
 import { isLimitError } from "../../quota";
 import type { Computer } from "../computer";
-import { SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, WORKING, maxCostUsd, maxTokens } from "../config";
+import { SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, maxCostUsd, maxTokens } from "../config";
 import type { Forms } from "../progress";
-import { extractImages, sendImages, type OutImage } from "../progress";
-import type { Limits } from "./limits";
+import { extractImages, type OutImage } from "../../../application/progress";
+import { sendImages } from "../progress";
+import type { Limits } from "../../../application/jobs";
 import { requestedMcp, type Mcp } from "../mcp";
 import { activeSessions, getSession, interrupt, lastAssistant, readEvents, totalTokens, type Opencode, type OpencodeEvent } from "../opencode";
 import { DEPLOY_ICON, type Posts } from "../progress";
 import type { Progress } from "../progress";
-import { settedRepo } from "./repo";
+import { settedRepo } from "../../../application/watch";
 import { deployKey, type Tracked, type Watch } from "../state";
 import type { SessionStore } from "../state";
 
