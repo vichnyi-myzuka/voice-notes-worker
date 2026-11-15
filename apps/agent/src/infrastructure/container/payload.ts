@@ -7,6 +7,9 @@ import publish from "../../../payload/publish.sh";
 import requestMcp from "../../../payload/request-mcp.sh";
 import setRepo from "../../../payload/set-repo.sh";
 import reportSiteSkill from "../../../payload/report-site-skill.md";
+import grillMeSkill from "../../../payload/skills/grill-me.md";
+import tddSkill from "../../../payload/skills/tdd.md";
+import diagnoseSkill from "../../../payload/skills/diagnose.md";
 import sessionPrep from "../../../payload/session-prep.sh";
 import silpoAgent from "../../../payload/silpo-agent.md";
 import cloudflareAgent from "../../../payload/cloudflare-agent.md";
@@ -38,6 +41,8 @@ export const GLOBAL_CONFIG = JSON.stringify(
 	2,
 );
 
+const WORKFLOW_SKILLS: [string, string][] = [["grill-me", grillMeSkill], ["tdd", tddSkill], ["diagnose", diagnoseSkill]];
+
 export const PAYLOAD: PayloadFile[] = [
 	// Глобальний конфіг OpenCode (ліміт контексту й автостиснення для всіх сесій); конфіг теки сесії (MCP) накладається зверху.
 	{ path: "/root/.config/opencode/opencode.json", mode: "644", content: GLOBAL_CONFIG },
@@ -55,6 +60,11 @@ export const PAYLOAD: PayloadFile[] = [
 	// Скіл для сайтів-звітів: агент підхоплює його сам за description. OpenCode читає ~/.config/opencode/skills, claude — ~/.claude/skills.
 	{ path: "/root/.config/opencode/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
 	{ path: "/root/.claude/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
+	// Скіли робочого процесу (grill-me, tdd, diagnose): згадані в розділі Approach в AGENTS.md, решта підхоплюється за description.
+	...WORKFLOW_SKILLS.flatMap(([name, content]) => [
+		{ path: `/root/.config/opencode/skills/${name}/SKILL.md`, mode: "644", content },
+		{ path: `/root/.claude/skills/${name}/SKILL.md`, mode: "644", content },
+	]),
 	{ path: "/usr/local/bin/session-prep", mode: "755", content: sessionPrep },
 	// Запобіжник: пуш у main/master відхиляється (core.hooksPath задано в образі)
 	{ path: "/usr/local/lib/git-hooks/pre-push", mode: "755", content: prePush },
