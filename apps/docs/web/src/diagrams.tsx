@@ -93,6 +93,7 @@ export function AgentModules() {
       <Box x={20} y={20} w={200} h={70} title="interface/telegram" lines={["команди, кнопки, Whisper"]} color={0} />
       <Box x={280} y={20} w={200} h={70} title="interface/github" lines={["вебхуки, рев'ю, мерж"]} color={0} />
       <Box x={540} y={20} w={200} h={70} title="interface/http" lines={["REST API, проксі OpenCode"]} color={0} />
+      <Box x={780} y={20} w={160} h={70} title="interface/managed-bots" lines={["PoC: боти-сесії"]} color={0} />
       <Box x={140} y={100} w={220} h={50} title="application/task" lines={["репозиторій, модель, MCP"]} color={1} />
       <Box x={20} y={160} w={460} h={80} title="infrastructure/chat" lines={["пости, клавіатури, callback_data,", "дії над повідомленнями"]} color={2} />
       <Box x={540} y={160} w={400} h={80} title="domain/agent (порт Agent)" lines={["Sessions & Computer & Deploys", "кожен модуль бере лише потрібне"]} color={1} />

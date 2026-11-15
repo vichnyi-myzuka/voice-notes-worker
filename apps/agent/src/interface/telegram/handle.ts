@@ -14,7 +14,9 @@ export const TELEGRAM_PATH = "/telegram";
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
 // repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. application/task); без них репозиторій задає лише префікс.
 // syncCommands: виставляти меню `/`-команд (див. syncCommands); у тестах вимкнено.
-export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean };
+export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean;
+	// PoC керованих ботів (interface/managed-bots, ін'єкція, щоб модулі не залежали один від одного): /newbot і апдейт managed_bot
+	managed?: { newBot: (bot: BotEnv, chatId: number) => Promise<void>; created: (bot: BotEnv, managed: NonNullable<TgUpdate["managed_bot"]>, origin: string) => Promise<void>; sync: (bot: BotEnv) => Promise<void> } };
 
 // Меню `/`-команд у приваті. Єдине місце, де вони перелічені: додаєш команду в обробник — додай і сюди.
 export const COMMANDS = [
@@ -22,6 +24,7 @@ export const COMMANDS = [
 	{ command: "stop", description: "Зупинити сесію (відповіддю на пост)" },
 	{ command: "model", description: "Змінити модель сесії: /model opus (відповіддю на пост)" },
 	{ command: "delete", description: "Видалити сесію (відповіддю на пост)" },
+	{ command: "newbot", description: "PoC: створити бота-сесію (керований бот)" },
 	{ command: "quota", description: "Ліміти підписки Claude" },
 	{ command: "update", description: "Перезапустити контейнер з поточного образу" },
 ];
@@ -53,10 +56,18 @@ export async function handleTelegram(req: Request, env: ChatEnv & ContainerEnv &
 	}
 	if (!env.BOT_TOKEN) return new Response("bot is not configured", { status: 503 });
 	const bot = { BOT_TOKEN: env.BOT_TOKEN };
-	if (deps.syncCommands) deps.defer(syncCommands(bot));
+	if (deps.syncCommands) {
+		deps.defer(syncCommands(bot));
+		if (deps.managed) deps.defer(deps.managed.sync(bot));
+	}
 	const update = await req.json<TgUpdate>().catch(() => null);
 	if (update?.callback_query) {
 		deps.defer(handleButton(bot, update.callback_query, env, deps.agent).catch((err) => console.error("telegram button failed:", err)));
+		return new Response("ok");
+	}
+	if (update?.managed_bot && deps.managed) {
+		const created = deps.managed.created(bot, update.managed_bot, new URL(req.url).origin);
+		deps.defer(created.catch((err) => console.error("managed bot setup failed:", err)));
 		return new Response("ok");
 	}
 	const msg = update?.message ?? update?.channel_post;
@@ -105,7 +116,7 @@ function textWithLinks(m: TgMessage["reply_to_message"]): string {
 }
 
 // spoken — уже розшифроване голосове (запис із Shortcut): задача йде як голосова, але Whisper не викликається.
-async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)) }: TelegramDeps, claudeToken?: string, spoken?: string): Promise<void> {
+async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { agent, llm, repos = [], sleep = (ms) => new Promise((done) => setTimeout(done, ms)), managed }: TelegramDeps, claudeToken?: string, spoken?: string): Promise<void> {
 	const chat = msg.chat.id;
 	const file = msg.voice ?? msg.audio;
 	const voiced = !!file || spoken !== undefined;
@@ -128,6 +139,7 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 		console.log(`telegram ${chat}/${msg.message_id}: command=${command ?? "(empty)"} reply-to-session=${replied?.[1] ?? "-"}`);
 		if (command === "/start") await say("Надішли голосове чи текст із задачею: у відповідь прийде посилання на сесію агента. Відповідь на пост із сесією — уточнення, /status показує стан, /stop зупиняє, /model opus змінює модель сесії (початок тексту «@opus задача» задає модель одразу), /delete видаляє сесію, /quota показує ліміти Claude, /update перезапускає контейнер з поточного образу.");
 		else if (command === "/update") await updateContainer(sayTemp, agent, /\bforce\b/i.test(text ?? ""));
+		else if (command === "/newbot" && managed && !inChannel) await managed.newBot(env, chat);
 		else if (command === "/quota") await sayTemp(await quotaText(claudeToken));
 		else if (command === "/model") {
 			const model = text?.split(/\s+/)[1];
