@@ -1,5 +1,5 @@
 import type { Handoff, HandoffSpawner, SessionStore, StartInput, WatchTarget } from "../../../domain/agent";
-import { folderFor } from "../../../domain/agent";
+import { launchSettings, renderHeader, type HeaderParts } from "../../../domain/agent";
 import { handoffId } from "../../../application/watch";
 import type { ChatEnv } from "../../../env";
 import { QUOTE_CLOSE, QUOTE_OPEN, createTopic, sendChat, setTopicIcon } from "../../chat";
@@ -30,13 +30,13 @@ export class Handoffs implements HandoffSpawner {
 		const thread = post.threadId ? await createTopic(bot, post.chatId, title) : undefined;
 		// Довга задача — у згорнутій цитаті, як розшифровка голосового (тоді й пост не займає пів екрана).
 		const clipped = handoff.task.length > POST_MAX ? `${handoff.task.slice(0, POST_MAX)}…` : handoff.task;
-		const where = repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, handoff.name)}` : "";
-		const header = [[where, "↪️ Передано з іншої сесії"].filter(Boolean).join("\n"), `${QUOTE_OPEN}${clipped}${QUOTE_CLOSE}`].join("\n\n");
+		const parts: HeaderParts = { inline: "↪️ Передано з іншої сесії", tail: `${QUOTE_OPEN}${clipped}${QUOTE_CLOSE}` };
+		const header = renderHeader(parts, launchSettings(id, { ...(repo && { repo }), ...(handoff.name && { name: handoff.name }) }));
 		const url = post.url.replace(parentId, id);
 		const postId = await sendChat(bot, post.chatId, [header, "⏳ Запускаю"].join("\n\n"), { id, url }, "working", undefined, undefined, thread);
 		const input: StartInput = { prompt: `${handoff.task}\n\n(Системна примітка: цю задачу передала інша сесія. Її історії в тебе немає: весь контекст у тексті вище.)`, ...(repo && { repo }), ...(handoff.name && { name: handoff.name }) };
 		// Іконка одразу, а не після старту контейнера (інакше тема довго лишається зі стандартною).
 		if (thread) await setTopicIcon(bot, post.chatId, thread, "working");
-		await this.begin(id, input, { chatId: post.chatId, url, postId, header, ...(thread && { threadId: thread }), title });
+		await this.begin(id, input, { chatId: post.chatId, url, postId, header, parts, ...(thread && { threadId: thread }), title });
 	}
 }

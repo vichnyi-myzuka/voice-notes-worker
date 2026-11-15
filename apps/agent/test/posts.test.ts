@@ -64,6 +64,35 @@ describe("Posts", () => {
 		expect(await posts.setDeployByPost(7, { text: "x" })).toBe(false);
 	});
 
+	it("після зміни репозиторію й моделі шапка перебудовується, а пост перемальовується з тим самим станом", async () => {
+		const { posts, store, edits } = setup();
+		const parts = { tail: "«задача»" };
+		await store.saveSession("s1", { ocId: "oc", folder: "fix-1", post: { postId: 7, header: "«задача»", parts, chatId: 1, url: target.url, threadId: 3 } });
+		await posts.show("s1", { ...target, header: "«задача»" }, "⏳ Працює");
+		await store.saveSession("s1", { ...(await store.session("s1"))!, repo: "acme/app" });
+		expect(await posts.refreshHeader("s1")).toBe(true);
+		expect(edits.at(-1)?.text).toBe("📦 acme/app\n🌿 agent/fix-1\n\n«задача»\n\n⏳ Працює");
+		await store.saveSession("s1", { ...(await store.session("s1"))!, model: "opus" });
+		await posts.refreshHeader("s1");
+		expect(edits.at(-1)?.text).toBe("📦 acme/app\n🌿 agent/fix-1\n🤖 opus\n\n«задача»\n\n⏳ Працює");
+		expect(edits.at(-1)?.buttons).toBe("working");
+		expect(await posts.refreshHeader("s1")).toBe(false); // нічого не змінилось
+	});
+
+	it("спостереження зі старою шапкою показує нову шапку зі сесії", async () => {
+		const { posts, store, edits } = setup();
+		await store.saveSession("s1", { ocId: "oc", model: "opus", post: { postId: 7, header: "🤖 opus", parts: {}, chatId: 1, url: target.url } });
+		await posts.show("s1", { ...target, header: "стара" }, "✅ Готово", true);
+		expect(edits.at(-1)?.text).toBe("🤖 opus\n\n✅ Готово");
+	});
+
+	it("сесія без збережених частин шапки (стара) не перемальовується", async () => {
+		const { posts, store, edits } = setup();
+		await store.saveSession("s1", { ocId: "oc", model: "opus", post: { postId: 7, header: "Завдання", chatId: 1, url: target.url } });
+		expect(await posts.refreshHeader("s1")).toBe(false);
+		expect(edits).toEqual([]);
+	});
+
 	it("посилання вебхука забираються один раз", async () => {
 		const { posts } = setup();
 		await posts.saveRef("k", { chatId: 1, messageId: 2, text: "t" });

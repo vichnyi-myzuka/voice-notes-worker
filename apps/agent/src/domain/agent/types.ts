@@ -1,3 +1,4 @@
+import type { HeaderParts } from "./header";
 import type { McpAnswer, McpFlags, McpName, OAuthMcpName } from "./mcp";
 
 // Порт агента: сесія з автономним агентом, якій можна поставити задачу, дописати уточнення, спитати статус і яку можна зупинити.
@@ -28,9 +29,10 @@ export type SessionReport = {
 // Куди повідомити про завершення роботи сесії (чат і посилання на неї).
 // postId: пост сесії в чаті; поки сесія працює, на ньому стоїть 👨‍💻, після завершення реакцію знімає агент
 // header: текст пост-шапки (завдання, репозиторій): агент оновлює пост на місці (шапка + стан/підсумок), тому потрібен його вміст;
+// parts: з чого складено header (без блоку налаштувань), щоб перебудувати шапку після set-repo чи /model
 // postId разом із header задається при першому спостереженні, далі пост сесії береться зі сховища
 // threadId: тема приватного чату, створена під сесію (усі пости сесії йдуть у неї; тема видаляється разом із сесією)
-export type WatchTarget = { chatId: number; url: string; postId?: number; header?: string; threadId?: number; title?: string; turn?: boolean };
+export type WatchTarget = { chatId: number; url: string; postId?: number; header?: string; parts?: HeaderParts; threadId?: number; title?: string; turn?: boolean };
 
 // Стан спільного контейнера для діагностики: що тримає його живим і коли був останній знімок.
 export type ComputerInfo = {

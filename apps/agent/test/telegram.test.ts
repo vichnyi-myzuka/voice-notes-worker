@@ -198,7 +198,7 @@ describe("вебхук Telegram", () => {
 		it("нова сесія береться під спостереження: після завершення підсумок прийде в той самий чат", async () => {
 			const { send, watches } = setup();
 			await send(msg({ text: "Поправ README" }));
-			expect(watches).toEqual([{ id: SID, target: { chatId: OWNER, url: `https://agent.example/s/${SID}`, postId: 1, header: "" } }]); // postId — пост бота (його id віддає sendMessage), header — його шапка
+			expect(watches).toEqual([{ id: SID, target: { chatId: OWNER, url: `https://agent.example/s/${SID}`, postId: 1, header: "", parts: {} } }]); // postId — пост бота (його id віддає sendMessage), header — його шапка
 		});
 
 		it("відповідь текстом на пост із сесією — уточнення в ту саму сесію, нової сесії немає", async () => {

@@ -163,7 +163,7 @@ export class Watcher {
 		const tracked = await this.d.store.session(id);
 		if (!tracked) throw new Error(`unknown session ${id}`);
 		// Пост сесії: новий (з першого виклику) запам'ятовується, у наступних (уточнення) береться зі сховища.
-		const post = target.postId ? { postId: target.postId, header: target.header ?? "", chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }), ...(target.title && { title: target.title }) } : tracked.post;
+		const post = target.postId ? { postId: target.postId, header: target.header ?? "", ...(target.parts && { parts: target.parts }), chatId: target.chatId, url: target.url, ...(target.threadId && { threadId: target.threadId }), ...(target.title && { title: target.title }) } : tracked.post;
 		if (target.postId) await this.d.store.saveSession(id, { ...tracked, post } satisfies Tracked);
 		const full: WatchTarget = { chatId: target.chatId, url: target.url, ...post };
 		const previous = await this.d.store.watch(id);
@@ -239,6 +239,7 @@ export class Watcher {
 		const found = await this.d.store.sessionByOc(ocId);
 		if (!found || found[1].repo) return;
 		await this.d.store.saveSession(found[0], { ...found[1], repo });
+		await this.d.posts.refreshHeader(found[0]); // пост показує репозиторій і гілку
 	}
 
 	// Повідомлення з веб-інтерфейсу в сесію, що має пост у чаті: стежимо за нею так само, як за запущеною з чату (стан, питання, підсумок

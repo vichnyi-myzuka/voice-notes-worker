@@ -162,6 +162,7 @@ describe("Watcher: потік подій", () => {
 		], { ocId: "oc1", post: session.post });
 		expect(t.n.mcpQuestions).toEqual([{ id: "s1", name: "silpo", threadId: 9 }]);
 		expect((await t.store.session("s1"))?.repo).toBe("acme/new");
+		expect(t.post.refreshed).toEqual(["s1"]); // пост показує репозиторій
 		expect(t.handoffs.spawned).toEqual([{ ocId: "oc1", callId: "c2", handoff: { task: "Зроби X" } }]);
 	});
 });
