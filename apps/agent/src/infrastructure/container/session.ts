@@ -8,17 +8,17 @@ import { Computer } from "./computer";
 import { Workspace } from "./computer";
 import { WATCH_INTERVAL_MS, progressMs, publishEnv } from "./config";
 import { workersLlm } from "@voice-notes/core";
-import { Forms, Progress } from "../../application/progress";
+import { Forms, Posts, Progress } from "../../application/progress";
 import { loadImages } from "./progress";
 import { Jobs, Limits, JOB_RETRY_MS } from "../../application/jobs";
 import { Handoffs } from "./jobs";
 import { chatNotices, claudeLimits, durableScheduler } from "./adapters";
 import { Mcp } from "./mcp";
 import { opencodeClient, createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
-import { Posts } from "./progress";
+import { telegramPosts } from "./progress";
 import { WebProxy } from "./computer";
 import type { Tracked } from "./state";
-import { SessionStore } from "./state";
+import { PostRecords, SessionStore } from "./state";
 import { Watcher } from "./jobs";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
@@ -48,7 +48,7 @@ export class AgentSession extends DurableObject<Env> {
 		this.workspace = new Workspace(ctx, env);
 		this.store = new SessionStore(ctx.storage);
 		
-		this.posts = new Posts(ctx.storage, env, this.store);
+		this.posts = new Posts(telegramPosts(env), new PostRecords(ctx.storage), this.store);
 		const scheduler = durableScheduler(ctx, this.computer);
 		const notices = chatNotices(env, this.posts);
 		this.limits = new Limits(claudeLimits(env), this.store, notices, scheduler);

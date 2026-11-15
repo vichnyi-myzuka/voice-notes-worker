@@ -1,4 +1,4 @@
-import type { FormAnswers, Job, LimitProbe, LimitWait, Notices, OpencodeClient, PendingForm, PostBoard, Scheduler, SessionStore, Tracked, Watch } from "../src/domain/agent";
+import type { DeployInfo, FormAnswers, LastShown, PostRef, Job, LimitProbe, LimitWait, Notices, OpencodeClient, PendingForm, PostBoard, PostChat, PostEdit, PostStore, Scheduler, SessionStore, Tracked, Watch } from "../src/domain/agent";
 
 // Фейки портів ядра агента: усе в пам'яті, без Durable Object, чату й мережі.
 export function fakeStore(): SessionStore {
@@ -93,4 +93,34 @@ export function fakePosts() {
 		rename: async (_w, title) => (renames.push(title), true),
 	};
 	return { posts, shown, marks, icons, renames };
+}
+
+// Чат поста: записує правки, реакції й іконки. edits.at(-1) — останній показаний стан.
+export function fakePostChat(enabled = true) {
+	const edits: PostEdit[] = [];
+	const icons: string[] = [];
+	const reactions: boolean[] = [];
+	const chat: PostChat = {
+		enabled,
+		edit: async (p) => (edits.push(p), true),
+		react: async (_c, _p, on) => void reactions.push(on),
+		setIcon: async (_c, _t, state) => void icons.push(state),
+		rename: async () => true,
+	};
+	return { chat, edits, icons, reactions };
+}
+
+export function fakePostStore(): PostStore {
+	const deploys = new Map<number, DeployInfo>();
+	const lasts = new Map<number, LastShown>();
+	const refs = new Map<string, PostRef>();
+	return {
+		deploy: async (id) => deploys.get(id),
+		saveDeploy: async (id, d) => void deploys.set(id, d),
+		last: async (id) => lasts.get(id),
+		saveLast: async (id, l) => void lasts.set(id, l),
+		saveRef: async (k, r) => void refs.set(k, r),
+		takeRef: async (k) => { const r = refs.get(k); refs.delete(k); return r; },
+		forget: async (id) => void (deploys.delete(id), lasts.delete(id)),
+	};
 }

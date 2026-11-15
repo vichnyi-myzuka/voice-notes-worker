@@ -20,8 +20,7 @@ export const sessionKey = (id: string) => `${SESSION_PREFIX}${id}`;
 export const sessionId = (key: string) => key.slice(SESSION_PREFIX.length);
 export const sessionDir = (folder: string) => `/workspace/sessions/${folder}`;
 
-// Останній показаний у пості стан, щоб вебхук GitHub міг перемалювати пост з деплоєм.
-export type LastShown = { status: string; final: boolean; mergeable: boolean };
+// Стан поста сесії (тип LastShown — у domain): деплой, останній показаний стан і пости для вебхука GitHub.
 export const deployKey = (postId: number) => `deploy:${postId}`;
 export const lastKey = (postId: number) => `last:${postId}`;
 export const refKey = (key: string) => `ref:${key}`;

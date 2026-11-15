@@ -1,5 +1,5 @@
-import type { FormAnswers, PendingForm, Job, LimitWait, OpencodeEvent, PostAnswers, PromptFile, SessionInfo, Tracked, TopicState, Watch } from "./records";
-import type { WatchTarget } from "./types";
+import type { FormAnswers, LastShown, PostEdit, PendingForm, Job, LimitWait, OpencodeEvent, PostAnswers, PromptFile, SessionInfo, Tracked, TopicState, Watch } from "./records";
+import type { DeployInfo, PostRef, WatchTarget } from "./types";
 
 // Порти, через які ядро агента (application) торкається зовнішнього світу. Реалізації — в infrastructure/container.
 
@@ -78,4 +78,24 @@ export interface PostBoard {
 	mark(w: WatchTarget, on: boolean): Promise<void>;
 	icon(w: WatchTarget, state: TopicState): Promise<void>;
 	rename(w: WatchTarget, title: string): Promise<boolean>;
+}
+
+// Чат, у якому живе пост сесії (низький рівень, без правил): редагування повідомлення, реакція, іконка й назва теми.
+export interface PostChat {
+	readonly enabled: boolean; // чи налаштовано бота
+	edit(post: PostEdit): Promise<boolean>; // false — повідомлення видалили чи правка не вдалась
+	react(chatId: number, postId: number, on: boolean): Promise<void>; // 👨‍💻 на пості
+	setIcon(chatId: number, threadId: number, state: TopicState): Promise<void>;
+	rename(chatId: number, threadId: number, title: string): Promise<boolean>;
+}
+
+// Що пам'ятаємо про пости: стан деплою й останній показаний стан (за id повідомлення) та пости, які пізніше оновлює вебхук GitHub.
+export interface PostStore {
+	deploy(postId: number): Promise<DeployInfo | undefined>;
+	saveDeploy(postId: number, deploy: DeployInfo): Promise<void>;
+	last(postId: number): Promise<LastShown | undefined>;
+	saveLast(postId: number, last: LastShown): Promise<void>;
+	saveRef(key: string, ref: PostRef): Promise<void>;
+	takeRef(key: string): Promise<PostRef | undefined>; // забирається один раз
+	forget(postId: number): Promise<void>; // сесію прибрано: забуваємо деплой і останній стан
 }

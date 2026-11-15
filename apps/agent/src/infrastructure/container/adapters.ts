@@ -3,7 +3,7 @@ import type { ChatEnv, ContainerEnv } from "../../env";
 import { sendChat } from "../chat";
 import { fetchQuota, isBlocked, resetTime } from "../quota";
 import type { Computer } from "./computer";
-import type { Posts } from "./progress";
+import type { Posts } from "../../application/progress";
 
 // Адаптери портів ядра агента (domain/agent/ports.ts) до Durable Object, чату й підписки Claude.
 

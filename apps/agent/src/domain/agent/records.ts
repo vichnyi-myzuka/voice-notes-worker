@@ -1,5 +1,5 @@
 import type { McpFlags } from "./mcp";
-import type { ImageRef, StartInput, WatchTarget } from "./types";
+import type { DeployInfo, ImageRef, PostRef, StartInput, WatchTarget } from "./types";
 
 // Записи, які агент тримає про сесії (у Durable Object, але ядро цього не знає: воно бачить лише порт SessionStore).
 
@@ -52,3 +52,17 @@ export type Choice = { label: string; value: string | boolean | string[] };
 // Питання агента, на яке можна відповісти кнопкою: форма й варіанти (callback_data несе лише номер варіанта).
 // next — наступні кроки багатокрокової форми, answers — уже зібрані відповіді.
 export type PendingForm = { askedAt?: number; formId: string; ocId: string; key: string; choices: Choice[]; multiple?: boolean; selected: number[]; text: string; next?: { key: string; choices: Choice[]; multiple?: boolean; text: string }[]; answers?: FormAnswers };
+
+// Кнопки під постом сесії: поки працює — «Стоп»; після — «Повторити» (ліміти), «Змерджити» (є PR, деплою ще немає) чи лише «Видалити».
+export type PostButtons = "working" | "done" | "mergeable" | "dismiss" | "retry";
+
+// Запит на схвалення деплою в пості: репозиторій і запуск, для яких показуються «Схвалити/Відхилити».
+export type PostReview = { repo: string; runId: number };
+
+// Останній показаний у пості стан, щоб вебхук GitHub міг перемалювати пост з деплоєм.
+export type LastShown = { status: string; final: boolean; mergeable: boolean };
+
+// Редагування поста сесії в чаті: текст, кнопки й посилання на сесію (для кнопок і підпису).
+export type PostEdit = { chatId: number; postId: number; text: string; session?: { id: string; url: string }; buttons: PostButtons; answers?: PostAnswers; review?: PostReview };
+
+export type { DeployInfo, PostRef };

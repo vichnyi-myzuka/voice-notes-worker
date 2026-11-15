@@ -23,8 +23,6 @@ export const WATCH_MAX_MS = 2 * 60 * 60 * 1000;
 export const DEFAULT_MAX_COST_USD = 5;
 export const DEFAULT_MAX_TOKENS = 3_000_000;
 export const PROGRESS_INTERVAL_MS = 4000; // не частіше: ліміти Telegram на редагування одного повідомлення
-export const HEADER_DEPLOYED_MAX = 150; // шапка згорнутого поста після успішного деплою
-export const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096
 export const SUMMARY_MAX = 3000; // підсумок у чат: решта обрізається (ліміт повідомлення Telegram — 4096)
 
 // Тривалості й ліміти з необов'язкових змінних воркера (для коротких перевірок); некоректні значення ігноруються.
