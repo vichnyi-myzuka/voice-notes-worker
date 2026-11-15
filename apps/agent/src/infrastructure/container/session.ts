@@ -6,8 +6,9 @@ import { removeTopic } from "../chat";
 import { CLEANUP } from "./computer";
 import { Computer } from "./computer";
 import { Workspace } from "./computer";
-import { WATCH_INTERVAL_MS, publishEnv } from "./config";
-import { Forms } from "../../application/progress";
+import { WATCH_INTERVAL_MS, progressMs, publishEnv } from "./config";
+import { workersLlm } from "@voice-notes/core";
+import { Forms, Progress } from "../../application/progress";
 import { loadImages } from "./progress";
 import { Jobs, Limits, JOB_RETRY_MS } from "../../application/jobs";
 import { Handoffs } from "./jobs";
@@ -15,7 +16,6 @@ import { chatNotices, claudeLimits, durableScheduler } from "./adapters";
 import { Mcp } from "./mcp";
 import { opencodeClient, createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./progress";
-import { Progress } from "./progress";
 import { WebProxy } from "./computer";
 import type { Tracked } from "./state";
 import { SessionStore } from "./state";
@@ -55,7 +55,7 @@ export class AgentSession extends DurableObject<Env> {
 		this.forms = new Forms(this.store, this.posts, opencodeClient(() => this.computer.opencode()));
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, this.workspace, (id, tracked, text) => this.tell(id, tracked, text));
-		this.progress = new Progress(env, this.store, this.posts, this.forms);
+		this.progress = new Progress({ enabled: !!env.BOT_TOKEN, llm: workersLlm(env), progressMs: progressMs(env) }, this.store, this.posts, this.forms);
 		this.handoffs = new Handoffs(env, this.store, (id, input, target) => this.jobs.begin(id, input, target));
 		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp, this.handoffs);
 		this.jobs = new Jobs(scheduler, this.store, notices, {
