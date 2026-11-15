@@ -24,6 +24,24 @@ async function webhookSecret(env: Env, botId: number): Promise<string> {
 	return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Основний вебхук має отримувати `managed_bot`. Замість ручного setWebhook перший вебхук нового екземпляра воркера сам дописує його
+// в allowed_updates: адреса лишається тією, що вже стоїть (з getWebhookInfo), тож нічого не вгадуємо. Уже виставлене не чіпаємо.
+let synced = false;
+export async function syncManagedUpdates(bot: BotEnv, env: Env): Promise<void> {
+	if (synced || !env.TG_WEBHOOK_SECRET) return;
+	synced = true;
+	try {
+		const info = await tg(bot, "getWebhookInfo", {});
+		if (!info.url || info.allowed_updates?.includes("managed_bot")) return;
+		const current = info.allowed_updates?.length ? info.allowed_updates : ["message", "channel_post", "callback_query"];
+		await tg(bot, "setWebhook", { url: info.url, secret_token: env.TG_WEBHOOK_SECRET, allowed_updates: [...current, "managed_bot"] });
+		console.log("webhook: managed_bot added to allowed_updates");
+	} catch (err) {
+		synced = false;
+		console.error("managed_bot sync failed:", err);
+	}
+}
+
 // /newbot: надсилає власнику кнопку-посилання на створення бота (юзернейм і ім'я він може змінити на екрані підтвердження).
 export async function sendNewBotLink(bot: BotEnv, chatId: number): Promise<void> {
 	const manager = (await tg(bot, "getMe", {})).username;

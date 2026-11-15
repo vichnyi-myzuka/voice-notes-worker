@@ -4,7 +4,7 @@ import { durableAgent } from "./infrastructure/container";
 import { workersLlm } from "@voice-notes/core";
 import { handleFetch } from "./interface/http";
 import { GITHUB_PATH, handleGithub } from "./interface/github";
-import { MANAGED_PATH, handleManagedBotCreated, handleManagedWebhook, sendNewBotLink } from "./interface/managed-bots";
+import { MANAGED_PATH, handleManagedBotCreated, handleManagedWebhook, sendNewBotLink, syncManagedUpdates } from "./interface/managed-bots";
 import { SHORTCUT_PATH, TELEGRAM_PATH, handleShortcut, handleTelegram, parseRepos } from "./interface/telegram";
 
 export { AgentSession } from "./infrastructure/container";
@@ -15,7 +15,7 @@ export default {
 		const url = new URL(req.url);
 		const agent = durableAgent(env.AGENT_SESSION, url.origin);
 		// Вебхуки Telegram і GitHub та запис із Shortcut стоять повз Access (див. docs/adr/0003-webhooks-bypass-access.md), решта — за Access.
-		if (url.pathname === TELEGRAM_PATH) return handleTelegram(req, env, { agent, llm: workersLlm(env), repos: parseRepos(env.AGENT_REPOS), defer: (w) => ctx.waitUntil(w), syncCommands: true, managed: { newBot: sendNewBotLink, created: (bot, managed, origin) => handleManagedBotCreated(bot, env, managed, origin) } });
+		if (url.pathname === TELEGRAM_PATH) return handleTelegram(req, env, { agent, llm: workersLlm(env), repos: parseRepos(env.AGENT_REPOS), defer: (w) => ctx.waitUntil(w), syncCommands: true, managed: { newBot: sendNewBotLink, created: (bot, managed, origin) => handleManagedBotCreated(bot, env, managed, origin), sync: (bot) => syncManagedUpdates(bot, env) } });
 		if (url.pathname.startsWith(MANAGED_PATH)) return handleManagedWebhook(req, env, (w) => ctx.waitUntil(w));
 		if (url.pathname === SHORTCUT_PATH) return handleShortcut(req, env, { agent, llm: workersLlm(env), repos: parseRepos(env.AGENT_REPOS), defer: (w) => ctx.waitUntil(w) });
 		if (url.pathname === GITHUB_PATH) return handleGithub(req, env, { agent, defer: (w) => ctx.waitUntil(w) });

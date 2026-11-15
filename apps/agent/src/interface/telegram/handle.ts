@@ -15,7 +15,7 @@ export const TELEGRAM_PATH = "/telegram";
 // syncCommands: виставляти меню `/`-команд (див. syncCommands); у тестах вимкнено.
 export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean;
 	// PoC керованих ботів (interface/managed-bots, ін'єкція, щоб модулі не залежали один від одного): /newbot і апдейт managed_bot
-	managed?: { newBot: (bot: BotEnv, chatId: number) => Promise<void>; created: (bot: BotEnv, managed: NonNullable<TgUpdate["managed_bot"]>, origin: string) => Promise<void> } };
+	managed?: { newBot: (bot: BotEnv, chatId: number) => Promise<void>; created: (bot: BotEnv, managed: NonNullable<TgUpdate["managed_bot"]>, origin: string) => Promise<void>; sync: (bot: BotEnv) => Promise<void> } };
 
 // Меню `/`-команд у приваті. Єдине місце, де вони перелічені: додаєш команду в обробник — додай і сюди.
 export const COMMANDS = [
@@ -55,7 +55,10 @@ export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps)
 	}
 	if (!env.BOT_TOKEN) return new Response("bot is not configured", { status: 503 });
 	const bot = { BOT_TOKEN: env.BOT_TOKEN };
-	if (deps.syncCommands) deps.defer(syncCommands(bot));
+	if (deps.syncCommands) {
+		deps.defer(syncCommands(bot));
+		if (deps.managed) deps.defer(deps.managed.sync(bot));
+	}
 	const update = await req.json<TgUpdate>().catch(() => null);
 	if (update?.callback_query) {
 		deps.defer(handleButton(bot, update.callback_query, env, deps.agent).catch((err) => console.error("telegram button failed:", err)));

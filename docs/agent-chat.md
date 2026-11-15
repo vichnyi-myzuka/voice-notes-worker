@@ -63,7 +63,7 @@
 
 Експеримент із Telegram Managed Bots (Bot API 9.6), модуль `interface/managed-bots`. Нічого не змінює для звичайних сесій.
 
-1. Одноразово: у @BotFather (міні-застосунок) увімкни для основного бота Bot Management Mode (`getMe` покаже `can_manage_bots: true`), а в `allowed_updates` вебхука `/telegram` додай `managed_bot`.
+1. Одноразово: у @BotFather (міні-застосунок) увімкни для основного бота Bot Management Mode (`getMe` покаже `can_manage_bots: true`). `managed_bot` у `allowed_updates` вебхука `/telegram` воркер дописує сам (`syncManagedUpdates` на першому вебхуку нового екземпляра: адреса береться з `getWebhookInfo`).
 2. Cloudflare Access: до політики Bypass додай шлях `managed/` (вебхуки керованих ботів, захист власний: секрет `HMAC(TG_WEBHOOK_SECRET, "managed:<id>")` у заголовку, далі лише `TG_OWNER_ID`).
 3. `/newbot` у приваті надсилає кнопку-посилання `t.me/newbot/<менеджер>/<юзернейм>?name=…`. Бот не може створити бота сам: власник підтверджує на екрані Telegram (ім'я й юзернейм можна змінити).
 4. Апдейт `managed_bot` (лише від власника) → воркер бере токен через `getManagedBotToken`, ставить новому боту вебхук `/managed/<id>` і пише власнику, а також чи ввімкнені в нього теми в приваті (`getMe.has_topics_enabled`): їх вмикають вручну в BotFather Mini App (Bot Settings → Threads Settings → Threaded Mode). Луна показує той самий стан, тож після перемикача його видно одразу.

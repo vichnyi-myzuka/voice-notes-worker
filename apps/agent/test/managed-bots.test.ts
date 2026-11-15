@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Llm } from "@voice-notes/core";
 import type { Env } from "../src/env";
 import { handleTelegram } from "../src/interface/telegram";
-import { MANAGED_PATH, handleManagedBotCreated, handleManagedWebhook, sendNewBotLink } from "../src/interface/managed-bots";
+import { MANAGED_PATH, handleManagedBotCreated, handleManagedWebhook, sendNewBotLink, syncManagedUpdates } from "../src/interface/managed-bots";
 import { fakeAgent } from "./fake-agent";
 
 vi.mock("../../../packages/core/src/infrastructure/security", () => ({ safeEqual: async (a: string, b: string) => a === b }));
@@ -18,7 +18,7 @@ function setup() {
 		vi.fn(async (input: string, init?: RequestInit) => {
 			const [, token, method] = /\/bot([^/]+)\/(\w+)/.exec(input)!;
 			calls.push({ token, method, body: JSON.parse(init!.body as string) });
-			const result = method === "getMe" ? { id: 1, username: "mgr_bot", has_topics_enabled: token === "child-token" } : method === "getManagedBotToken" ? "child-token" : method === "sendMessage" ? { message_id: 1 } : true;
+			const result = method === "getWebhookInfo" ? { url: "https://agent.example/telegram", allowed_updates: ["message", "callback_query"] } : method === "getMe" ? { id: 1, username: "mgr_bot", has_topics_enabled: token === "child-token" } : method === "getManagedBotToken" ? "child-token" : method === "sendMessage" ? { message_id: 1 } : true;
 			return Response.json({ ok: true, result });
 		}),
 	);
@@ -28,6 +28,12 @@ function setup() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("керовані боти (PoC)", () => {
+	it("sync дописує managed_bot в allowed_updates за наявною адресою вебхука", async () => {
+		const calls = setup();
+		await syncManagedUpdates({ BOT_TOKEN: "manager" }, env);
+		expect(calls.find((c) => c.method === "setWebhook")!.body).toEqual({ url: "https://agent.example/telegram", secret_token: "secret", allowed_updates: ["message", "callback_query", "managed_bot"] });
+	});
+
 	it("/newbot шле кнопку-посилання t.me/newbot/<менеджер>/<юзернейм>", async () => {
 		const calls = setup();
 		await sendNewBotLink({ BOT_TOKEN: "manager" }, 42);
@@ -53,7 +59,7 @@ describe("керовані боти (PoC)", () => {
 		const created = vi.fn(async () => {});
 		const pending: Promise<unknown>[] = [];
 		const managed = { user: { id: 42 }, bot: { id: CHILD } };
-		const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret" }, body: JSON.stringify({ update_id: 1, managed_bot: managed }) }), env, { agent: fakeAgent().agent, llm: {} as Llm, defer: (w) => void pending.push(w), managed: { newBot: async () => {}, created } });
+		const res = await handleTelegram(new Request("https://agent.example/telegram", { method: "POST", headers: { "x-telegram-bot-api-secret-token": "secret" }, body: JSON.stringify({ update_id: 1, managed_bot: managed }) }), env, { agent: fakeAgent().agent, llm: {} as Llm, defer: (w) => void pending.push(w), managed: { newBot: async () => {}, created, sync: async () => {} } });
 		await Promise.all(pending);
 		expect(res.status).toBe(200);
 		expect(created).toHaveBeenCalledWith({ BOT_TOKEN: "manager" }, managed, "https://agent.example");
