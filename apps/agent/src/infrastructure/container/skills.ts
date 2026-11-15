@@ -4,14 +4,13 @@ import s1 from "../../../payload/skills/codebase-design/DEEPENING.md";
 import s2 from "../../../payload/skills/codebase-design/DESIGN-IT-TWICE.md";
 import s3 from "../../../payload/skills/codebase-design/SKILL.md";
 import s4 from "../../../payload/skills/diagnosing-bugs/SKILL.md";
-import s5 from "../../../payload/skills/diagnosing-bugs/scripts/hitl-loop.template.sh";
 import s6 from "../../../payload/skills/grill-me/SKILL.md";
 import s7 from "../../../payload/skills/grilling/SKILL.md";
 import s8 from "../../../payload/skills/tdd/SKILL.md";
 import s9 from "../../../payload/skills/tdd/mocking.md";
 import s10 from "../../../payload/skills/tdd/tests.md";
 
-// Скіли робочого процесу з https://github.com/mattpocock/skills (MIT, без змін; див. payload/skills/README.md). Агент підхоплює їх сам
+// Скіли робочого процесу з https://github.com/mattpocock/skills (MIT, з адаптацією під OpenCode; див. payload/skills/README.md). Агент підхоплює їх сам
 // за description; як їх застосовувати в цьому середовищі, сказано в розділі «Approach» файлу payload/AGENTS.md. OpenCode читає
 // ~/.config/opencode/skills, claude — ~/.claude/skills. Новий файл скіла треба додати в цей список.
 const FILES: [string, string][] = [
@@ -20,7 +19,6 @@ const FILES: [string, string][] = [
 	["codebase-design/DESIGN-IT-TWICE.md", s2],
 	["codebase-design/SKILL.md", s3],
 	["diagnosing-bugs/SKILL.md", s4],
-	["diagnosing-bugs/scripts/hitl-loop.template.sh", s5],
 	["grill-me/SKILL.md", s6],
 	["grilling/SKILL.md", s7],
 	["tdd/SKILL.md", s8],
@@ -31,5 +29,5 @@ const FILES: [string, string][] = [
 const ROOTS = ["/root/.config/opencode/skills", "/root/.claude/skills"];
 
 export const WORKFLOW_SKILL_FILES: PayloadFile[] = ROOTS.flatMap((root) =>
-	FILES.map(([path, content]) => ({ path: `${root}/${path}`, mode: path.endsWith(".sh") ? "755" : "644", content })),
+	FILES.map(([path, content]) => ({ path: `${root}/${path}`, mode: "644", content })),
 );

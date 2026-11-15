@@ -349,7 +349,7 @@ describe("AgentSession", () => {
 			for (const root of ["/root/.config/opencode/skills", "/root/.claude/skills"]) {
 				for (const name of ["grilling", "grill-me", "tdd", "diagnosing-bugs", "codebase-design", "code-review"]) expect(byPath[`${root}/${name}/SKILL.md`].content).toContain(`name: ${name}`);
 				expect(byPath[`${root}/tdd/mocking.md`]).toBeDefined();
-				expect(byPath[`${root}/diagnosing-bugs/scripts/hitl-loop.template.sh`].mode).toBe("755");
+				expect(byPath[`${root}/grilling/SKILL.md`].content).toContain("`question` tool");
 			}
 			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("`grilling`");
 			expect(byPath["/usr/local/bin/new-report-site"].mode).toBe("755");
