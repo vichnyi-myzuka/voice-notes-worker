@@ -88,6 +88,21 @@ describe("вебхук GitHub", () => {
 			expect(s.watches.at(-1)).toMatchObject({ id: "tg--1001-7", target: { chatId: -1001 } });
 		});
 
+		it("після 3 спроб сесію більше не будить, один раз пише про зупинку; зелений запуск скидає рахунок", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			for (let i = 0; i < 5; i++) await s.hook("workflow_run", check());
+			expect(s.sessions.get("tg--1001-7")!.messages).toHaveLength(1 + 3);
+			const texts = s.tgCalls("sendMessage").map((m) => m.text as string);
+			expect(texts.filter((t) => t.includes("бейбісітинг зупинено"))).toHaveLength(1);
+			// конфлікти йдуть у той самий ліміт
+			await s.hook("push", { ref: "refs/heads/main", repository: { full_name: "me/bot", default_branch: "main" } });
+			expect(s.sessions.get("tg--1001-7")!.messages).toHaveLength(1 + 3);
+			await s.hook("workflow_run", check({ conclusion: "success" }));
+			await s.hook("workflow_run", check());
+			expect(s.sessions.get("tg--1001-7")!.messages).toHaveLength(1 + 3 + 1);
+		});
+
 		it("успіх, інші workflow, чужі гілки, форки й сесії без репозиторію ігноруються", async () => {
 			const s = setup();
 			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
