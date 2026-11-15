@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { extractImages, loadImages, sendImages } from "../src/infrastructure/container/images";
+import { extractImages } from "../src/application/progress";
+import { loadImages, sendImages } from "../src/infrastructure/container/progress/images";
 
 afterEach(() => vi.unstubAllGlobals());
 

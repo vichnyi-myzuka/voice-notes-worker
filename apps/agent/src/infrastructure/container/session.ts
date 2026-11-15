@@ -3,23 +3,23 @@ import type { Env } from "../../env";
 import { folderFor, type McpAnswer, type McpName, type OAuthMcpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { stopwatch } from "../../timing";
 import { removeTopic } from "../chat";
-import { CLEANUP } from "./cleanup";
+import { CLEANUP } from "./computer";
 import { Computer } from "./computer";
-import { Workspace } from "./workspace";
-import { JOB_RETRY_MS, WATCH_INTERVAL_MS, publishEnv } from "./config";
-import { Handoffs } from "./handoff";
-import { Forms } from "./forms";
-import { loadImages } from "./images";
-import { Jobs } from "./jobs";
-import { Limits } from "./limits";
+import { Workspace } from "./computer";
+import { WATCH_INTERVAL_MS, publishEnv } from "./config";
+import { Forms } from "./progress";
+import { loadImages } from "./progress";
+import { Jobs, Limits, JOB_RETRY_MS } from "../../application/jobs";
+import { Handoffs } from "./jobs";
+import { chatNotices, claudeLimits, durableScheduler } from "./adapters";
 import { Mcp } from "./mcp";
 import { createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
-import { Posts } from "./posts";
+import { Posts } from "./progress";
 import { Progress } from "./progress";
-import { WebProxy } from "./proxy";
+import { WebProxy } from "./computer";
 import { FORM_PREFIX, type PendingForm, type Tracked } from "./state";
-import { SessionStore } from "./store";
-import { Watcher } from "./watcher";
+import { SessionStore } from "./state";
+import { Watcher } from "./jobs";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -47,15 +47,18 @@ export class AgentSession extends DurableObject<Env> {
 		this.computer = new Computer(ctx, env);
 		this.workspace = new Workspace(ctx, env);
 		this.store = new SessionStore(ctx.storage);
-		this.limits = new Limits(env, this.store, (at) => this.computer.alarmNoLater(at));
+		
 		this.posts = new Posts(ctx.storage, env, this.store);
+		const scheduler = durableScheduler(ctx, this.computer);
+		const notices = chatNotices(env, this.posts);
+		this.limits = new Limits(claudeLimits(env), this.store, notices, scheduler);
 		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, this.workspace, (id, tracked, text) => this.tell(id, tracked, text));
 		this.progress = new Progress(env, this.store, this.posts, this.forms);
 		this.handoffs = new Handoffs(env, this.store, (id, input, target) => this.jobs.begin(id, input, target));
 		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp, this.handoffs);
-		this.jobs = new Jobs(ctx, env, this.store, this.posts, {
+		this.jobs = new Jobs(scheduler, this.store, notices, {
 			running: () => this.computer.running,
 			start: (id, input) => this.start(id, input),
 			followUp: (id, text, images) => this.followUp(id, text, images),

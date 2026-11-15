@@ -1,4 +1,4 @@
-import type { Env } from "../../infrastructure/env";
+import type { Env } from "../../application/env";
 import type { Ports } from "../../application/pipeline";
 import { acceptIncoming } from "../../application/intake";
 import { shortcutUpload } from "./shortcut";

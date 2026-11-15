@@ -1,14 +1,14 @@
 import type { OAuthLogin } from "@voice-notes/oauth";
-import { MCP_LABELS, MCP_NAMES, MCP_SERVICES, OAUTH_MCP_NAMES, type McpAnswer, type McpFlags, type McpName, type OAuthMcpName } from "../../domain/agent";
-import type { ChatEnv, McpEnv } from "../../env";
-import { sendMcpQuestion } from "../chat";
-import type { Computer } from "./computer";
-import type { Workspace } from "./workspace";
-import { mcpLogins } from "./logins";
-import { putMcp } from "./opencode";
-import { MCP_PROMPTS, REFRESHABLE_MCP, refreshableMcp, type McpWanted } from "./payload";
-import { sessionDir, type Tracked } from "./state";
-import type { SessionStore } from "./store";
+import { MCP_LABELS, MCP_NAMES, MCP_SERVICES, OAUTH_MCP_NAMES, type McpAnswer, type McpFlags, type McpName, type OAuthMcpName } from "../../../domain/agent";
+import type { ChatEnv, McpEnv } from "../../../env";
+import { sendMcpQuestion } from "../../chat";
+import type { Computer } from "../computer";
+import type { Workspace } from "../computer";
+import { mcpLogins } from "../logins";
+import { putMcp } from "../opencode";
+import { MCP_PROMPTS, REFRESHABLE_MCP, refreshableMcp, type McpWanted } from "../computer";
+import { sessionDir, type Tracked } from "../state";
+import type { SessionStore } from "../state";
 
 // Агент просить MCP командою `request-mcp <сервіс>` (payload/request-mcp.sh): воркер бачить її у виклику bash у потоці подій OpenCode.
 const REQUEST = new RegExp(`(?:^|[\\s;&|(])request-mcp\\s+(${MCP_NAMES.join("|")})(?![\\w-])`);

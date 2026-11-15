@@ -5,7 +5,7 @@ import { telegramChannel, workersLlm } from "@voice-notes/core";
 import { githubIssues } from "../src/infrastructure/github";
 import { r2IssueLedger, r2Ledger, r2Notes, r2Recordings } from "../src/infrastructure/r2";
 import { todoistTracker } from "../src/infrastructure/todoist";
-import type { Env } from "../src/infrastructure/env";
+import type { Env } from "../src/application/env";
 import { fakeEnv } from "./fake-env";
 
 const meta = { title: "Назва", summary: "Коротко.", ideas: [], tasks: [] };

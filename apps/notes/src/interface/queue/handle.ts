@@ -1,4 +1,4 @@
-import type { Env, Job } from "../../infrastructure/env";
+import type { Env, Job } from "../../application/env";
 import { processEdit, processNote, type Ports } from "../../application/pipeline";
 
 

@@ -1,7 +1,7 @@
-import type { ChatEnv, ContainerEnv } from "../../env";
+import type { ChatEnv, ContainerEnv } from "../../../env";
 import type { Computer } from "./computer";
-import { STREAM_MAX_MS } from "./config";
-import { OPENCODE_PORT, basicAuth } from "./opencode";
+import { STREAM_MAX_MS } from "../config";
+import { OPENCODE_PORT, basicAuth } from "../opencode";
 
 // Веб-інтерфейс OpenCode: запити (разом із SSE) проксуються в контейнер.
 export class WebProxy {

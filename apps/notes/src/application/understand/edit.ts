@@ -1,4 +1,4 @@
-import type { Env } from "../../infrastructure/env";
+import type { Env } from "../env";
 import type { Llm } from "@voice-notes/core";
 import { parseEditedNote, plainTasks, type Meta } from "../../domain/note";
 import type { Note } from "../../domain/published";

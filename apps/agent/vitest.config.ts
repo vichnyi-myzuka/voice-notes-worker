@@ -1,6 +1,6 @@
 import { defineConfig } from "vitest/config";
 
-// .md, .sh і .tpl підключаються як текст, як правило Text у wrangler.toml (див. src/infrastructure/container/payload.ts).
+// .md, .sh і .tpl підключаються як текст, як правило Text у wrangler.toml (див. src/infrastructure/container/computer/payload.ts).
 export default defineConfig({
 	plugins: [
 		{

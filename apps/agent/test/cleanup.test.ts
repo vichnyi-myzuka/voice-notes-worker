@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { tmpDir } from "./tmp";
-import { CLEANUP } from "../src/infrastructure/container/cleanup";
+import { CLEANUP } from "../src/infrastructure/container/computer/cleanup";
 
 // Справжній git: «GitHub» (bare), спільний клон і worktree сесії в /workspace/sessions-подібній теці. Хуки вимкнено: системний pre-push (агент) забороняє пуш у main, а тест пушить у власний тимчасовий bare-репозиторій.
 // У git-хуку (pre-push) git виставляє GIT_DIR тощо: без очищення тест працював би з реальним репозиторієм.

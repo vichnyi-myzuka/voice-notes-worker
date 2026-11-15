@@ -1,20 +1,20 @@
-import type { McpEnv } from "../../env";
-import agents from "../../../payload/AGENTS.md";
-import calendarAgent from "../../../payload/calendar-agent.md";
-import handoff from "../../../payload/handoff.sh";
-import prePush from "../../../payload/pre-push.sh";
-import newReportSite from "../../../payload/new-report-site.sh";
-import publish from "../../../payload/publish.sh";
-import requestMcp from "../../../payload/request-mcp.sh";
-import setRepo from "../../../payload/set-repo.sh";
-import reportSiteSkill from "../../../payload/report-site-skill.md";
-import sessionPrep from "../../../payload/session-prep.sh";
-import silpoAgent from "../../../payload/silpo-agent.md";
-import cloudflareAgent from "../../../payload/cloudflare-agent.md";
-import sureAgent from "../../../payload/sure-agent.md";
-import { MCP_NAMES, type McpName, type OAuthMcpName } from "../../domain/agent";
+import type { McpEnv } from "../../../env";
+import agents from "../../../../payload/AGENTS.md";
+import calendarAgent from "../../../../payload/calendar-agent.md";
+import handoff from "../../../../payload/handoff.sh";
+import prePush from "../../../../payload/pre-push.sh";
+import newReportSite from "../../../../payload/new-report-site.sh";
+import publish from "../../../../payload/publish.sh";
+import requestMcp from "../../../../payload/request-mcp.sh";
+import setRepo from "../../../../payload/set-repo.sh";
+import reportSiteSkill from "../../../../payload/report-site-skill.md";
+import sessionPrep from "../../../../payload/session-prep.sh";
+import silpoAgent from "../../../../payload/silpo-agent.md";
+import cloudflareAgent from "../../../../payload/cloudflare-agent.md";
+import sureAgent from "../../../../payload/sure-agent.md";
+import { MCP_NAMES, type McpName, type OAuthMcpName } from "../../../domain/agent";
 import type { OAuthToken } from "@voice-notes/oauth";
-import { CLOUDFLARE_MCP_URL, SILPO_MCP_URL } from "./logins";
+import { CLOUDFLARE_MCP_URL, SILPO_MCP_URL } from "../logins";
 import { REPORT_SITE_FILES } from "./report-site";
 
 // Файли, які воркер розкладає в контейнер сам (а не кладе в образ): вони змінюються часто, і від цього не мають скидатися знімки

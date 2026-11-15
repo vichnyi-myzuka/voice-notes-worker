@@ -1,12 +1,12 @@
-import type { ComputerInfo, ConnectionsInfo, SnapshotInfo } from "../../domain/agent";
-import type { ContainerEnv, GithubEnv, McpEnv, PublishEnv } from "../../env";
-import { stopwatch } from "../../timing";
-import { parseConnections } from "./connections";
-import { FORM_HOLD_MS, READY_ATTEMPTS, SNAPSHOT_CHECK_MS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "./config";
-import { IMAGE_MAX_BYTES } from "./images";
-import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "./opencode";
+import type { ComputerInfo, ConnectionsInfo, SnapshotInfo } from "../../../domain/agent";
+import type { ContainerEnv, GithubEnv, McpEnv, PublishEnv } from "../../../env";
+import { stopwatch } from "../../../timing";
+import { parseConnections } from "../../../application/computer";
+import { FORM_HOLD_MS, READY_ATTEMPTS, SNAPSHOT_CHECK_MS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "../config";
+import { IMAGE_MAX_BYTES } from "../../../application/progress";
+import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "../opencode";
 import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
-import { computerKey, type SavedSnapshot } from "./state";
+import { computerKey, type SavedSnapshot } from "../state";
 
 // Спільний комп'ютер агента: єдиний контейнер з OpenCode. Тут його життєвий цикл (старт зі знімка чи образу, очікування
 // готовності, розкладання payload, знімки диска, скидання) і доступ до OpenCode. Про сесії, пости й чат модуль нічого не знає.

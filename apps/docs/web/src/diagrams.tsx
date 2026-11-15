@@ -57,7 +57,7 @@ export function NotesLayers() {
       <Box x={280} y={20} w={400} h={80} title="interface" lines={["inbox: вебхук і завантаження", "queue: споживачі й DLQ"]} color={0} />
       <Box x={280} y={140} w={400} h={80} title="application" lines={["intake, pipeline, understand", "tasks, issues, setup"]} color={0} />
       <Box x={280} y={250} w={400} h={80} title="domain" lines={["note, published, recording, tracker", "порти: TaskTracker, NoteRepository…"]} color={0} />
-      <Box x={720} y={140} w={220} h={80} title="infrastructure" lines={["r2, todoist, env", "адаптери портів"]} color={1} />
+      <Box x={720} y={140} w={220} h={80} title="infrastructure" lines={["r2, todoist", "адаптери портів"]} color={1} />
       <Arrow points={[[480, 100], [480, 140]]} />
       <Arrow points={[[480, 220], [480, 250]]} />
       <Arrow points={[[280, 180], [240, 180]]} />
@@ -96,7 +96,7 @@ export function AgentModules() {
       <Box x={140} y={100} w={220} h={50} title="application/task" lines={["репозиторій, модель, MCP"]} color={1} />
       <Box x={20} y={160} w={460} h={80} title="infrastructure/chat" lines={["пости, клавіатури, callback_data,", "дії над повідомленнями"]} color={2} />
       <Box x={540} y={160} w={400} h={80} title="domain/agent (порт Agent)" lines={["Sessions & Computer & Deploys", "кожен модуль бере лише потрібне"]} color={1} />
-      <Box x={540} y={300} w={400} h={80} title="infrastructure/container" lines={["AgentSession — фасад над Jobs, Watcher,", "Progress, Mcp, Limits, Computer, Workspace, Posts"]} color={1} />
+      <Box x={540} y={300} w={400} h={80} title="infrastructure/container" lines={["AgentSession — фасад; ядро Jobs, Limits", "в application через порти; адаптери тут"]} color={1} />
       <Arrow points={[[120, 90], [120, 160]]} />
       <Arrow points={[[380, 90], [380, 160]]} />
       <Arrow points={[[640, 90], [640, 160]]} />
