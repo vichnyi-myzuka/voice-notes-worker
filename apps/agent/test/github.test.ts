@@ -17,8 +17,10 @@ async function sign(body: string) {
 
 let pullBranch = "agent/fix-7";
 let pullRepo = "me/bot";
+let mergeable: unknown[] = [];
 
 function setup() {
+	mergeable = [{ mergeable: false, mergeable_state: "dirty" }];
 	pullBranch = "agent/fix-7";
 	pullRepo = "me/bot";
 	const agent = fakeAgent();
@@ -30,6 +32,8 @@ function setup() {
 			calls.push({ url: input, method: init?.method ?? "GET", body });
 			if (input.includes("/pending_deployments") && (init?.method ?? "GET") === "GET") return Response.json([{ environment: { id: 9 }, current_user_can_approve: true }]);
 			if (input.includes("/commits/") && input.endsWith("/pulls")) return Response.json([{ number: 5, title: "Fix", html_url: "https://github.com/me/bot/pull/5", head: { ref: pullBranch, repo: { full_name: pullRepo } } }]);
+			if (input.includes("/pulls?state=open&base=")) return Response.json([{ number: 5, head: { ref: pullBranch, repo: { full_name: pullRepo } } }, { number: 6, head: { ref: "feature/x", repo: { full_name: "me/bot" } } }]);
+			if (/\/pulls\/\d+$/.test(input)) return Response.json(mergeable.length > 1 ? mergeable.shift() : mergeable[0]);
 			if (input.includes("api.github.com")) return new Response(null, { status: 204 });
 			return Response.json({ ok: true, result: { message_id: 500 } });
 		}),
@@ -89,10 +93,38 @@ describe("вебхук GitHub", () => {
 			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
 			await s.hook("workflow_run", check({ conclusion: "success" }));
 			await s.hook("workflow_run", check({ conclusion: "cancelled" }));
-			await s.hook("workflow_run", check({ name: "lint" }));
+			await s.hook("workflow_run", check({ name: "deploy" }));
 			await s.hook("workflow_run", check({ head_branch: "feature/fix-7" }));
 			await s.hook("workflow_run", check({ head_repository: { full_name: "evil/bot" } }));
 			await s.hook("workflow_run", check({ head_branch: "agent/nope-1" }));
+			expect(s.tgCalls("sendMessage")).toEqual([]);
+			expect(s.sessions.get("tg--1001-7")!.messages).toHaveLength(1);
+		});
+	});
+
+	describe("конфлікти PR бота після пушу в головну гілку", () => {
+		const push = (over: Record<string, unknown> = {}) => ({ ref: "refs/heads/main", repository: { full_name: "me/bot", default_branch: "main" }, ...over });
+
+		it("пише в чат і дає сесії завдання змерджити main і розв'язати конфлікти", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			expect((await s.hook("push", push())).status).toBe(200);
+			expect(s.tgCalls("sendMessage")[0].text).toContain("PR #5 (agent/fix-7) тепер має конфлікти з main");
+			const messages = s.sessions.get("tg--1001-7")!.messages;
+			expect(messages).toHaveLength(2);
+			expect(messages[1]).toContain("merge origin/main");
+			expect(messages[1]).toContain("gh pr checks --watch");
+		});
+
+		it("PR без конфліктів, пуш не в головну гілку й PR не бота ігноруються", async () => {
+			const s = setup();
+			await s.agent.start("tg--1001-7", { prompt: "p", repo: "me/bot", name: "fix" });
+			mergeable = [{ mergeable: true, mergeable_state: "clean" }];
+			await s.hook("push", push());
+			mergeable = [{ mergeable: false, mergeable_state: "dirty" }];
+			await s.hook("push", push({ ref: "refs/heads/agent/fix-7" }));
+			pullRepo = "evil/bot";
+			await s.hook("push", push());
 			expect(s.tgCalls("sendMessage")).toEqual([]);
 			expect(s.sessions.get("tg--1001-7")!.messages).toHaveLength(1);
 		});
