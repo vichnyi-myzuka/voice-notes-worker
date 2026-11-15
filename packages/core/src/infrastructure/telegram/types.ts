@@ -41,7 +41,7 @@ export type TgEntity = TgTextLink | { type: "expandable_blockquote"; offset: num
 type ChatId = string | number;
 type MessageRef = { message_id: number };
 // Inline-кнопки під повідомленням: callback_data (до 64 байт) повертається боту в callback_query.
-export type TgInlineKeyboard = { inline_keyboard: { text: string; callback_data: string }[][] };
+export type TgInlineKeyboard = { inline_keyboard: ({ text: string; callback_data: string } | { text: string; url: string })[][] };
 
 // Методи Bot API, які використовує воркер: параметри й результат. Ключі — назви методів.
 export type TgMethods = {
@@ -75,10 +75,16 @@ export type TgMethods = {
 		result: boolean;
 	};
 	getFile: { params: { file_id: string }; result: { file_path: string } };
+	getMe: { params: Record<string, never>; result: { id: number; username?: string } };
+	// Керовані боти (Bot API 9.6): токен бота, створеного власником через менеджера
+	getManagedBotToken: { params: { user_id: number }; result: string };
+	setWebhook: { params: { url: string; secret_token: string; allowed_updates: string[] }; result: boolean };
 };
 
 // Натискання inline-кнопки: хто натиснув, під яким повідомленням і що було в callback_data.
 export type TgCallbackQuery = { id: string; from: { id: number }; message?: { message_id: number; chat: { id: number; type: string }; text?: string; message_thread_id?: number }; data?: string };
 
 // Оновлення з вебхука: повідомлення (приват), дописи каналу й натискання кнопок.
-export type TgUpdate = { message?: TgMessage; channel_post?: TgMessage; callback_query?: TgCallbackQuery };
+// managed_bot: власник створив бота через менеджера (посилання t.me/newbot/...); токен забирають через getManagedBotToken.
+export type TgManagedBot = { user: { id: number }; bot: { id: number; username?: string } };
+export type TgUpdate = { message?: TgMessage; channel_post?: TgMessage; callback_query?: TgCallbackQuery; managed_bot?: TgManagedBot };
