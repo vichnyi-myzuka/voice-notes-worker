@@ -1,5 +1,5 @@
 import { QUOTE_CLOSE, QUOTE_OPEN } from "@voice-notes/telegram-format";
-import type { DeployInfo, DeployStage, PostBoard, PostButtons, PostChat, PostRef, PostAnswers, PostStore, SessionStore, TopicState, Tracked, WatchTarget } from "../../domain/agent";
+import { renderHeader, type DeployInfo, DeployStage, PostBoard, PostButtons, PostChat, PostRef, PostAnswers, PostStore, SessionStore, TopicState, Tracked, WatchTarget } from "../../domain/agent";
 
 export const HEADER_DEPLOYED_MAX = 150; // шапка згорнутого поста після успішного деплою
 export const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096
@@ -49,17 +49,21 @@ export class Posts implements PostBoard {
 
 	// Оновлює пост сесії на місці. false — поста немає чи редагування не вдалось.
 	async show(id: string, w: WatchTarget, status: string, final = false, answers?: PostAnswers, mergeable = false, retry = false): Promise<boolean> {
-		if (!w.postId || !this.chat.enabled) return false;
+		const postId = w.postId;
+		if (!postId || !this.chat.enabled) return false;
+		// Шапка могла змінитись після початку стеження (set-repo, /model): актуальна лежить у сесії, а не в записі стеження.
+		const stored = (await this.sessions.session(id))?.post;
+		if (stored?.parts && stored.postId === postId) w = { ...w, header: stored.header };
 		// Стан деплою цього PR (запит на схвалення, результат) дописується під станом сесії; останній показаний стан запам'ятовується,
 		// щоб вебхук GitHub міг перемалювати пост (див. applyDeploy).
-		const deploy = await this.records.deploy(w.postId);
-		await this.records.saveLast(w.postId, { status, final, mergeable });
+		const deploy = await this.records.deploy(postId);
+		await this.records.saveLast(postId, { status, final, mergeable });
 		// Кнопки: поки працює — «Стоп»; після — «Повторити» (ліміти) чи «Змерджити» (є PR, деплою ще немає); після деплою — лише «Видалити».
 		const buttons: PostButtons = deploy?.done ? "dismiss" : !final ? "working" : retry ? "retry" : mergeable && !deploy ? "mergeable" : "done";
 		const review = deploy?.runId && deploy.repo ? { repo: deploy.repo, runId: deploy.runId } : undefined;
 		// Успішний деплой: підсумок агента вже не актуальний, пост згортається до короткої шапки й результату деплою.
 		const text = deploy?.done ? this.text(w, deploy.text, true, HEADER_DEPLOYED_MAX) : this.text(w, deploy ? `${status}\n\n${deploy.text}` : status, final);
-		const shown = await this.chat.edit({ chatId: w.chatId, postId: w.postId, text, session: w.turn ? undefined : { id, url: w.url }, buttons, answers, review });
+		const shown = await this.chat.edit({ chatId: w.chatId, postId, text, session: w.turn ? undefined : { id, url: w.url }, buttons, answers, review });
 		// Табло й іконка теми завжди збігаються: фінальний стан у пості (✅ / ❌ чи стадія деплою) тут же виставляє й іконку
 		// (повтор того ж стану в setTopicIcon пропускається); проміжні стани й питання іконку ставлять самі.
 		if (final && w.threadId) {
@@ -67,6 +71,22 @@ export class Posts implements PostBoard {
 			if (state) await this.chat.setIcon(w.chatId, w.threadId, state);
 		}
 		return shown;
+	}
+
+	// Налаштування сесії змінились: шапка перебудовується й пост перемальовується з тим самим станом. Сесії без збережених частин шапки
+	// (створені до цієї можливості) не чіпаємо.
+	refreshHeader(id: string): Promise<boolean> {
+		return this.enqueue(async (): Promise<boolean> => {
+			const tracked = await this.sessions.session(id);
+			const post = tracked?.post;
+			if (!tracked || !post?.parts) return false;
+			const header = renderHeader(post.parts, tracked);
+			if (header === post.header) return false;
+			await this.sessions.saveSession(id, { ...tracked, post: { ...post, header } } satisfies Tracked);
+			const last = await this.records.last(post.postId);
+			if (!last || !post.chatId || !post.url) return false; // стану ще не показували: шапку підхопить перша ж правка
+			return this.show(id, { chatId: post.chatId, url: post.url, postId: post.postId, header, ...(post.threadId && { threadId: post.threadId }) }, last.status, last.final, undefined, last.mergeable);
+		}) as Promise<boolean>;
 	}
 
 	// Ставить правку в чергу після попередніх; спостереження могло закінчитись, поки чекали, тож працю виконує викликач.

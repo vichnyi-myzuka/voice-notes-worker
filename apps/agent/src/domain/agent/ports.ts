@@ -76,6 +76,8 @@ export interface OpencodeClient {
 export interface PostBoard {
 	// Оновлює пост на місці. false — поста немає чи редагування не вдалось.
 	show(id: string, w: WatchTarget, status: string, final?: boolean, answers?: PostAnswers, mergeable?: boolean, retry?: boolean): Promise<boolean>;
+	// Налаштування сесії (репозиторій, модель) змінились: перебудовує шапку поста й перемальовує його. false — нічого не змінилось.
+	refreshHeader(id: string): Promise<boolean>;
 	// Правки поста йдуть у черзі: запізніла проміжна правка не має затирати підсумок.
 	enqueue(edit: () => Promise<unknown>): Promise<unknown>;
 	settled(): Promise<void>;

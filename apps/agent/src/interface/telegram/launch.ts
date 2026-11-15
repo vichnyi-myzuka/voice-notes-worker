@@ -1,5 +1,5 @@
 import { tg, tgSendMessage, type BotEnv } from "@voice-notes/core";
-import { MCP_LABELS, MCP_NAMES, OAUTH_MCP_NAMES, folderFor, type Agent, type ImageRef, type McpFlags, type McpName } from "../../domain/agent";
+import { MCP_LABELS, MCP_NAMES, OAUTH_MCP_NAMES, launchSettings, renderHeader, type HeaderParts, type Agent, type ImageRef, type McpFlags, type McpName } from "../../domain/agent";
 import { QUOTE_CLOSE, QUOTE_OPEN, callback, createTopic, removeMessage, sendChat } from "../../infrastructure/chat";
 import { type Stopwatch } from "../../timing";
 import type { KnownRepo, Route } from "../../application/task";
@@ -47,12 +47,14 @@ export async function launchSession(env: BotEnv, agent: Agent, p: Pending, repo:
 	// Один пост на сесію: агент оновлює його на місці (⏳ Працює → підсумок), нових повідомлень про стан немає.
 	// Розшифровка голосового — згорнута цитата під репозиторієм (її не диктували, місця не займає); текст показується як є.
 	// Гілка agent/<тека> є лише в сесії з репозиторієм.
-	const where = [repo ? `📦 ${repo}\n🌿 agent/${folderFor(id, route.name)}` : "", model ? `🤖 ${model}` : "", ...on.map((name) => MCP_LABELS[name])].filter(Boolean).join("\n");
-	const header = (file ? [where, `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}`].filter(Boolean).join("\n\n") : `${moved ? `${clipped}\n\n` : ""}${where}`).trim();
+	// Налаштування (репозиторій, модель) можуть змінитись пізніше, тому окремо від них зберігаємо решту шапки (parts) і перебудовуємо шапку.
+	const flags = Object.fromEntries(on.map((name) => [name, true]));
+	const parts: HeaderParts = file ? { tail: `${QUOTE_OPEN}🗣 ${clipped}${QUOTE_CLOSE}` } : moved ? { lead: clipped } : {};
+	const header = renderHeader(parts, launchSettings(id, { ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...flags }));
 	const postId = await sendChat(env, chat, [header, "⏳ Запускаю"].filter(Boolean).join("\n\n"), { id, url }, "working", undefined, undefined, thread);
 	sw?.mark("post");
 	// Запуск (холодний старт контейнера, клон) іде в Durable Object і не залежить від життя цього запиту; збій він покаже в пості.
-	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...Object.fromEntries(on.map((name) => [name, true])), ...(images && { images }) }, { chatId: chat, url, postId, header, ...(thread && { threadId: thread }), ...(created && { title }) });
+	await agent.begin(id, { prompt, ...(repo && { repo }), ...(route.name && { name: route.name }), ...(model && { model }), ...flags, ...(images && { images }) }, { chatId: chat, url, postId, header, parts, ...(thread && { threadId: thread }), ...(created && { title }) });
 	sw?.mark("begin");
 	// Пост уже містить задачу (для голосового — транскрипт), тож оригінал прибираємо; лишається лише приватний текст без теми.
 	if (moved || file) await removeMessage(env, chat, messageId);

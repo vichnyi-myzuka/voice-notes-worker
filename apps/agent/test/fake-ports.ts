@@ -87,16 +87,18 @@ export function fakePosts() {
 	const marks: boolean[] = [];
 	const icons: string[] = [];
 	const renames: string[] = [];
+	const refreshed: string[] = [];
 	let queue: Promise<unknown> = Promise.resolve();
 	const posts: PostBoard = {
 		show: async (id, _w, status, final = false, answers) => (shown.push({ id, status, final, answers }), true),
+		refreshHeader: async (id) => (refreshed.push(id), true),
 		enqueue: (edit) => (queue = queue.catch(() => undefined).then(edit)),
 		settled: async () => void (await queue.catch(() => undefined)),
 		mark: async (_w, on) => void marks.push(on),
 		icon: async (_w, state) => void icons.push(state),
 		rename: async (_w, title) => (renames.push(title), true),
 	};
-	return { posts, shown, marks, icons, renames };
+	return { posts, shown, marks, icons, renames, refreshed };
 }
 
 // Чат поста: записує правки, реакції й іконки. edits.at(-1) — останній показаний стан.

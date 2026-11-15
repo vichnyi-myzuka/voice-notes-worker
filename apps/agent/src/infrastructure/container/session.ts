@@ -236,6 +236,7 @@ export class AgentSession extends DurableObject<Env> {
 		if (!(await hasModel(this.opencode(), model))) return false;
 		if (await sessionExists(this.opencode(), tracked.ocId)) await switchModel(this.opencode(), tracked.ocId, model);
 		await this.store.saveSession(id, { ...tracked, model: requested } satisfies Tracked);
+		await this.posts.refreshHeader(id).catch((err) => console.error("refresh header failed:", err)); // пост показує модель
 		return true;
 	}
 
