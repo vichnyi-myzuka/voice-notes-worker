@@ -7,4 +7,4 @@
 **Наслідки.**
 - Підготовка тек і створення сесій виконуються по черзі (`Computer.serial`): паралельні `git clone` одного репозиторію псують один одного.
 - Клас лишається `AgentSession` історично: перейменування потребувало б міграції Durable Object.
-- Усередині клас — фасад над модулями (`store`, `jobs`, `watcher`, `progress`, `limits`, `mcp`, `computer`, `posts`, `forms`, `proxy`, `state`, `config`; розбиття — `docs/agent-refactor.md`); зовні його бачать як порт `Agent` (`Sessions & Computer & Deploys`).
+- Усередині клас — фасад: правила (черга завдань, стеження, пости, форми, MCP, ліміти) живуть в `application` і працюють через порти `domain/agent/ports.ts`, а в `infrastructure/container` лишаються адаптери (сховище DO, контейнер, OpenCode, Telegram, GitHub, OAuth); розбиття — `docs/agent-refactor.md`. Зовні його бачать як порт `Agent` (`Sessions & Computer & Deploys`).
