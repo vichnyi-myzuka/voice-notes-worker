@@ -16,6 +16,7 @@ import { MCP_NAMES, type McpName, type OAuthMcpName } from "../../../domain/agen
 import type { OAuthToken } from "@voice-notes/oauth";
 import { CLOUDFLARE_MCP_URL, SILPO_MCP_URL } from "../logins";
 import { REPORT_SITE_FILES } from "./report-site";
+import { WORKFLOW_SKILL_FILES } from "./skills";
 
 // Файли, які воркер розкладає в контейнер сам (а не кладе в образ): вони змінюються часто, і від цього не мають скидатися знімки
 // та історія сесій. Нові сесії одразу працюють з актуальними версіями; старі сесії зберігають своє.
@@ -58,6 +59,8 @@ export const PAYLOAD: PayloadFile[] = [
 	// Скіл для сайтів-звітів: агент підхоплює його сам за description. OpenCode читає ~/.config/opencode/skills, claude — ~/.claude/skills.
 	{ path: "/root/.config/opencode/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
 	{ path: "/root/.claude/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
+	// Скіли робочого процесу (Matt Pocock, див. skills.ts)
+	...WORKFLOW_SKILL_FILES,
 	{ path: "/usr/local/bin/session-prep", mode: "755", content: sessionPrep },
 	// Запобіжник: пуш у main/master відхиляється (core.hooksPath задано в образі)
 	{ path: "/usr/local/lib/git-hooks/pre-push", mode: "755", content: prePush },
