@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { REPORT_SITE_DIR, REPORT_SITE_FILES } from "../src/infrastructure/container/report-site";
+import { REPORT_SITE_DIR, REPORT_SITE_FILES } from "../src/infrastructure/container/computer/report-site";
 
 // Усі файли з payload/report-site/ (без суфікса .tpl), рекурсивно.
 const onDisk = (dir: string, prefix = ""): string[] =>

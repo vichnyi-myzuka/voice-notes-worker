@@ -3,22 +3,22 @@ import type { Env } from "../../env";
 import { folderFor, type McpAnswer, type McpName, type OAuthMcpName, type ImageRef, type DeployInfo, type PostRef, type AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 import { stopwatch } from "../../timing";
 import { removeTopic } from "../chat";
-import { CLEANUP } from "./cleanup";
+import { CLEANUP } from "./computer";
 import { Computer } from "./computer";
-import { Workspace } from "./workspace";
+import { Workspace } from "./computer";
 import { JOB_RETRY_MS, WATCH_INTERVAL_MS, publishEnv } from "./config";
-import { Forms } from "./forms";
-import { loadImages } from "./images";
+import { Forms } from "./progress";
+import { loadImages } from "./progress";
 import { Jobs } from "./jobs";
-import { Limits } from "./limits";
+import { Limits } from "./jobs";
 import { Mcp } from "./mcp";
 import { createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
-import { Posts } from "./posts";
+import { Posts } from "./progress";
 import { Progress } from "./progress";
-import { WebProxy } from "./proxy";
+import { WebProxy } from "./computer";
 import { FORM_PREFIX, type PendingForm, type Tracked } from "./state";
-import { SessionStore } from "./store";
-import { Watcher } from "./watcher";
+import { SessionStore } from "./state";
+import { Watcher } from "./jobs";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession

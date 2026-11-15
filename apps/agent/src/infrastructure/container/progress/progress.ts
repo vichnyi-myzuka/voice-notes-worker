@@ -1,15 +1,15 @@
 import { workersLlm } from "@voice-notes/core";
-import type { WatchTarget } from "../../domain/agent";
-import type { ChatEnv, ContainerEnv } from "../../env";
-import { renameTopic, setTopicIcon, type Answers, type TopicState } from "../chat";
+import type { WatchTarget } from "../../../domain/agent";
+import type { ChatEnv, ContainerEnv } from "../../../env";
+import { renameTopic, setTopicIcon, type Answers, type TopicState } from "../../chat";
 import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
-import { WORKING, progressMs } from "./config";
+import { WORKING, progressMs } from "../config";
 import type { Forms } from "./forms";
 import { describeCall, narrate, remember } from "./narrate";
-import type { OpencodeForm } from "./opencode";
+import type { OpencodeForm } from "../opencode";
 import type { Posts } from "./posts";
-import type { PendingForm, Tracked, Watch } from "./state";
-import type { SessionStore } from "./store";
+import type { PendingForm, Tracked, Watch } from "../state";
+import type { SessionStore } from "../state";
 import { retitle } from "./title";
 
 // Службові символи, якими позначено цитату в заголовку поста: моделі вони не потрібні.

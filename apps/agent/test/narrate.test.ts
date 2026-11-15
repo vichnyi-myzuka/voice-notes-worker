@@ -1,6 +1,6 @@
 import type { Llm } from "@voice-notes/core";
 import { describe, expect, it, vi } from "vitest";
-import { describeCall, narrate, redact, remember } from "../src/infrastructure/container/narrate";
+import { describeCall, narrate, redact, remember } from "../src/infrastructure/container/progress/narrate";
 
 const llmReturning = (status: unknown): Llm & { requests: { user: string }[] } => {
 	const requests: { user: string }[] = [];

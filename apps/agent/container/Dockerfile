@@ -28,7 +28,7 @@ RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
 	&& npm cache clean --force
 
 # MCP-сервер Google Calendar (https://github.com/nspady/google-calendar-mcp, MIT): сесія запускає його локально (stdio), коли просили Календар.
-# Версія збігається з CALENDAR_MCP_VERSION у src/infrastructure/container/payload.ts (там запасний запуск через npx, якщо образ старий).
+# Версія збігається з CALENDAR_MCP_VERSION у src/infrastructure/container/computer/payload.ts (там запасний запуск через npx, якщо образ старий).
 ARG CALENDAR_MCP_VERSION=2.8.1
 RUN npm install -g @cocal/google-calendar-mcp@${CALENDAR_MCP_VERSION} \
 	&& npm cache clean --force
@@ -36,7 +36,7 @@ RUN npm install -g @cocal/google-calendar-mcp@${CALENDAR_MCP_VERSION} \
 COPY entrypoint.sh /entrypoint.sh
 COPY git-auth.sh /usr/local/lib/git-auth.sh
 # Те, що змінюється часто (AGENTS.md, publish, session-prep, git-хук), в образ не входить: воркер розкладає ці файли сам при
-# кожному старті контейнера й після змін (див. payload/ і src/infrastructure/container/payload.ts). Так оновлення інструкцій
+# кожному старті контейнера й після змін (див. payload/ і src/infrastructure/container/computer/payload.ts). Так оновлення інструкцій
 # чи команд не потребує нового образу, а образ новим сесіям не потрібен; знімки зі старих образів відновлюються з історією.
 RUN mkdir -p /root/.config/opencode /root/.claude /usr/local/lib/git-hooks \
 	&& chmod +x /entrypoint.sh \

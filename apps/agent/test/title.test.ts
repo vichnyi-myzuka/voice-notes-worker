@@ -1,6 +1,6 @@
 import type { Llm } from "@voice-notes/core";
 import { describe, expect, it, vi } from "vitest";
-import { TITLE_MAX, cleanTitle, retitle } from "../src/infrastructure/container/title";
+import { TITLE_MAX, cleanTitle, retitle } from "../src/infrastructure/container/progress/title";
 
 const llmReturning = (title: unknown): Llm & { requests: { user: string }[] } => {
 	const requests: { user: string }[] = [];

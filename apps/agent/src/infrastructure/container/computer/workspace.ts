@@ -1,6 +1,6 @@
-import type { ContainerEnv, GithubEnv, McpEnv } from "../../env";
+import type { ContainerEnv, GithubEnv, McpEnv } from "../../../env";
 import { WRITER, mcpConfig, type McpWanted } from "./payload";
-import { sessionDir } from "./state";
+import { sessionDir } from "../state";
 
 // Теки сесій у контейнері: клон репозиторію й worktree (session-prep) та конфіг MCP для сесії. Про життя контейнера, чат і записи
 // сесій не знає: контейнер має бути вже запущений (Computer.ensureRunning), а виклики йдуть по черзі (Computer.serial).

@@ -1,7 +1,7 @@
 // Входи в сервіси власника для MCP-серверів у контейнері сесії (див. mcpConfig у payload.ts). Саму логіку OAuth дає @voice-notes/oauth.
 // Власник один раз відкриває сторінку входу; токени живуть у сховищі Durable Object, у контейнер іде лише короткий access-токен.
 import { OAuthLogin } from "@voice-notes/oauth";
-import type { OAuthMcpName } from "../../domain/agent";
+import type { OAuthMcpName } from "../../../domain/agent";
 
 export const SILPO_MCP_URL = "https://mcp.silpo.ua/mcp";
 const SILPO_ISSUER = "https://mcp.silpo.ua";

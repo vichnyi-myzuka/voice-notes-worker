@@ -1,5 +1,5 @@
-import type { ImageRef, McpFlags, StartInput, WatchTarget } from "../../domain/agent";
-import type { Choice } from "./activity";
+import type { ImageRef, McpFlags, StartInput, WatchTarget } from "../../../domain/agent";
+import type { Choice } from "../progress";
 
 // Що Durable Object тримає у сховищі і за якими ключами. Усі ключі й форми записів — тут, щоб модулі не вгадували їх самі.
 

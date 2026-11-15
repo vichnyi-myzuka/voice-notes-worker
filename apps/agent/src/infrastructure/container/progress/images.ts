@@ -1,6 +1,6 @@
 import { downloadTelegramFile, tg, type BotEnv } from "@voice-notes/core";
-import type { ImageRef } from "../../domain/agent";
-import type { PromptFile } from "./opencode";
+import type { ImageRef } from "../../../domain/agent";
+import type { PromptFile } from "../opencode";
 
 // Зображення між Telegram і агентом.
 // Вхід: фото від власника завантажується з Telegram і йде в OpenCode як вкладення (data:-посилання), тож модель бачить саме зображення.

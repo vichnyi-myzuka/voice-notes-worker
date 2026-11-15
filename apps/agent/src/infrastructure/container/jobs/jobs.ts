@@ -1,11 +1,11 @@
-import type { ImageRef, StartInput, WatchTarget } from "../../domain/agent";
-import type { ChatEnv, ContainerEnv } from "../../env";
-import { stamp } from "../../timing";
-import { sendChat } from "../chat";
-import { JOB_ATTEMPTS, JOB_STALE_MS, WORKING } from "./config";
-import type { Posts } from "./posts";
-import type { Job } from "./state";
-import type { SessionStore } from "./store";
+import type { ImageRef, StartInput, WatchTarget } from "../../../domain/agent";
+import type { ChatEnv, ContainerEnv } from "../../../env";
+import { stamp } from "../../../timing";
+import { sendChat } from "../../chat";
+import { JOB_ATTEMPTS, JOB_STALE_MS, WORKING } from "../config";
+import type { Posts } from "../progress";
+import type { Job } from "../state";
+import type { SessionStore } from "../state";
 
 // Що завдання робить, коли до нього дійшла черга: старт сесії, уточнення й стеження (реалізує AgentSession).
 export type JobRunner = {
