@@ -33,6 +33,12 @@ ARG CALENDAR_MCP_VERSION=2.8.1
 RUN npm install -g @cocal/google-calendar-mcp@${CALENDAR_MCP_VERSION} \
 	&& npm cache clean --force
 
+# Скіли робочого процесу (Matt Pocock, MIT; див. skills/README.md): майже не змінюються, тож лежать в образі, а не в payload/.
+# OpenCode читає ~/.config/opencode/skills, claude — ~/.claude/skills. Оновлення скілів потребує нового образу (знімок диска
+# зі старим образом їх не побачить, доки його не скинути).
+COPY skills /root/.config/opencode/skills
+COPY skills /root/.claude/skills
+
 COPY entrypoint.sh /entrypoint.sh
 COPY git-auth.sh /usr/local/lib/git-auth.sh
 # Те, що змінюється часто (AGENTS.md, publish, session-prep, git-хук), в образ не входить: воркер розкладає ці файли сам при
