@@ -38,8 +38,25 @@
 - [x] Поширити правило лінтера на напрямок шарів (`.oxlintrc.json`) на `apps/notes/src/application/**` (`application` не імпортує `infrastructure` і `interface`), перевірити навмисним порушенням.
 - [x] Оновити `docs/agent-refactor.md` (цей файл) і сайт архітектури (`apps/docs/web/src/diagrams.tsx` або `content.ts`), якщо зміниться структура модулів.
 
-## Етап 4
+## Етап 4: ядро агента в `application` через порти
 
-- [x] `infrastructure/container` більше не плоский: модулі розкладено по теках `state`, `opencode`, `logins`, `computer`, `mcp`, `progress`, `jobs` (кожна з `index.ts`; опис у `docs/agent.md`). Поведінка й ключі сховища не змінилися.
-- [x] Ядро винесено з `infrastructure/container` в `application` через порти (`domain/agent/ports.ts`: `SessionStore`, `Scheduler`, `Notices`, `LimitProbe`; типи записів — `domain/agent/records.ts`): `Jobs`, `Limits`, чисті `activity`, `narrate`, `title`, розбір `set-repo` і з'єднань, `extractImages`. Адаптери — `container/adapters.ts`; тести на фейкових портах (`test/jobs.test.ts`).
-- [ ] Лишилось перенести так само `Watcher`, `Progress`, `Forms`, `Posts` (порти: клієнт OpenCode, чат, контейнер) і потік запиту MCP з `Mcp`; ці модулі ще напряму беруть `DurableObjectStorage`, клієнт OpenCode і функції чату.
+Мета: у `infrastructure/container` лишаються лише адаптери (Durable Object, контейнер, OpenCode, Telegram, GitHub, OAuth), а оркестрація й правила живуть в `application/*` і торкаються зовнішнього світу тільки через порти `domain/agent/ports.ts`. Поведінка, ключі сховища й клас `AgentSession` не змінюються. Кожен крок — окремий коміт, після кожного `npm run check` зелений. Лінтер уже забороняє `application` агента імпортувати `infrastructure` і `interface`, тож порушення покаже `npm run lint`.
+
+Зроблено:
+
+- [x] `infrastructure/container` розкладено по теках `state`, `opencode`, `logins`, `computer`, `mcp`, `progress`, `jobs` (кожна з `index.ts`, назовні імпорт лише через нього).
+- [x] Порти `SessionStore`, `Scheduler`, `Notices`, `LimitProbe` (`domain/agent/ports.ts`), типи записів `Job`, `Watch`, `Tracked`, `LimitWait` (`domain/agent/records.ts`). Адаптери — `container/adapters.ts` (`durableScheduler`, `chatNotices`, `claudeLimits`), `SessionStore` на сховищі DO — `state/store.ts`.
+- [x] В `application` перенесено `Jobs` і `Limits` (`application/jobs`, разом із політикою повторів `policy.ts`), чисті `activity`, `narrate`, `title` (`application/progress`), розбір `set-repo` (`application/watch`), розбір з'єднань (`application/computer`), `extractImages` з лімітами (`application/progress/images.ts`). Тести на фейках у пам'яті: `test/fake-ports.ts`, `test/jobs.test.ts`.
+
+Лишилось (порядок від простого до складного; нові порти додавай у `domain/agent/ports.ts`, адаптери — в `container/adapters.ts` чи поруч із відповідним модулем):
+
+- [ ] Порт клієнта OpenCode (`Opencode` у `container/opencode`: промпти, сесії, події, відповіді на форми; `PromptFile`, `cancelForm`, `replyForm`) і порт чату для постів (`Posts`: показ і оновлення поста сесії, іконка теми, деплой). Ці два порти потрібні всім модулям нижче; спершу визнач мінімальний інтерфейс за тим, що модулі реально викликають.
+- [ ] `Forms` (`container/progress/forms.ts`): питання агента з кнопками, стан форми (`PendingForm`, ключі `form:` лишаються в `state.ts`; тип запису можна перенести в `domain/agent/records.ts`, для чого `Choice` з `application/progress/activity.ts` теж треба підняти в `domain`). Залежить від портів сховища форм, OpenCode й постів.
+- [ ] `Progress` (`container/progress/progress.ts`): опис поточної дії, питання агента, іконка й назва теми. Залежить від `SessionStore`, `Posts`, `Forms`, `Llm` (з `@voice-notes/core`).
+- [ ] `Posts` (`container/progress/posts.ts`): розділити на правила (що показати, шапка, обрізання, `DEPLOY_ICON`) і адаптер Telegram (`editChat`, `setTopicIcon`, `sendChat`); правила в `application/progress`, адаптер лишається в `infrastructure`.
+- [ ] `Mcp` (`container/mcp`): потік запиту MCP агентом і відповіді власника (`request-mcp`, кнопки, повторні запити) в `application`; токени, OAuth-входи (`logins`), запис конфігів і оновлення токенів у живому OpenCode лишаються адаптерами (порт на кшталт `McpAccess`: токен сервісу, підключення в теку сесії).
+- [ ] `Watcher` (`container/jobs/watcher.ts`, ~250 рядків; робити останнім): опитування сесій, потік подій OpenCode, ліміти вартості, підсумок. Залежить від усіх портів вище плюс `Computer` (читання файлів зображень, стан контейнера): потрібен порт контейнера (`running`, читання файлу, час останньої активності) на основі вже наявного порту `Computer` чи вужчого його зрізу.
+- [ ] Після кожного перенесеного модуля: перенеси його тести на фейкові порти (`test/fake-ports.ts`), не підміняючи DO; прибери з `container/*/index.ts` зайві реекспорти.
+- [ ] Наприкінці: `session.ts` лишається лише фасадом (RPC-методи порту `Agent`, `alarm`, складання адаптерів і модулів); оновити `docs/agent.md`, ADR 0001, цей файл, `apps/docs/web/src/content.ts` і `diagrams.tsx`.
+
+Підказки: файли переносить скрипт-перейменування імпортів за шаблоном «старий шлях → новий» (`git mv` + виправлення `import`, модуль імпортується лише через `index.ts` своєї теки, тести можуть імпортувати глибше); `export *` в `index.ts` теки відкриває все, що експортують її файли, тож можна звузити до потрібних імен.
