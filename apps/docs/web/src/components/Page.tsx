@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { ThemeToggle } from "./ThemeToggle";
 
 // Каркас сторінки: заголовок, підзаголовок (період/джерело), перемикач теми, вміст
-export function Page({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
+export function Page({ title, subtitle, nav, children }: { title: string; subtitle?: string; nav?: ReactNode; children: ReactNode }) {
   return (
     <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6">
       <header className="flex items-start justify-between gap-4">
@@ -12,6 +12,7 @@ export function Page({ title, subtitle, children }: { title: string; subtitle?: 
         </div>
         <ThemeToggle />
       </header>
+      {nav}
       {children}
     </main>
   );

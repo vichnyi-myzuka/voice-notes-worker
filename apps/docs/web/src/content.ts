@@ -1,6 +1,9 @@
 // Короткі описи роботи системи (з docs/notes.md, docs/agent*.md). Змінилась поведінка: онови тут і в docs/.
-export const how = [
+export type Page = "overview" | "notes" | "agent" | "sites" | "decisions";
+
+export const how: { page: Page; title: string; subtitle: string; points: string[] }[] = [
   {
+    page: "notes",
     title: "Бот нотаток (apps/notes)",
     subtitle: "Голос, текст і фото стають нотатками в Telegram і задачами в Todoist",
     points: [
@@ -10,6 +13,7 @@ export const how = [
     ],
   },
   {
+    page: "agent",
     title: "Агент (apps/agent)",
     subtitle: "Кодувальні сесії OpenCode в одному контейнері Cloudflare",
     points: [
@@ -23,6 +27,7 @@ export const how = [
     ],
   },
   {
+    page: "sites",
     title: "Сайти й документація (apps/sites, apps/docs)",
     subtitle: "Статичні сторінки під Cloudflare Access",
     points: [
@@ -31,6 +36,7 @@ export const how = [
     ],
   },
   {
+    page: "overview",
     title: "Принципи коду",
     subtitle: "Правила з AGENTS.md",
     points: [
