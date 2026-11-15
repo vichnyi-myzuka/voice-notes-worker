@@ -340,14 +340,18 @@ describe("AgentSession", () => {
 			await session.start(ID, { prompt: "Задача" });
 			expect(opencode.syncs).toHaveLength(1);
 			const byPath = Object.fromEntries(opencode.syncs[0].map((f) => [f.path, f]));
-			expect(Object.keys(byPath).filter((path) => !path.startsWith("/usr/local/share/report-site/")).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/diagnose/SKILL.md", "/root/.claude/skills/grill-me/SKILL.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.claude/skills/tdd/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/diagnose/SKILL.md", "/root/.config/opencode/skills/grill-me/SKILL.md", "/root/.config/opencode/skills/report-site/SKILL.md", "/root/.config/opencode/skills/tdd/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/bin/set-repo", "/usr/local/lib/git-hooks/pre-push"]);
+			expect(Object.keys(byPath).filter((path) => !path.startsWith("/usr/local/share/report-site/") && !path.includes("/skills/") || path.includes("/skills/report-site/")).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/bin/set-repo", "/usr/local/lib/git-hooks/pre-push"]);
 			expect(byPath["/usr/local/bin/publish"].mode).toBe("755");
 			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("Publishing small static sites");
 			expect(byPath["/root/.claude/CLAUDE.md"].content).toBe(byPath["/root/.config/opencode/AGENTS.md"].content);
 			expect(byPath["/usr/local/bin/session-prep"].content.startsWith("#!/bin/sh")).toBe(true);
 			expect(byPath["/root/.config/opencode/skills/report-site/SKILL.md"].content).toContain("name: report-site");
-			expect(byPath["/root/.claude/skills/grill-me/SKILL.md"].content).toContain("name: grill-me");
-			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("grill-me");
+			for (const root of ["/root/.config/opencode/skills", "/root/.claude/skills"]) {
+				for (const name of ["grilling", "grill-me", "tdd", "diagnosing-bugs", "codebase-design", "code-review"]) expect(byPath[`${root}/${name}/SKILL.md`].content).toContain(`name: ${name}`);
+				expect(byPath[`${root}/tdd/mocking.md`]).toBeDefined();
+				expect(byPath[`${root}/diagnosing-bugs/scripts/hitl-loop.template.sh`].mode).toBe("755");
+			}
+			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("`grilling`");
 			expect(byPath["/usr/local/bin/new-report-site"].mode).toBe("755");
 			expect(byPath["/usr/local/share/report-site/package.json"].content).toContain('"name": "report-site"');
 		});
