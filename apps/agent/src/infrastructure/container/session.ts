@@ -7,6 +7,7 @@ import { CLEANUP } from "./cleanup";
 import { Computer } from "./computer";
 import { Workspace } from "./workspace";
 import { JOB_RETRY_MS, WATCH_INTERVAL_MS, publishEnv } from "./config";
+import { Handoffs } from "./handoff";
 import { Forms } from "./forms";
 import { loadImages } from "./images";
 import { Jobs } from "./jobs";
@@ -40,6 +41,7 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly jobs: Jobs;
 	private readonly progress: Progress;
 	private readonly watcher: Watcher;
+	private readonly handoffs: Handoffs;
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.computer = new Computer(ctx, env);
@@ -51,7 +53,8 @@ export class AgentSession extends DurableObject<Env> {
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, this.workspace, (id, tracked, text) => this.tell(id, tracked, text));
 		this.progress = new Progress(env, this.store, this.posts, this.forms);
-		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp);
+		this.handoffs = new Handoffs(env, this.store, (id, input, target) => this.jobs.begin(id, input, target));
+		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp, this.handoffs);
 		this.jobs = new Jobs(ctx, env, this.store, this.posts, {
 			running: () => this.computer.running,
 			start: (id, input) => this.start(id, input),
