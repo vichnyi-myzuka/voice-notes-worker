@@ -1,4 +1,4 @@
-import type { DeployInfo, FormAnswers, LastShown, PostRef, Job, LimitProbe, LimitWait, Notices, OpencodeClient, PendingForm, PostBoard, PostChat, PostEdit, PostStore, Scheduler, SessionStore, Tracked, Watch } from "../src/domain/agent";
+import type { McpAccess, McpName, DeployInfo, FormAnswers, LastShown, PostRef, Job, LimitProbe, LimitWait, Notices, OpencodeClient, PendingForm, PostBoard, PostChat, PostEdit, PostStore, Scheduler, SessionStore, Tracked, Watch } from "../src/domain/agent";
 
 // Фейки портів ядра агента: усе в пам'яті, без Durable Object, чату й мережі.
 export function fakeStore(): SessionStore {
@@ -49,12 +49,14 @@ export function fakeScheduler() {
 export function fakeNotices(enabled = true) {
 	const sent: { id: string; text: string; kind: string }[] = [];
 	const shown: { id: string; text: string }[] = [];
+	const mcpQuestions: { id: string; name: McpName; threadId?: number }[] = [];
 	const notices: Notices = {
 		enabled,
 		show: async (id, _t, text) => (shown.push({ id, text }), false),
 		send: async (id, _t, text, kind) => void sent.push({ id, text, kind }),
+		askMcp: async (id, target, name) => void mcpQuestions.push({ id, name, threadId: target.threadId }),
 	};
-	return { notices, sent, shown };
+	return { notices, sent, shown, mcpQuestions };
 }
 
 export const fakeProbe = (configured: boolean, state: { blocked: boolean; resetAt?: number } | undefined): LimitProbe => ({ configured, read: async () => state });
@@ -123,4 +125,16 @@ export function fakePostStore(): PostStore {
 		takeRef: async (k) => { const r = refs.get(k); refs.delete(k); return r; },
 		forget: async (id) => void (deploys.delete(id), lasts.delete(id)),
 	};
+}
+
+// Доступ до MCP: що налаштовано й у що власник ввійшов; connect записує виклики.
+export function fakeMcpAccess(init: { unconfigured?: McpName[]; loggedOut?: McpName[] } = {}) {
+	const connected: { id: string; flags: string[] }[] = [];
+	const access: McpAccess = {
+		configured: (name) => !init.unconfigured?.includes(name),
+		loggedIn: async (name) => !init.loggedOut?.includes(name),
+		connect: async (id, tracked) => void connected.push({ id, flags: Object.keys(tracked).filter((k) => tracked[k as McpName] === true) }),
+		instructions: (name) => `інструкція ${name}`,
+	};
+	return { access, connected };
 }

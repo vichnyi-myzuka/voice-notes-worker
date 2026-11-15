@@ -11,8 +11,8 @@ import { DEPLOY_ICON, extractImages, type Forms, type Posts, type OutImage, type
 import { sendImages } from "../progress";
 import type { Limits } from "../../../application/jobs";
 import { handedOff, type Handoffs } from "./handoff";
-import { requestedMcp, type Mcp } from "../mcp";
 import { activeSessions, getSession, interrupt, lastAssistant, readEvents, totalTokens, type Opencode, type OpencodeEvent } from "../opencode";
+import { requestedMcp, type Mcp } from "../../../application/mcp";
 import { settedRepo } from "../../../application/watch";
 import { deployKey, type Tracked, type Watch } from "../state";
 import type { SessionStore } from "../state";

@@ -1,4 +1,5 @@
 import type { FormAnswers, LastShown, PostEdit, PendingForm, Job, LimitWait, OpencodeEvent, PostAnswers, PromptFile, SessionInfo, Tracked, TopicState, Watch } from "./records";
+import type { McpName } from "./mcp";
 import type { DeployInfo, PostRef, WatchTarget } from "./types";
 
 // Порти, через які ядро агента (application) торкається зовнішнього світу. Реалізації — в infrastructure/container.
@@ -46,6 +47,8 @@ export interface Notices {
 	show(id: string, target: WatchTarget, text: string, final?: boolean): Promise<boolean>;
 	// Окреме повідомлення в тему сесії; кнопка kind: «retry» (повторити) чи «done».
 	send(id: string, target: { chatId: number; url: string; threadId?: number }, text: string, kind: "retry" | "done"): Promise<void>;
+	// Питання власникові «підключити MCP до сесії?» з кнопками в темі сесії.
+	askMcp(id: string, target: { chatId: number; threadId?: number }, name: McpName, text: string): Promise<void>;
 }
 
 // Ліміти підписки Claude: чи є чим їх перевіряти і що вони показують.
@@ -98,4 +101,13 @@ export interface PostStore {
 	saveRef(key: string, ref: PostRef): Promise<void>;
 	takeRef(key: string): Promise<PostRef | undefined>; // забирається один раз
 	forget(postId: number): Promise<void>; // сесію прибрано: забуваємо деплой і останній стан
+}
+
+// Доступ до сервісів власника (MCP) для сесій: токени й входи, конфіг у теці сесії, живий OpenCode.
+export interface McpAccess {
+	configured(name: McpName): boolean; // чи налаштовано сервіс у воркері (Sure — URL і токен у секретах; решта — завжди)
+	loggedIn(name: McpName): Promise<boolean>; // чи власник ввійшов (для сервісів з OAuth; для решти — true)
+	// Підключає сервіси сесії (прапорці в tracked): запускає контейнер, пише конфіг у теку й вносить сервери в живий OpenCode.
+	connect(id: string, tracked: Tracked): Promise<void>;
+	instructions(name: McpName): string; // інструкція агентові щодо сервісу
 }

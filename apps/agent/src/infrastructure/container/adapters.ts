@@ -1,6 +1,6 @@
 import type { LimitProbe, Notices, Scheduler } from "../../domain/agent";
 import type { ChatEnv, ContainerEnv } from "../../env";
-import { sendChat } from "../chat";
+import { sendChat, sendMcpQuestion } from "../chat";
 import { fetchQuota, isBlocked, resetTime } from "../quota";
 import type { Computer } from "./computer";
 import type { Posts } from "../../application/progress";
@@ -19,6 +19,10 @@ export const chatNotices = (env: ChatEnv, posts: Posts): Notices => ({
 	send: async (id, target, text, kind) => {
 		if (!env.BOT_TOKEN) return;
 		await sendChat({ BOT_TOKEN: env.BOT_TOKEN }, target.chatId, text, { id, url: target.url }, kind, undefined, undefined, target.threadId);
+	},
+	askMcp: async (id, target, name, text) => {
+		if (!env.BOT_TOKEN) return;
+		await sendMcpQuestion({ BOT_TOKEN: env.BOT_TOKEN }, target.chatId, target.threadId, id, name, text);
 	},
 });
 
