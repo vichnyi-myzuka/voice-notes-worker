@@ -1,10 +1,10 @@
-import type { Agent, DeployInfo, McpAnswer, McpName, ImageRef, PostRef, AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
+import type { Agent, DeployInfo, McpAnswer, McpName, OAuthMcpName, ImageRef, PostRef, AgentStatus, ComputerInfo, ConnectionsInfo, RemovedSession, FoundSession, SessionReport, SnapshotInfo, StartInput, WatchTarget } from "../../domain/agent";
 
 // Що має вміти Durable Object, щоб за ним працював порт Agent: він володіє єдиним контейнером і всіма сесіями в ньому.
 export type SessionObject = {
 	start(id: string, input: StartInput): Promise<unknown>;
-	begin(id: string, input: StartInput, target: WatchTarget): Promise<void>;
-	resume(id: string, text: string, target: WatchTarget, images?: ImageRef[]): Promise<void>;
+	begin(id: string, input: StartInput, target?: WatchTarget): Promise<void>;
+	resume(id: string, text: string, target?: WatchTarget, images?: ImageRef[]): Promise<void>;
 	answer(id: string, choice: number | "ok"): Promise<string | undefined>;
 	followUp(id: string, text: string, images?: ImageRef[]): Promise<void>;
 	setModel(id: string, model: string): Promise<boolean>;
@@ -25,15 +25,9 @@ export type SessionObject = {
 	pullTarget(id: string): Promise<{ repo: string; branch: string } | undefined>;
 	snapshot(): Promise<SnapshotInfo>;
 	resetComputer(unlessBusy?: boolean): Promise<boolean>;
-	silpoLoginUrl(origin: string): Promise<string>;
-	silpoCallback(code: string, state: string): Promise<boolean>;
-	silpoConnected(): Promise<boolean>;
-	calendarLoginUrl(origin: string): Promise<string>;
-	calendarCallback(code: string, state: string): Promise<boolean>;
-	calendarConnected(): Promise<boolean>;
-	cloudflareLoginUrl(origin: string): Promise<string>;
-	cloudflareCallback(code: string, state: string): Promise<boolean>;
-	cloudflareConnected(): Promise<boolean>;
+	loginUrl(name: OAuthMcpName, origin: string): Promise<string>;
+	loginCallback(name: OAuthMcpName, code: string, state: string): Promise<boolean>;
+	loginConnected(name: OAuthMcpName): Promise<boolean>;
 	info(): Promise<ComputerInfo>;
 	connections(detail: boolean): Promise<ConnectionsInfo>;
 	fetch(req: Request): Promise<Response>;
@@ -74,15 +68,9 @@ export const durableAgent = (ns: { getByName(name: string): SessionObject }, ori
 		takeRef: (key) => computer().takeRef(key),
 		snapshot: () => computer().snapshot(),
 		resetComputer: (unlessBusy) => computer().resetComputer(unlessBusy),
-		silpoLoginUrl: (origin) => computer().silpoLoginUrl(origin),
-		silpoCallback: (code, state) => computer().silpoCallback(code, state),
-		silpoConnected: () => computer().silpoConnected(),
-		calendarLoginUrl: (origin) => computer().calendarLoginUrl(origin),
-		calendarCallback: (code, state) => computer().calendarCallback(code, state),
-		calendarConnected: () => computer().calendarConnected(),
-		cloudflareLoginUrl: (origin) => computer().cloudflareLoginUrl(origin),
-		cloudflareCallback: (code, state) => computer().cloudflareCallback(code, state),
-		cloudflareConnected: () => computer().cloudflareConnected(),
+		loginUrl: (name, origin) => computer().loginUrl(name, origin),
+		loginCallback: (name, code, state) => computer().loginCallback(name, code, state),
+		loginConnected: (name) => computer().loginConnected(name),
 		info: () => computer().info(),
 		connections: (detail) => computer().connections(detail),
 	};

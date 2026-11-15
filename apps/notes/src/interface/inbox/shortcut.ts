@@ -1,5 +1,5 @@
 import type { RecordingStore } from "../../domain/recording";
-import type { Env } from "../../infrastructure/env";
+import type { Env } from "../../application/env";
 import { safeEqual } from "@voice-notes/core";
 import { enqueueNote } from "../../application/intake";
 

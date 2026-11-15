@@ -24,6 +24,115 @@
   "overrides": [
     {
       "files": [
+        "**/src/domain/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "../[!.]*/*",
+                  "**/{domain,application,infrastructure,interface}/*/*"
+                ],
+                "message": "Імпортуй модуль через його index.ts (../tasks, а не ../tasks/apply): див. AGENTS.md, «Код»."
+              },
+              {
+                "group": [
+                  "@voice-notes/core/*"
+                ],
+                "message": "Пакет core імпортується лише через @voice-notes/core."
+              },
+              {
+                "group": [
+                  "**/application",
+                  "**/infrastructure",
+                  "**/interface",
+                  "**/application/**",
+                  "**/infrastructure/**",
+                  "**/interface/**"
+                ],
+                "message": "Шари: domain не залежить від інших шарів (interface → application → domain, infrastructure реалізує порти): AGENTS.md, «Код»."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "apps/agent/src/application/**",
+        "apps/notes/src/application/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "../[!.]*/*",
+                  "**/{domain,application,infrastructure,interface}/*/*"
+                ],
+                "message": "Імпортуй модуль через його index.ts (../tasks, а не ../tasks/apply): див. AGENTS.md, «Код»."
+              },
+              {
+                "group": [
+                  "@voice-notes/core/*"
+                ],
+                "message": "Пакет core імпортується лише через @voice-notes/core."
+              },
+              {
+                "group": [
+                  "**/infrastructure",
+                  "**/interface",
+                  "**/infrastructure/**",
+                  "**/interface/**"
+                ],
+                "message": "Шари: application залежить лише від domain і портів; адаптери (infrastructure) складає index.ts: AGENTS.md, «Код»."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "**/src/interface/**"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "../[!.]*/*",
+                  "**/{domain,application,infrastructure,interface}/*/*"
+                ],
+                "message": "Імпортуй модуль через його index.ts (../tasks, а не ../tasks/apply): див. AGENTS.md, «Код»."
+              },
+              {
+                "group": [
+                  "@voice-notes/core/*"
+                ],
+                "message": "Пакет core імпортується лише через @voice-notes/core."
+              },
+              {
+                "group": [
+                  "**/infrastructure/container",
+                  "**/infrastructure/container/**"
+                ],
+                "message": "Шари агента: interface працює з Durable Object лише через порт Agent (domain/agent), а не через infrastructure/container. Спільні адаптери chat, github, quota дозволені (ADR 0004)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
         "**/test/**"
       ],
       "rules": {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { describeQuota, fetchQuota, isBlocked, isLimitError, parseQuota, resetTime } from "../src/infrastructure/quota";
+import { isLimitError } from "../src/application/jobs";
+import { describeQuota, fetchQuota, isBlocked, parseQuota, resetTime } from "../src/infrastructure/quota";
 
 const headers = (extra: Record<string, string> = {}) =>
 	new Headers({

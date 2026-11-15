@@ -49,10 +49,11 @@ function fakeContainer() {
 		monitor: () => new Promise<void>(() => {}),
 		setInactivityTimeout: async () => {},
 		// exec не успадковує env контейнера; session-prep друкує шлях теки сесії.
-		async exec(cmd: string[], options?: { env?: Record<string, string> }) {
+		async exec(cmd: string[], options?: { env?: Record<string, string>; stdin?: ReadableStream }) {
 			if (cmd[0] === "node") {
-				// розкладання payload/: окремо від решти, щоб не заважати перевіркам session-prep
-				opencode.syncs.push(JSON.parse(options!.env!.PAYLOAD) as { path: string; mode: string; content: string }[]);
+				// розкладання payload/: окремо від решти, щоб не заважати перевіркам session-prep; JSON іде через stdin, не через env
+				expect(options?.env?.PAYLOAD).toBeUndefined();
+				opencode.syncs.push(JSON.parse(await new Response(options!.stdin).text()) as { path: string; mode: string; content: string }[]);
 				return { output: async () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }) };
 			}
 			opencode.execs.push({ cmd, env: options?.env });
@@ -174,6 +175,7 @@ function setup(extraEnv: Record<string, string> = {}) {
 }
 
 const ID = "session-0001";
+const CHAT_ID = "tg-5-1"; // id сесії, створеної з чату
 
 beforeEach(() => vi.stubGlobal("scheduler", { wait: async () => {} }));
 
@@ -339,13 +341,20 @@ describe("AgentSession", () => {
 			await session.start(ID, { prompt: "Задача" });
 			expect(opencode.syncs).toHaveLength(1);
 			const byPath = Object.fromEntries(opencode.syncs[0].map((f) => [f.path, f]));
-			expect(Object.keys(byPath).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/bin/set-repo", "/usr/local/lib/git-hooks/pre-push"]);
+			expect(Object.keys(byPath).filter((path) => !path.startsWith("/usr/local/share/report-site/") && !path.includes("/skills/") || path.includes("/skills/report-site/")).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/handoff", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/bin/set-repo", "/usr/local/lib/git-hooks/pre-push"]);
 			expect(byPath["/usr/local/bin/publish"].mode).toBe("755");
 			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("Publishing small static sites");
 			expect(byPath["/root/.claude/CLAUDE.md"].content).toBe(byPath["/root/.config/opencode/AGENTS.md"].content);
 			expect(byPath["/usr/local/bin/session-prep"].content.startsWith("#!/bin/sh")).toBe(true);
 			expect(byPath["/root/.config/opencode/skills/report-site/SKILL.md"].content).toContain("name: report-site");
+			for (const root of ["/root/.config/opencode/skills", "/root/.claude/skills"]) {
+				for (const name of ["grilling", "grill-me", "tdd", "diagnosing-bugs", "codebase-design", "code-review"]) expect(byPath[`${root}/${name}/SKILL.md`].content).toContain(`name: ${name}`);
+				expect(byPath[`${root}/tdd/mocking.md`]).toBeDefined();
+				expect(byPath[`${root}/grilling/SKILL.md`].content).toContain("`question` tool");
+			}
+			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("`grilling`");
 			expect(byPath["/usr/local/bin/new-report-site"].mode).toBe("755");
+			expect(byPath["/usr/local/share/report-site/package.json"].content).toContain('"name": "report-site"');
 		});
 
 		it("глобальний конфіг OpenCode: контекст 272k для моделей Claude Agent і автостиснення", async () => {
@@ -907,8 +916,8 @@ describe("AgentSession", () => {
 			const quotaHeaders = (status: string, util: string) => ({ "anthropic-ratelimit-unified-status": status, "anthropic-ratelimit-unified-5h-utilization": util, "anthropic-ratelimit-unified-5h-reset": "4102444800" });
 			const limited = async () => {
 				const t = setup({ BOT_TOKEN: "bot", CLAUDE_CODE_OAUTH_TOKEN: "tok" });
-				await t.session.start(ID, { prompt: "Задача" });
-				await t.session.watch(ID, { chatId: 5, url: "https://agent.example/s/tg-5-1" }); // кнопки беруть id з адреси `tg-…`
+				await t.session.start(CHAT_ID, { prompt: "Задача" }); // кнопки є лише в сесій із чату (id `tg-…`)
+				await t.session.watch(CHAT_ID, { chatId: 5, url: "https://agent.example/s/tg-5-1" });
 				await t.session.alarm();
 				t.opencode.busy.clear();
 				t.opencode.info[ocId] = { outcome: "failed" };
@@ -963,9 +972,9 @@ describe("AgentSession", () => {
 				expect([...plain.store.keys()].some((k) => k.startsWith("limit:"))).toBe(false);
 
 				const t = await limited();
-				expect(t.store.has(`limit:${ID}`)).toBe(true);
-				await t.session.followUp(ID, "продовжуй");
-				expect(t.store.has(`limit:${ID}`)).toBe(false);
+				expect(t.store.has(`limit:${CHAT_ID}`)).toBe(true);
+				await t.session.followUp(CHAT_ID, "продовжуй");
+				expect(t.store.has(`limit:${CHAT_ID}`)).toBe(false);
 			});
 		});
 
@@ -1005,6 +1014,19 @@ describe("AgentSession", () => {
 				const edits = sent.filter((c) => "message_id" in c).map((c) => String(c.text));
 				expect(edits[0]).toContain("⏳ Запускаю контейнер");
 				expect(edits.at(-1)).toContain("⏳ Працює");
+			});
+
+			it("begin і resume без чату (веб-API): сесія стартує в черзі, а стеження й повідомлень у чат немає", async () => {
+				const { session, opencode, store } = setup({ BOT_TOKEN: "bot" });
+				await session.begin(ID, { prompt: "Задача" });
+				await session.alarm();
+				expect(opencode.prompts).toEqual([{ id: ocId, text: "Задача" }]);
+				expect(store.has(`job:${ID}`)).toBe(false);
+				expect(store.has(`watch:${ID}`)).toBe(false);
+				await session.resume(ID, "Ще й це");
+				await session.alarm();
+				expect(opencode.prompts.at(-1)).toEqual({ id: ocId, text: "Ще й це" });
+				expect(sent).toEqual([]);
 			});
 
 			it("збій запуску повторюється з наступним alarm; зрештою пост показує помилку, а не лишається «Запускаю»", async () => {
@@ -1254,6 +1276,31 @@ describe("AgentSession", () => {
 						tool(t.opencode, "r2", "bash", { command: "set-repo acme/other" });
 						await flush();
 						expect(await t.session.pullTarget(SID)).toMatchObject({ repo: "acme/app" });
+					});
+				});
+
+				describe("передача роботи в нову сесію (handoff)", () => {
+					const SID = "tg-1-1";
+					const POST_TG = { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 };
+					const command = "handoff --name fix-login <<'EOF'\nЗроби логін\nEOF";
+
+					it("команда handoff з heredoc створює нову сесію: пост у чаті, завдання в черзі; повтор тієї самої події нічого не дублює", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача", repo: "acme/app" });
+						await t.session.watch(SID, POST_TG);
+						tool(t.opencode, "c1", "bash", { command });
+						await flush();
+						const post = sent.find((c) => String(c.text ?? "").includes("Зроби логін"));
+						expect(post).toBeDefined();
+						expect(post!.text).toContain("📦 acme/app");
+						expect(post!.text).toContain("↪️ Передано з іншої сесії");
+						expect(String(post!.text)).toMatch(/<blockquote expandable>[\s\S]*Зроби логін[\s\S]*<\/blockquote>/);
+						const job = [...t.store.entries()].find(([k]) => k.startsWith("job:tg-1-1-h"));
+						expect(job).toBeDefined();
+						expect(job![1]).toMatchObject({ input: { repo: "acme/app", name: "fix-login" } });
+						tool(t.opencode, "c1", "bash", { command });
+						await flush();
+						expect([...t.store.keys()].filter((k) => k.startsWith("job:tg-1-1-h"))).toHaveLength(1);
 					});
 				});
 

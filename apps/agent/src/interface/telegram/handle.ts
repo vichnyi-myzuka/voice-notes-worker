@@ -1,17 +1,18 @@
 import { DOWNLOAD_MAX_BYTES, downloadTelegramFile, react, safeEqual, tg, tgSendMessage, type BotEnv, type Llm, type TgMessage, type TgUpdate } from "@voice-notes/core";
-import { MCP_WRITES, type Agent, type ImageRef, type McpName } from "../../domain/agent";
-import type { Env } from "../../env";
+import type { Agent, ImageRef } from "../../domain/agent";
+import { planTask, type KnownRepo } from "../../application/task";
+import type { ChatEnv, ContainerEnv, GithubEnv } from "../../env";
 import { stamp, stopwatch } from "../../timing";
 import { removeMessage, sayTemporarily } from "../../infrastructure/chat";
 import { handleButton } from "./buttons";
 import { quotaText, sessionCommand, updateContainer, type Say } from "./commands";
 import { askRepo, proceed, type Pending } from "./launch";
-import { routeTask, type KnownRepo } from "./repo";
+
 
 export const TELEGRAM_PATH = "/telegram";
 
 // Що потрібно обробнику: агент, розпізнавання голосу і спосіб довести роботу до кінця після відповіді Telegram.
-// repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. repo.ts); без них репозиторій задає лише префікс.
+// repos: відомі репозиторії, з яких бот вибирає за вільною фразою (див. application/task); без них репозиторій задає лише префікс.
 // syncCommands: виставляти меню `/`-команд (див. syncCommands); у тестах вимкнено.
 export type TelegramDeps = { agent: Agent; llm: Llm; defer: (work: Promise<unknown>) => void; repos?: KnownRepo[]; sleep?: (ms: number) => Promise<void>; syncCommands?: boolean;
 	// PoC керованих ботів (interface/managed-bots, ін'єкція, щоб модулі не залежали один від одного): /newbot і апдейт managed_bot
@@ -48,7 +49,7 @@ const IMAGE_ONLY = "Користувач надіслав зображення (
 // Cloudflare Access (Telegram не пройде логін), тому захист тут свій: секретний заголовок, а далі лише канал CHAT_ID
 // (дописувати в нього можуть лише адміни) і особистий чат TG_OWNER_ID. Telegram завжди отримує 200 одразу, а робота
 // (Whisper, холодний старт контейнера) йде у фоні: інакше він би повторював запит.
-export async function handleTelegram(req: Request, env: Env, deps: TelegramDeps): Promise<Response> {
+export async function handleTelegram(req: Request, env: ChatEnv & ContainerEnv & GithubEnv, deps: TelegramDeps): Promise<Response> {
 	const token = req.headers.get("x-telegram-bot-api-secret-token") ?? "";
 	if (req.method !== "POST" || !env.TG_WEBHOOK_SECRET || !(await safeEqual(token, env.TG_WEBHOOK_SECRET))) {
 		return new Response("unauthorized", { status: 401 });
@@ -112,71 +113,6 @@ const SESSION_URL = /https?:\/\/\S+\/s\/(tg-[\w-]+)/;
 function textWithLinks(m: TgMessage["reply_to_message"]): string {
 	const entities = [...(m?.entities ?? []), ...(m?.caption_entities ?? [])];
 	return [m?.text ?? m?.caption ?? "", ...entities.flatMap((e) => (e.url ? [e.url] : []))].join("\n");
-}
-
-// «owner/name: задача» на початку тексту — репозиторій для сесії.
-const REPO_PREFIX = /^([\w-][\w.-]*\/[\w-][\w.-]*)\s*:\s*([\s\S]+)$/;
-// «@opus» (чи «@провайдер/модель») перед усім іншим — модель для нової сесії.
-const MODEL_PREFIX = /^@([\w.-]+(?:\/[\w.:-]+)?)\s+([\s\S]+)$/;
-// Голосом «@» не продиктуєш: «модель опус, задача» (чи «model opus …») на початку розшифровки. Лише відомі назви, щоб
-// звичайна задача на кшталт «модель користувача…» не вважалась вибором моделі.
-const SPOKEN_MODELS: Record<string, string> = { opus: "opus", опус: "opus", sonnet: "sonnet", сонет: "sonnet", соннет: "sonnet", haiku: "haiku", хайку: "haiku" };
-const SPOKEN_MODEL_PREFIX = /^(?:модель|model)\s+([\p{L}]+)[\s,.:;!—–-]+([\s\S]+)$/iu;
-
-function modelPrefix(transcript: string): { model: string; task: string } | undefined {
-	const at = MODEL_PREFIX.exec(transcript);
-	if (at) return { model: at[1], task: at[2] };
-	const spoken = SPOKEN_MODEL_PREFIX.exec(transcript);
-	const model = spoken && SPOKEN_MODELS[spoken[1].toLowerCase()];
-	return spoken && model ? { model, task: spoken[2] } : undefined;
-}
-
-// Явне ввімкнення MCP Sure (фінанси власника): «@sure задача» чи голосом «шур, задача» на початку. Без префікса Sure пропонує висновок
-// моделі (routeTask: задача потребує особистих фінансів власника) і вмикає його після підтвердження кнопкою, тож слово «шур» не обов'язкове.
-const SURE_PREFIX = /^(?:@sure|shure|шур|шюр|шуре)[\s,.:;!—–-]+([\s\S]+)$/iu;
-
-// Те саме для MCP Сільпо (покупки в магазині): «@silpo задача» чи голосом «сільпо, задача».
-const SILPO_PREFIX = /^(?:@silpo|silpo|сільпо|сильпо|сілпо)[\s,.:;!—–-]+([\s\S]+)$/iu;
-
-// Те саме для MCP Google Calendar: «@calendar задача» чи голосом «календар, задача».
-const CALENDAR_PREFIX = /^(?:@calendar|calendar|календар|календарю|календаря)[\s,.:;!—–-]+([\s\S]+)$/iu;
-
-// Те саме для MCP Cloudflare (доступ лише для читання): «@cloudflare задача» чи голосом «клаудфлер, задача»; без префікса його вмикає й роутер.
-const CLOUDFLARE_PREFIX = /^(?:@cloudflare|cloudflare|клаудфлер|клауд флер|клаудфлеру|клаудфлера|клаудфлейр|клодфлер)[\s,.:;!—–-]+([\s\S]+)$/iu;
-
-// Шукає префікси моделі, Sure, Сільпо, Календаря і Cloudflare в будь-якому порядку; повертає задачу без них.
-function parsePrefixes(transcript: string): { task: string; model?: string; sure: boolean; silpo: boolean; calendar: boolean; cloudflare: boolean } {
-	let task = transcript;
-	let model: string | undefined;
-	let sure = false;
-	let silpo = false;
-	let calendar = false;
-	let cloudflare = false;
-	for (let i = 0; i < 5; i++) {
-		const m = !model && modelPrefix(task);
-		if (m) ({ model, task } = m);
-		const sm = !sure && SURE_PREFIX.exec(task);
-		if (sm) {
-			task = sm[1];
-			sure = true;
-		}
-		const lm = !silpo && SILPO_PREFIX.exec(task);
-		if (lm) {
-			task = lm[1];
-			silpo = true;
-		}
-		const cm = !calendar && CALENDAR_PREFIX.exec(task);
-		if (cm) {
-			task = cm[1];
-			calendar = true;
-		}
-		const fm = !cloudflare && CLOUDFLARE_PREFIX.exec(task);
-		if (fm) {
-			task = fm[1];
-			cloudflare = true;
-		}
-	}
-	return { task: task.trim(), model, sure, silpo, calendar, cloudflare };
 }
 
 // spoken — уже розшифроване голосове (запис із Shortcut): задача йде як голосова, але Whisper не викликається.
@@ -260,33 +196,12 @@ async function handleMessage(env: BotEnv, msg: TgMessage, inChannel: boolean, { 
 	sw.mark("transcribe");
 	if (!transcript) return void (await say("⚠️ Не розібрав голос, надішли ще раз чи напиши текстом."));
 	// Явний префікс сильніший за здогад репозиторію; назву для теки/гілки модель придумує завжди. У пості видно, що вибрано.
-	const { task, model: requestedModel, sure: forcedSure, silpo: forcedSilpo, calendar: forcedCalendar, cloudflare: forcedCloudflare } = parsePrefixes(transcript);
-	const withRepo = REPO_PREFIX.exec(task);
-	const prompt = withRepo ? withRepo[2].trim() : task;
-	const route = await routeTask(llm, withRepo ? [] : repos, prompt);
+	const plan = await planTask(llm, repos, transcript);
 	sw.mark("route");
-	const repo = withRepo ? withRepo[1] : route.repo;
-	// Sure підключається, коли власник назвав його явно («шур, …», «@sure») або модель побачила, що задача про його фінанси.
-	// Сільпо — явно («сільпо, …», «@silpo») або коли модель побачила, що треба дивитись, що власник купував. Календар, Cloudflare — так само.
-	// Явний префікс вмикає сервіс одразу. Висновок моделі вмикає одразу лише сервіси для читання (Сільпо, Cloudflare); Sure і Календар
-	// (вміють змінювати дані), а також будь-який сумнів моделі, чекають підтвердження кнопкою (ask, див. launch.ts).
-	const ask: McpName[] = [];
-	const decide = (name: McpName, forced: boolean, routed: boolean | undefined): boolean => {
-		if (forced) return true;
-		if (routed && !MCP_WRITES.includes(name)) return true;
-		if (routed || route.maybe?.includes(name)) ask.push(name);
-		return false;
-	};
-	const sure = decide("sure", forcedSure, route.sure);
-	const silpo = decide("silpo", forcedSilpo, route.silpo);
-	const calendar = decide("calendar", forcedCalendar, route.calendar);
-	const cloudflare = decide("cloudflare", forcedCloudflare, route.cloudflare);
-	// Задачі з даними Sure, Сільпо чи Календаря прості (вибірка й підсумки): за замовчуванням haiku, якщо власник не назвав модель сам.
-	// Cloudflare сюди не входить: аналіз витрат і неефективностей потребує міркувань, модель лишається за замовчуванням.
-	const model = requestedModel ?? route.model ?? (sure || silpo || calendar || ask.some((n) => n !== "cloudflare") ? "haiku" : undefined);
-	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: voiced, image: !!image, prompt, route, ...(model && { model }), sure, silpo, calendar, cloudflare, ask, ...(images && { images }) };
+	const { prompt, route, repo, model, mcp, ask } = plan;
+	const pending: Pending = { id, chat, messageId: msg.message_id, inChannel, ...(threadId && { threadId }), voice: voiced, image: !!image, prompt, route, ...(model && { model }), mcp, ask, ...(images && { images }) };
 	// Роутер не впевнений, чи це про відомий репозиторій (і про який): питаємо кнопками замість того, щоб вгадувати.
-	if (!repo && route.unsure) {
+	if (plan.askRepo) {
 		await askRepo(env, agent, repos, pending);
 		sw.mark("ask");
 		return void sw.log({ flow: "ask-repo", kind, "lag-s": lag, sent: stamp(msg.date * 1000) });
@@ -325,7 +240,7 @@ const TIMEOUT_TEXT = "⚠️ Розпізнавання голосу трива�
 // що й для голосового з Telegram. Службове повідомлення «🎙 Розпізнаю…» у чаті дає сесії id і прибирається разом з оригіналом.
 export const SHORTCUT_PATH = "/shortcut";
 
-export async function handleShortcut(req: Request, env: Env, deps: TelegramDeps): Promise<Response> {
+export async function handleShortcut(req: Request, env: ChatEnv & ContainerEnv & GithubEnv, deps: TelegramDeps): Promise<Response> {
 	if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 	if (!env.SHORTCUT_SECRET) return new Response("SHORTCUT_SECRET is not configured", { status: 503 });
 	if (!(await safeEqual(req.headers.get("x-secret") ?? "", env.SHORTCUT_SECRET))) return new Response("unauthorized", { status: 401 });

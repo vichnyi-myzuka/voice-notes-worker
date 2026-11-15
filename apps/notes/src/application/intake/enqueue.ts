@@ -1,5 +1,5 @@
 import type { RecordingStore } from "../../domain/recording";
-import type { Env } from "../../infrastructure/env";
+import type { Env } from "../env";
 
 type Metadata = Record<string, string | undefined>;
 

@@ -73,6 +73,28 @@ export async function mergeBlockers(token: string, repo: string, number: number)
 	return reasons;
 }
 
+// Відкриті PR гілок agent/* цього ж репозиторію в базу base, що конфліктують із нею. GitHub рахує mergeable ліниво (null одразу після
+// пушу в базу), тож чекаємо й питаємо ще кілька разів; PR, для якого відповіді так і не було, пропускаємо (наступний пуш перевірить знову).
+export type ConflictedPull = { number: number; branch: string };
+export async function conflictedAgentPulls(token: string, repo: string, base: string, wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<ConflictedPull[]> {
+	const list = await gh(token, "GET", `/repos/${repo}/pulls?state=open&base=${encodeURIComponent(base)}&per_page=100`);
+	if (!list.ok) throw new Error(`open pulls ${list.status}`);
+	const pulls = (await list.json<{ number: number; head: { ref: string; repo?: { full_name: string } | null } }[]>()).filter((p) => p.head.ref.startsWith("agent/") && p.head.repo?.full_name === repo);
+	const found: ConflictedPull[] = [];
+	for (const p of pulls) {
+		for (let attempt = 0; attempt < 4; attempt++) {
+			if (attempt) await wait(3000);
+			const res = await gh(token, "GET", `/repos/${repo}/pulls/${p.number}`);
+			if (!res.ok) break;
+			const pr = await res.json<{ mergeable: boolean | null; mergeable_state?: string }>();
+			if (pr.mergeable === null) continue;
+			if (pr.mergeable === false || pr.mergeable_state === "dirty") found.push({ number: p.number, branch: p.head.ref });
+			break;
+		}
+	}
+	return found;
+}
+
 // PR, змерджені в цей коміт (за ними показуємо результат деплою й прибираємо сесії); порожньо, якщо коміт пушили без PR.
 export type CommitPull = { number: number; title: string; url: string; branch: string; repo?: string };
 export async function commitPulls(token: string, repo: string, sha: string): Promise<CommitPull[]> {

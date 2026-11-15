@@ -1,4 +1,4 @@
-import type { Env } from "../../infrastructure/env";
+import type { Env } from "../env";
 import { buildCaption } from "../../domain/note";
 import type { Note } from "../../domain/published";
 import { TELEGRAM_MAX_BYTES, TRANSCRIBE_MAX_BYTES, formatRecordedAt, recordedTs, stateKey } from "../../domain/recording";

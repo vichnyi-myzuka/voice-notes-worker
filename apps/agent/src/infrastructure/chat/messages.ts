@@ -1,4 +1,5 @@
 import { tg, type BotEnv } from "@voice-notes/core";
+import type { TopicState } from "../../domain/agent";
 
 // Відповіді на команди (/status, /quota…) зникають з чату самі. Чекаємо в waitUntil, якому Cloudflare дає ~30 с після відповіді
 // вебхука, тому трохи менше.
@@ -32,7 +33,7 @@ export const renameTopic = (env: BotEnv, chat: number, threadId: number, name: s
 // Емодзі теми за станом сесії. Telegram дозволяє лише іконки зі свого набору (getForumTopicIconStickers), тому для кожного
 // стану є запасні варіанти: береться перший, що є в наборі.
 // Стани деплою PR сесії: approval — чекає схвалення, deploying — змерджено/виконується, deployed — успіх, deployFailed — збій чи відхилення.
-export type TopicState = "working" | "question" | "done" | "failed" | "approval" | "deploying" | "deployed" | "deployFailed";
+export type { TopicState };
 const TOPIC_EMOJI: Record<TopicState, string[]> = {
 	working: ["⚡", "🔥"],
 	question: ["❓", "❗"],

@@ -1,4 +1,4 @@
-import type { Agent, DeployInfo, ImageRef, PostRef, AgentStatus, SessionReport, StartInput, WatchTarget } from "../src/domain/agent";
+import type { Agent, DeployInfo, ImageRef, OAuthMcpName, PostRef, AgentStatus, SessionReport, StartInput, WatchTarget } from "../src/domain/agent";
 
 // Агент у пам'яті: те саме, що робить Durable Object з контейнером, але без контейнера й мережі.
 // Поведінка як у реальної реалізації: start ідемпотентний за id, abort повертає сесію у idle,
@@ -16,9 +16,9 @@ export function fakeAgent(origin = "https://agent.example") {
 	const choices = new Map<string, string[]>(); // id сесії → підписи варіантів поточного питання (тест задає)
 	const refs = new Map<string, PostRef>();
 	const deploys: { repo?: string; folder?: string; postId?: number; deploy: DeployInfo }[] = [];
-	const silpoCodes: string[] = [];
-	const calendarCodes: string[] = [];
-	const cloudflareCodes: string[] = [];
+	// Коди, якими завершено вхід у сервіси (хто вже ввійшов).
+	const codes: Record<OAuthMcpName, string[]> = { silpo: [], calendar: [], cloudflare: [] };
+	const authorize: Record<OAuthMcpName, string> = { silpo: "https://mcp.silpo.example/authorize", calendar: "https://accounts.google.example/auth", cloudflare: "https://mcp.cloudflare.example/authorize" };
 	const mcpAnswers: { id: string; name: string; allow: boolean }[] = [];
 	let snapshotError = "";
 	const get = (id: string) => {
@@ -30,7 +30,7 @@ export function fakeAgent(origin = "https://agent.example") {
 		url: (id) => `${origin}/s/${id}`,
 		async begin(id, input, target) {
 			await agent.start(id, input);
-			await agent.watch(id, target);
+			if (target) await agent.watch(id, target);
 		},
 		async answer(id, choice) {
 			get(id);
@@ -39,7 +39,7 @@ export function fakeAgent(origin = "https://agent.example") {
 		},
 		async resume(id, text, target, images) {
 			await agent.followUp(id, text, images);
-			await agent.watch(id, target);
+			if (target) await agent.watch(id, target);
 		},
 		async start(id, input) {
 			if (!sessions.has(id)) sessions.set(id, { input, messages: [input.prompt], status: "working" });
@@ -104,7 +104,7 @@ export function fakeAgent(origin = "https://agent.example") {
 			mcpAnswers.push({ id, name, allow });
 			if (!allow) return "declined";
 			s.input = { ...s.input, [name]: true };
-			return name === "silpo" && silpoCodes.length === 0 ? "login" : "connected";
+			return name === "silpo" && codes.silpo.length === 0 ? "login" : "connected";
 		},
 		async byThread(chatId, threadId) {
 			return watches.find((w) => w.target.chatId === chatId && w.target.threadId === threadId)?.id;
@@ -140,38 +140,16 @@ export function fakeAgent(origin = "https://agent.example") {
 		async info() {
 			return { running: true, activeAt: 1, alarmAt: null, snapshot: null, streams: [] };
 		},
-		async silpoLoginUrl(o) {
-			return `https://mcp.silpo.example/authorize?redirect_uri=${o}/silpo/callback`;
+		async loginUrl(name, o) {
+			return `${authorize[name]}?redirect_uri=${o}/${name}/callback`;
 		},
-		async silpoCallback(code, state) {
+		async loginCallback(name, code, state) {
 			if (state !== "good") return false;
-			silpoCodes.push(code);
+			codes[name].push(code);
 			return true;
 		},
-		async silpoConnected() {
-			return silpoCodes.length > 0;
-		},
-		async calendarLoginUrl(o) {
-			return `https://accounts.google.example/auth?redirect_uri=${o}/calendar/callback`;
-		},
-		async calendarCallback(code, state) {
-			if (state !== "good") return false;
-			calendarCodes.push(code);
-			return true;
-		},
-		async calendarConnected() {
-			return calendarCodes.length > 0;
-		},
-		async cloudflareLoginUrl(o) {
-			return `https://mcp.cloudflare.example/authorize?redirect_uri=${o}/cloudflare/callback`;
-		},
-		async cloudflareCallback(code, state) {
-			if (state !== "good") return false;
-			cloudflareCodes.push(code);
-			return true;
-		},
-		async cloudflareConnected() {
-			return cloudflareCodes.length > 0;
+		async loginConnected(name) {
+			return codes[name].length > 0;
 		},
 		async resetComputer(unlessBusy) {
 			if (unlessBusy && [...sessions.values()].some((s) => s.status === "working")) return false;

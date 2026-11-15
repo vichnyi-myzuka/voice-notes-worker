@@ -1,5 +1,5 @@
 import type { ApplyResult, SetupPlan, TaskOp, TrackerSnapshot, TriageItem } from "../../domain/tracker";
-import type { Env } from "../env";
+import type { Env } from "../../application/env";
 import { fetchSnapshot, readResources, runCommands } from "./api";
 import { rejected, type CommandStatus, type Json, type TodoistCommand } from "./types";
 
