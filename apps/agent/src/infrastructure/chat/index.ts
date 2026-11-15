@@ -1,6 +1,6 @@
 import { NO_PREVIEW, tg, type BotEnv, type TgInlineKeyboard } from "@voice-notes/core";
 import { chatHtml, escapeHtml, stripQuote, tablesToCards } from "@voice-notes/telegram-format";
-import type { McpName } from "../../domain/agent";
+import type { McpName, PostAnswers } from "../../domain/agent";
 import { callback } from "./callback";
 
 export { QUOTE_CLOSE, QUOTE_OPEN, chatHtml } from "@voice-notes/telegram-format";
@@ -17,7 +17,7 @@ export type Buttons = "working" | "done" | "mergeable" | "dismiss" | "retry";
 // Запит на схвалення деплою в пості сесії: кнопки «Схвалити/Відхилити» (`appr|rej:<repo>:<id запуску>`, обробляє interface/github/review).
 export type Review = { repo: string; runId: number };
 // Кнопки-відповіді на питання агента: підписи (для множинного вибору з позначками) й режим: одразу відповісти чи перемикати + «Підтвердити».
-export type Answers = { labels: string[]; multiple?: boolean };
+export type Answers = PostAnswers;
 // Сесія, до якої належить повідомлення: її id (для кнопок) і посилання (внизу тексту). id передається явно, а не добувається з посилання.
 export type SessionLink = { id: string; url: string };
 const CHAT_SESSION = /^tg-[\w-]+$/; // кнопки лише в сесій із чату: їх обробляє interface/telegram

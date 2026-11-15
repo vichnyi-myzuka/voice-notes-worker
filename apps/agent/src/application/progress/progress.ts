@@ -1,17 +1,10 @@
-import { workersLlm } from "@voice-notes/core";
-import type { WatchTarget } from "../../../domain/agent";
-import type { ChatEnv, ContainerEnv } from "../../../env";
-import { renameTopic, setTopicIcon, type Answers, type TopicState } from "../../chat";
-import { describeActivity, describeForm, formChoices, formSteps } from "../../../application/progress";
-import { WORKING } from "../../../application/jobs";
-import { progressMs } from "../config";
+import type { Llm } from "@voice-notes/core";
+import type { OpencodeForm, PendingForm, PostAnswers, PostBoard, SessionStore, Tracked, TopicState, Watch, WatchTarget } from "../../domain/agent";
+import { WORKING } from "../jobs";
+import { describeActivity, describeForm, formChoices, formSteps } from "./activity";
 import type { Forms } from "./forms";
-import { describeCall, narrate, remember } from "../../../application/progress";
-import type { OpencodeForm } from "../opencode";
-import type { Posts } from "./posts";
-import type { PendingForm, Tracked, Watch } from "../state";
-import type { SessionStore } from "../state";
-import { retitle } from "../../../application/progress";
+import { describeCall, narrate, remember } from "./narrate";
+import { retitle } from "./title";
 
 // Службові символи, якими позначено цитату в заголовку поста: моделі вони не потрібні.
 const QUOTES = /[]/g;
@@ -28,10 +21,11 @@ export class Progress {
 	// Останнє уточнення власника за id сесії: з ним модель вирішує, чи змінився напрям розмови (назва теми).
 	private readonly asks = new Map<string, string>();
 
+	// enabled: чат налаштовано (є бот); progressMs: найменший інтервал між оновленнями поста.
 	constructor(
-		private readonly env: ChatEnv & ContainerEnv,
+		private readonly deps: { enabled: boolean; llm: Llm; progressMs: number },
 		private readonly store: SessionStore,
-		private readonly posts: Posts,
+		private readonly posts: PostBoard,
 		private readonly forms: Forms,
 	) {}
 
@@ -67,20 +61,20 @@ export class Progress {
 
 	// Іконка теми показує стан сесії (працює, питання, готово, збій); поза темою нічого не робить.
 	async icon(w: Watch | WatchTarget, state: TopicState): Promise<void> {
-		if (w.threadId && this.env.BOT_TOKEN) await setTopicIcon({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, state);
+		await this.posts.icon(w, state);
 	}
 
 	// Після ходу агента назва теми або лишається, або оновлюється, якщо напрям розмови змінився (лише для тем, створених ботом).
 	// Службові повідомлення (збій, ліміт, зупинка) назву не міняють. Збій моделі чи Telegram не критичний.
 	async retitle(id: string, w: Watch, result: string): Promise<void> {
 		try {
-			if (!result.startsWith("✅") || !w.threadId || !w.title || !this.env.BOT_TOKEN) return;
+			if (!result.startsWith("✅") || !w.threadId || !w.title || !this.deps.enabled) return;
 			const tracked = await this.store.session(id);
 			const current = tracked?.post?.title;
 			if (!tracked?.post || !current) return;
-			const title = await retitle(workersLlm(this.env), current, (w.header ?? "").replace(QUOTES, ""), this.asks.get(id), result);
+			const title = await retitle(this.deps.llm, current, (w.header ?? "").replace(QUOTES, ""), this.asks.get(id), result);
 			if (!title || title === current) return;
-			if (await renameTopic({ BOT_TOKEN: this.env.BOT_TOKEN }, w.chatId, w.threadId, title)) await this.store.saveSession(id, { ...tracked, post: { ...tracked.post, title } } satisfies Tracked);
+			if (await this.posts.rename(w, title)) await this.store.saveSession(id, { ...tracked, post: { ...tracked.post, title } } satisfies Tracked);
 		} catch (err) {
 			console.error("retitle failed:", err);
 		}
@@ -102,10 +96,10 @@ export class Progress {
 
 	// «⏳ Працює · редагує README.md»: пост оновлюється на місці, не частіше за PROGRESS_INTERVAL_MS (проміжні дії між оновленнями пропускаються).
 	// announcement: готовий текст (питання агента) замість підпису дії; показується завжди, навіть частіше за інтервал.
-	async show(ocId: string, tool: string, input: Record<string, unknown> | undefined, announcement?: string, answers?: Answers): Promise<void> {
-		if ((!tool && !announcement) || !this.env.BOT_TOKEN) return;
+	async show(ocId: string, tool: string, input: Record<string, unknown> | undefined, announcement?: string, answers?: PostAnswers): Promise<void> {
+		if ((!tool && !announcement) || !this.deps.enabled) return;
 		const now = Date.now();
-		if (!announcement && now - (this.lastShown.get(ocId) ?? 0) < progressMs(this.env)) return;
+		if (!announcement && now - (this.lastShown.get(ocId) ?? 0) < this.deps.progressMs) return;
 		const entry = await this.store.watchByOc(ocId);
 		if (!entry?.[1].postId) return;
 		this.lastShown.set(ocId, now);
@@ -113,7 +107,7 @@ export class Progress {
 		// Що відбувається, каже маленька модель за завданням і останніми діями; без неї (збій, тайм-аут) — технічний підпис.
 		let activity = "";
 		if (!announcement) {
-			activity = (await narrate(workersLlm(this.env), (w.header ?? "").replace(QUOTES, ""), this.recent.get(ocId) ?? [], this.narration.get(ocId))) ?? "";
+			activity = (await narrate(this.deps.llm, (w.header ?? "").replace(QUOTES, ""), this.recent.get(ocId) ?? [], this.narration.get(ocId))) ?? "";
 			if (activity) this.narration.set(ocId, activity);
 		}
 		const text = announcement ?? `${WORKING} · ${activity || describeActivity(tool, input)}`;

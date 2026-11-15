@@ -6,20 +6,21 @@ import { removeTopic } from "../chat";
 import { CLEANUP } from "./computer";
 import { Computer } from "./computer";
 import { Workspace } from "./computer";
-import { WATCH_INTERVAL_MS, publishEnv } from "./config";
-import { Forms } from "./progress";
+import { SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
+import { workersLlm } from "@voice-notes/core";
+import { Mcp } from "../../application/mcp";
+import { Forms, Posts, Progress } from "../../application/progress";
 import { loadImages } from "./progress";
 import { Jobs, Limits, JOB_RETRY_MS } from "../../application/jobs";
 import { Handoffs } from "./jobs";
-import { chatNotices, claudeLimits, durableScheduler } from "./adapters";
-import { Mcp } from "./mcp";
-import { createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
-import { Posts } from "./progress";
-import { Progress } from "./progress";
+import { Watcher } from "../../application/watch";
+import { chatNotices, claudeLimits, containerOf, durableScheduler, githubPulls } from "./adapters";
+import { McpServers } from "./mcp";
+import { opencodeClient, createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
+import { telegramPosts } from "./progress";
 import { WebProxy } from "./computer";
-import { FORM_PREFIX, type PendingForm, type Tracked } from "./state";
-import { SessionStore } from "./state";
-import { Watcher } from "./jobs";
+import type { Tracked } from "./state";
+import { PostRecords, SessionStore } from "./state";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -37,6 +38,7 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly store: SessionStore;
 	private readonly limits: Limits;
 	private readonly proxy: WebProxy;
+	private readonly servers: McpServers;
 	private readonly mcp: Mcp;
 	private readonly jobs: Jobs;
 	private readonly progress: Progress;
@@ -47,17 +49,33 @@ export class AgentSession extends DurableObject<Env> {
 		this.computer = new Computer(ctx, env);
 		this.workspace = new Workspace(ctx, env);
 		this.store = new SessionStore(ctx.storage);
-		
-		this.posts = new Posts(ctx.storage, env, this.store);
+		const records = new PostRecords(ctx.storage);
+		this.posts = new Posts(telegramPosts(env), records, this.store);
 		const scheduler = durableScheduler(ctx, this.computer);
-		const notices = chatNotices(env, this.posts);
+		const notices = chatNotices(env, this.posts, (path) => this.computer.readImage(path));
 		this.limits = new Limits(claudeLimits(env), this.store, notices, scheduler);
-		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
+		this.forms = new Forms(this.store, this.posts, opencodeClient(() => this.computer.opencode()));
 		this.proxy = new WebProxy(ctx, env, this.computer);
-		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, this.workspace, (id, tracked, text) => this.tell(id, tracked, text));
-		this.progress = new Progress(env, this.store, this.posts, this.forms);
+		this.servers = new McpServers(ctx.storage, env, this.computer, this.workspace);
+		this.mcp = new Mcp(this.store, this.servers, notices, (id, tracked, text) => this.tell(id, tracked, text));
+		this.progress = new Progress({ enabled: !!env.BOT_TOKEN, llm: workersLlm(env), progressMs: progressMs(env) }, this.store, this.posts, this.forms);
 		this.handoffs = new Handoffs(env, this.store, (id, input, target) => this.jobs.begin(id, input, target));
-		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp, this.handoffs);
+		this.watcher = new Watcher({
+			config: { intervalMs: WATCH_INTERVAL_MS, maxMs: WATCH_MAX_MS, summaryMax: SUMMARY_MAX, maxCostUsd: maxCostUsd(env), maxTokens: maxTokens(env) },
+			store: this.store,
+			records,
+			opencode: opencodeClient(() => this.computer.opencode()),
+			container: containerOf(this.computer),
+			scheduler,
+			notices,
+			posts: this.posts,
+			pulls: githubPulls(env),
+			handoffs: this.handoffs,
+			forms: this.forms,
+			limits: this.limits,
+			progress: this.progress,
+			mcp: this.mcp,
+		});
 		this.jobs = new Jobs(scheduler, this.store, notices, {
 			running: () => this.computer.running,
 			start: (id, input) => this.start(id, input),
@@ -91,8 +109,8 @@ export class AgentSession extends DurableObject<Env> {
 			return void (await this.computer.alarmNoLater(Date.now() + WATCH_INTERVAL_MS));
 		}
 		// Агент чекає відповіді на питання: питання живе в пам'яті OpenCode, тож контейнер тримаємо довше (FORM_HOLD_MS).
-		const forms = await this.ctx.storage.list<PendingForm>({ prefix: FORM_PREFIX });
-		await this.computer.settle(Math.max(0, ...[...forms.values()].map((f) => f.askedAt ?? 0)));
+		const forms = await this.store.forms();
+		await this.computer.settle(Math.max(0, ...forms.map(([, f]) => f.askedAt ?? 0)));
 	}
 
 	// Деплой PR сесії у пості (див. Posts).
@@ -114,15 +132,15 @@ export class AgentSession extends DurableObject<Env> {
 
 	// Контейнер: знімки, скидання, діагностика (див. Computer).
 	loginUrl(name: OAuthMcpName, origin: string): Promise<string> {
-		return this.mcp.logins[name].loginUrl(origin);
+		return this.servers.logins[name].loginUrl(origin);
 	}
 
 	loginCallback(name: OAuthMcpName, code: string, state: string): Promise<boolean> {
-		return this.mcp.logins[name].callback(code, state);
+		return this.servers.logins[name].callback(code, state);
 	}
 
 	loginConnected(name: OAuthMcpName): Promise<boolean> {
-		return this.mcp.logins[name].connected();
+		return this.servers.logins[name].connected();
 	}
 
 	snapshot(): Promise<SnapshotInfo> {
@@ -166,7 +184,7 @@ export class AgentSession extends DurableObject<Env> {
 			const again = await this.store.session(id);
 			if (again) return { sessionId: again.ocId };
 			const folder = folderFor(id, input.name);
-			const wanted = await this.mcp.wanted(input);
+			const wanted = await this.servers.wanted(input);
 			sw.mark("queue");
 			const directory = await this.workspace.prepare(folder, input.repo, wanted);
 			sw.mark("prepare");
@@ -190,12 +208,12 @@ export class AgentSession extends DurableObject<Env> {
 		let ocId = tracked.ocId;
 		if (!(await sessionExists(this.opencode(), ocId))) {
 			ocId = await this.computer.serial(async () => {
-				const directory = await this.workspace.prepare(tracked.folder ?? id, tracked.repo, await this.mcp.wanted(tracked));
+				const directory = await this.workspace.prepare(tracked.folder ?? id, tracked.repo, await this.servers.wanted(tracked));
 				return createSession(this.opencode(), text.slice(0, 80), directory, this.computer.model(tracked.model));
 			});
 			await this.store.saveSession(id, { ...tracked, ocId } satisfies Tracked);
 		}
-		await this.mcp.refresh(id, tracked);
+		await this.servers.refresh(id, tracked);
 		this.progress.asked(id, text);
 		await this.limits.forget(id);
 		await this.forms.cancel(id, text); // текст замість кнопки: відкрите питання не чекає далі

@@ -1,5 +1,6 @@
-import type { Job, LimitWait, Tracked, Watch } from "./records";
-import type { WatchTarget } from "./types";
+import type { FormAnswers, Handoff, OutImage, LastShown, PostEdit, PendingForm, Job, LimitWait, OpencodeEvent, PostAnswers, PromptFile, SessionInfo, Tracked, TopicState, Watch } from "./records";
+import type { McpName } from "./mcp";
+import type { DeployInfo, PostRef, WatchTarget } from "./types";
 
 // Порти, через які ядро агента (application) торкається зовнішнього світу. Реалізації — в infrastructure/container.
 
@@ -22,6 +23,10 @@ export interface SessionStore {
 	saveJob(job: Job): Promise<void>;
 	dropJob(id: string): Promise<unknown>;
 	jobs(): Promise<Job[]>;
+	form(id: string): Promise<PendingForm | undefined>;
+	saveForm(id: string, form: PendingForm): Promise<void>;
+	dropForm(id: string): Promise<unknown>;
+	forms(): Promise<[string, PendingForm][]>;
 	limit(id: string): Promise<LimitWait | undefined>;
 	saveLimit(id: string, wait: LimitWait): Promise<void>;
 	dropLimit(id: string): Promise<unknown>;
@@ -41,11 +46,87 @@ export interface Notices {
 	// Показує стан у пості сесії (оновлює його на місці); false, якщо поста немає.
 	show(id: string, target: WatchTarget, text: string, final?: boolean): Promise<boolean>;
 	// Окреме повідомлення в тему сесії; кнопка kind: «retry» (повторити) чи «done».
-	send(id: string, target: { chatId: number; url: string; threadId?: number }, text: string, kind: "retry" | "done"): Promise<void>;
+	send(id: string, target: { chatId: number; url: string; threadId?: number }, text: string, kind: "retry" | "done" | "mergeable"): Promise<void>;
+	// Зображення з підсумку: фото в тему сесії (недоступний файл пропускається).
+	images(target: { chatId: number; threadId?: number }, images: OutImage[]): Promise<void>;
+	// Питання власникові «підключити MCP до сесії?» з кнопками в темі сесії.
+	askMcp(id: string, target: { chatId: number; threadId?: number }, name: McpName, text: string): Promise<void>;
 }
 
 // Ліміти підписки Claude: чи є чим їх перевіряти і що вони показують.
 export interface LimitProbe {
 	readonly configured: boolean;
 	read(): Promise<{ blocked: boolean; resetAt?: number } | undefined>; // resetAt — unix-секунди; undefined — перевірка не вдалась
+}
+
+// Клієнт OpenCode (сервер усередині контейнера): запити, форми (питання агента), стан і потік подій сесій. Id — сесії OpenCode.
+export interface OpencodeClient {
+	prompt(ocId: string, text: string, files?: PromptFile[]): Promise<void>;
+	replyForm(ocId: string, formId: string, answer: FormAnswers): Promise<void>;
+	cancelForm(ocId: string, formId: string, message?: string): Promise<void>;
+	session(ocId: string): Promise<SessionInfo>;
+	interrupt(ocId: string): Promise<void>;
+	activeSessions(): Promise<string[]>;
+	lastAssistant(ocId: string): Promise<{ text: string; error?: string }>;
+	// Читає потік подій, поки він не закінчиться чи не спрацює signal; onEvent(undefined) — службовий рядок (heartbeat).
+	events(signal: AbortSignal, onEvent: (event: OpencodeEvent | undefined) => Promise<void>): Promise<void>;
+}
+
+// Пост сесії в чаті: показ стану на місці, реакція, іконка й назва теми. Чат без бота нічого не робить (false / нічого).
+export interface PostBoard {
+	// Оновлює пост на місці. false — поста немає чи редагування не вдалось.
+	show(id: string, w: WatchTarget, status: string, final?: boolean, answers?: PostAnswers, mergeable?: boolean, retry?: boolean): Promise<boolean>;
+	// Правки поста йдуть у черзі: запізніла проміжна правка не має затирати підсумок.
+	enqueue(edit: () => Promise<unknown>): Promise<unknown>;
+	settled(): Promise<void>;
+	// 👨‍💻 на пості, поки сесія працює.
+	mark(w: WatchTarget, on: boolean): Promise<void>;
+	icon(w: WatchTarget, state: TopicState): Promise<void>;
+	rename(w: WatchTarget, title: string): Promise<boolean>;
+}
+
+// Чат, у якому живе пост сесії (низький рівень, без правил): редагування повідомлення, реакція, іконка й назва теми.
+export interface PostChat {
+	readonly enabled: boolean; // чи налаштовано бота
+	edit(post: PostEdit): Promise<boolean>; // false — повідомлення видалили чи правка не вдалась
+	react(chatId: number, postId: number, on: boolean): Promise<void>; // 👨‍💻 на пості
+	setIcon(chatId: number, threadId: number, state: TopicState): Promise<void>;
+	rename(chatId: number, threadId: number, title: string): Promise<boolean>;
+}
+
+// Що пам'ятаємо про пости: стан деплою й останній показаний стан (за id повідомлення) та пости, які пізніше оновлює вебхук GitHub.
+export interface PostStore {
+	deploy(postId: number): Promise<DeployInfo | undefined>;
+	saveDeploy(postId: number, deploy: DeployInfo): Promise<void>;
+	last(postId: number): Promise<LastShown | undefined>;
+	saveLast(postId: number, last: LastShown): Promise<void>;
+	saveRef(key: string, ref: PostRef): Promise<void>;
+	takeRef(key: string): Promise<PostRef | undefined>; // забирається один раз
+	forget(postId: number): Promise<void>; // сесію прибрано: забуваємо деплой і останній стан
+}
+
+// Доступ до сервісів власника (MCP) для сесій: токени й входи, конфіг у теці сесії, живий OpenCode.
+export interface McpAccess {
+	configured(name: McpName): boolean; // чи налаштовано сервіс у воркері (Sure — URL і токен у секретах; решта — завжди)
+	loggedIn(name: McpName): Promise<boolean>; // чи власник ввійшов (для сервісів з OAuth; для решти — true)
+	// Підключає сервіси сесії (прапорці в tracked): запускає контейнер, пише конфіг у теку й вносить сервери в живий OpenCode.
+	connect(id: string, tracked: Tracked): Promise<void>;
+	instructions(name: McpName): string; // інструкція агентові щодо сервісу
+}
+
+// Контейнер, у якому працюють сесії: чи запущений і файли зображень для підсумку.
+export interface Container {
+	readonly running: boolean;
+	readImage(path: string): Promise<Uint8Array | undefined>; // лише png/jpg/gif/webp з /workspace чи /tmp у межах ліміту; інше — undefined
+}
+
+// Pull request-и репозиторіїв (GitHub): чи є в гілки сесії відкритий PR (тоді під підсумком з'являється «Змерджити»).
+export interface PullRequests {
+	readonly configured: boolean; // чи є токен доступу
+	openNumber(repo: string, branch: string): Promise<number | undefined>; // кидає помилку при збої
+}
+
+// Нова сесія з виклику handoff (команда агента): тема й пост у чаті поруч із батьківською, далі звичайний старт.
+export interface HandoffSpawner {
+	spawn(ocId: string, callId: string, handoff: Handoff): Promise<void>;
 }

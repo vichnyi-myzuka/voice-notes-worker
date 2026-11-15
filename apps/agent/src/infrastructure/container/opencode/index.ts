@@ -1,3 +1,7 @@
+import type { FormAnswers, ModelRef, OpencodeClient, OpencodeEvent, PromptFile, SessionInfo } from "../../../domain/agent";
+
+export type { FormField, ModelRef, OpencodeEvent, OpencodeForm, PromptFile, SessionInfo } from "../../../domain/agent";
+
 // Мінімальний клієнт HTTP API OpenCode V2 (`opencode serve`, маршрути `/api/...`) усередині контейнера.
 
 export const OPENCODE_PORT = 4096;
@@ -31,8 +35,6 @@ export async function isReady(oc: Opencode): Promise<boolean> {
 	return res.ok;
 }
 
-export type ModelRef = { providerID: string; id: string };
-
 export async function createSession(oc: Opencode, title: string, directory: string, model?: ModelRef): Promise<string> {
 	return (await data<{ id: string }>(await oc.fetch("/api/session", post({ title, location: { directory }, ...(model && { model }) })))).id;
 }
@@ -60,13 +62,12 @@ export async function connectClaudeAgent(oc: Opencode): Promise<void> {
 
 // Повертається, щойно запит прийнято в чергу сесії; агент працює у фоні.
 // files: зображення від користувача як вкладення (uri — data:-посилання), модель бачить їх як фото.
-export type PromptFile = { uri: string; name: string };
 export async function prompt(oc: Opencode, sessionId: string, text: string, files: PromptFile[] = []): Promise<void> {
 	await data(await oc.fetch(`/api/session/${sessionId}/prompt`, post({ text, ...(files.length > 0 && { files }) })));
 }
 
 // Відповідь на форму (питання агента): ключ поля → значення.
-export async function replyForm(oc: Opencode, sessionId: string, formId: string, answer: Record<string, string | boolean | string[]>): Promise<void> {
+export async function replyForm(oc: Opencode, sessionId: string, formId: string, answer: FormAnswers): Promise<void> {
 	const res = await oc.fetch(`/api/session/${sessionId}/form/${formId}/reply`, post({ answer }));
 	if (!res.ok) throw new Error(`opencode form reply: ${res.status} ${await res.text()}`);
 	await res.body?.cancel();
@@ -110,20 +111,11 @@ export async function interrupt(oc: Opencode, sessionId: string): Promise<void> 
 	await res.body?.cancel();
 }
 
-// Сесія з лічильниками: вартість, токени й чим закінчилась остання робота (outcome з'являється після першої).
-export type SessionInfo = {
-	cost?: number;
-	tokens?: { input?: number; output?: number; reasoning?: number };
-	outcome?: "succeeded" | "failed" | "interrupted";
-	time?: { idle?: number };
-};
-
 export async function getSession(oc: Opencode, sessionId: string): Promise<SessionInfo> {
 	return data<SessionInfo>(await oc.fetch(`/api/session/${sessionId}`));
 }
 
-// Токени без кешу: за ними видно, скільки сесія реально «прочитала й написала».
-export const totalTokens = (s: SessionInfo): number => (s.tokens?.input ?? 0) + (s.tokens?.output ?? 0) + (s.tokens?.reasoning ?? 0);
+export { totalTokens } from "../../../domain/agent";
 
 // Ідентифікатори сесій, що виконуються зараз.
 export async function activeSessions(oc: Opencode): Promise<string[]> {
@@ -138,11 +130,6 @@ export async function lastAssistant(oc: Opencode, sessionId: string): Promise<{ 
 	const text = (msg?.content ?? []).filter((p) => p.type === "text" && p.text).map((p) => p.text).at(-1) ?? "";
 	return { text: text.trim(), error: msg?.error?.message };
 }
-
-// Подія сервера OpenCode (SSE `/api/event`): тип і, якщо стосується сесії, її id.
-export type FormField = { key?: string; type?: string; hidden?: boolean; title?: string; description?: string; maxItems?: number; options?: { value?: string; label?: string; description?: string }[] };
-export type OpencodeForm = { id?: string; sessionID?: string; title?: string; fields?: FormField[] };
-export type OpencodeEvent = { type: string; data?: { sessionID?: string; id?: string; name?: string; input?: Record<string, unknown>; form?: OpencodeForm } };
 
 // Читає потік подій, поки він не закінчиться чи не спрацює signal. Для кожної події викликає onEvent; для службового рядка
 // (heartbeat) викликає onEvent(undefined), щоб читач міг вирішити, чи потік ще потрібен.
@@ -175,3 +162,15 @@ export async function readEvents(oc: Opencode, signal: AbortSignal, onEvent: (ev
 		}
 	}
 }
+
+// Порт OpencodeClient над HTTP-клієнтом; сам клієнт береться щоразу з контейнера (він може перезапуститись).
+export const opencodeClient = (get: () => Opencode): OpencodeClient => ({
+	prompt: (ocId, text, files) => prompt(get(), ocId, text, files),
+	replyForm: (ocId, formId, answer) => replyForm(get(), ocId, formId, answer),
+	cancelForm: (ocId, formId, message) => cancelForm(get(), ocId, formId, message),
+	session: (ocId) => getSession(get(), ocId),
+	interrupt: (ocId) => interrupt(get(), ocId),
+	activeSessions: () => activeSessions(get()),
+	lastAssistant: (ocId) => lastAssistant(get(), ocId),
+	events: (signal, onEvent) => readEvents(get(), signal, onEvent),
+});

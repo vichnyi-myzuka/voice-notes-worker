@@ -1,51 +1,49 @@
-import { WORKING } from "../../../application/jobs";
-import type { Posts } from "./posts";
-import { formKey, watchKey, type PendingForm, type Watch } from "../state";
-import { cancelForm, replyForm, type Opencode } from "../opencode";
+import type { OpencodeClient, PendingForm, PostBoard, SessionStore } from "../../domain/agent";
+import { WORKING } from "../jobs";
 
 // Питання агента з кнопками-відповідями: стан форми живе у сховищі, відповідь передається агентові й показується в пості.
 export class Forms {
 	constructor(
-		private readonly storage: DurableObjectStorage,
-		private readonly posts: Posts,
-		private readonly opencode: () => Opencode,
+		private readonly store: SessionStore,
+		private readonly posts: PostBoard,
+		private readonly opencode: OpencodeClient,
 	) {}
 
 	save(id: string, form: PendingForm): Promise<void> {
-		return this.storage.put(formKey(id), form);
+		return this.store.saveForm(id, form);
 	}
 
 	// Питання, що лишилось без відповіді (сесія завершилась чи видалена), неактуальне.
 	drop(id: string): Promise<void> {
-		return this.storage.delete(formKey(id)).then(() => undefined);
+		return this.store.dropForm(id).then(() => undefined);
 	}
 
 	// Користувач написав текст замість кнопки: питання скасовується, текст іде агентові як відповідь.
 	async cancel(id: string, message: string): Promise<void> {
-		const form = await this.storage.get<PendingForm>(formKey(id));
+		const form = await this.store.form(id);
 		if (!form) return;
-		await this.storage.delete(formKey(id));
-		await cancelForm(this.opencode(), form.ocId, form.formId, message).catch((err) => console.error("form cancel failed:", err));
-		const w = await this.storage.get<Watch>(watchKey(id));
+		await this.store.dropForm(id);
+		await this.opencode.cancelForm(form.ocId, form.formId, message).catch((err) => console.error("form cancel failed:", err));
+		const w = await this.store.watch(id);
 		if (w) await this.posts.show(id, w, `${WORKING} · відповідь: ${message.slice(0, 100)}`).catch(() => {});
 	}
 
 	// Відповідь кнопкою: передає вибраний варіант агентові й показує його в пості. undefined — питання вже неактуальне.
 	async answer(id: string, choice: number | "ok"): Promise<string | undefined> {
-		const form = await this.storage.get<PendingForm>(formKey(id));
+		const form = await this.store.form(id);
 		if (!form) return undefined;
-		const w = await this.storage.get<Watch>(watchKey(id));
+		const w = await this.store.watch(id);
 		const sent = async (value: string | boolean | string[], label: string) => {
 			const answers = { ...form.answers, [form.key]: value };
 			const [step, ...rest] = form.next ?? [];
 			if (step) {
 				// Далі ще питання форми: показуємо наступне з його кнопками, агентові відповідь піде після останнього.
-				await this.storage.put(formKey(id), { ...form, ...step, selected: [], next: rest, answers } satisfies PendingForm);
+				await this.store.saveForm(id, { ...form, ...step, selected: [], next: rest, answers } satisfies PendingForm);
 				if (w) await this.posts.show(id, w, step.text, false, { labels: step.choices.map((c) => c.label), multiple: step.multiple }).catch(() => {});
 				return `Відповідь: ${label}`;
 			}
-			await replyForm(this.opencode(), form.ocId, form.formId, answers);
-			await this.storage.delete(formKey(id));
+			await this.opencode.replyForm(form.ocId, form.formId, answers);
+			await this.store.dropForm(id);
 			if (w) await this.posts.show(id, w, `${WORKING} · відповідь: ${label}`).catch(() => {});
 			return `Відповідь: ${label}`;
 		};
@@ -61,7 +59,7 @@ export class Forms {
 		}
 		if (!form.choices[choice]) return undefined;
 		const selected = form.selected.includes(choice) ? form.selected.filter((i) => i !== choice) : [...form.selected, choice];
-		await this.storage.put(formKey(id), { ...form, selected } satisfies PendingForm);
+		await this.store.saveForm(id, { ...form, selected } satisfies PendingForm);
 		const labels = form.choices.map((c, i) => `${selected.includes(i) ? "☑" : "☐"} ${c.label}`);
 		if (w) await this.posts.show(id, w, form.text, false, { labels, multiple: true }).catch(() => {});
 		return selected.length ? `Вибрано: ${selected.sort((a, b) => a - b).map((i) => form.choices[i].label).join(", ")}` : "Нічого не вибрано";

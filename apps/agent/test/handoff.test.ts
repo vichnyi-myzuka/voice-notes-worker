@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { handedOff, handoffId } from "../src/infrastructure/container/jobs/handoff";
+import { handedOff, handoffId } from "../src/application/watch";
 
 describe("handedOff", () => {
 	it("бере текст задачі з heredoc і прапорці --repo/--name", () => {

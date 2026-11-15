@@ -1,13 +1,11 @@
-export type { Job, LimitWait, Tracked, Watch } from "../../../domain/agent";
-import type { Choice } from "../../../application/progress";
+export type { Job, LimitWait, PendingForm, Tracked, Watch } from "../../../domain/agent";
 
 // Що Durable Object тримає у сховищі і за якими ключами. Усі ключі й форми записів — тут, щоб модулі не вгадували їх самі.
 
 export const jobKey = (id: string) => `job:${id}`;
 
-// Питання агента, на яке можна відповісти кнопкою: форма й варіанти (callback_data несе лише номер варіанта).
+// Питання агента (форма): тип запису — domain/agent/records.ts, ключ form:<id сесії>.
 export const FORM_PREFIX = "form:";
-export type PendingForm = { askedAt?: number; formId: string; ocId: string; key: string; choices: Choice[]; multiple?: boolean; selected: number[]; text: string; next?: { key: string; choices: Choice[]; multiple?: boolean; text: string }[]; answers?: Record<string, string | boolean | string[]> };
 export const formKey = (id: string) => `${FORM_PREFIX}${id}`;
 
 export const WATCH_PREFIX = "watch:";
@@ -22,8 +20,7 @@ export const sessionKey = (id: string) => `${SESSION_PREFIX}${id}`;
 export const sessionId = (key: string) => key.slice(SESSION_PREFIX.length);
 export const sessionDir = (folder: string) => `/workspace/sessions/${folder}`;
 
-// Останній показаний у пості стан, щоб вебхук GitHub міг перемалювати пост з деплоєм.
-export type LastShown = { status: string; final: boolean; mergeable: boolean };
+// Стан поста сесії (тип LastShown — у domain): деплой, останній показаний стан і пости для вебхука GitHub.
 export const deployKey = (postId: number) => `deploy:${postId}`;
 export const lastKey = (postId: number) => `last:${postId}`;
 export const refKey = (key: string) => `ref:${key}`;

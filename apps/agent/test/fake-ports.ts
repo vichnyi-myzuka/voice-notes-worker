@@ -1,4 +1,4 @@
-import type { Job, LimitProbe, LimitWait, Notices, Scheduler, SessionStore, Tracked, Watch } from "../src/domain/agent";
+import type { Handoff, OutImage, McpAccess, McpName, DeployInfo, FormAnswers, LastShown, PostRef, Job, LimitProbe, LimitWait, Notices, OpencodeClient, PendingForm, PostBoard, PostChat, PostEdit, PostStore, Scheduler, SessionStore, Tracked, Watch } from "../src/domain/agent";
 
 // Фейки портів ядра агента: усе в пам'яті, без Durable Object, чату й мережі.
 export function fakeStore(): SessionStore {
@@ -6,6 +6,7 @@ export function fakeStore(): SessionStore {
 	const watches = new Map<string, Watch>();
 	const jobs = new Map<string, Job>();
 	const limits = new Map<string, LimitWait>();
+	const forms = new Map<string, PendingForm>();
 	return {
 		session: async (id) => sessions.get(id),
 		saveSession: async (id, t) => void sessions.set(id, t),
@@ -23,6 +24,10 @@ export function fakeStore(): SessionStore {
 		saveJob: async (j) => void jobs.set(j.id, j),
 		dropJob: async (id) => jobs.delete(id),
 		jobs: async () => [...jobs.values()],
+		form: async (id) => forms.get(id),
+		saveForm: async (id, f) => void forms.set(id, f),
+		dropForm: async (id) => forms.delete(id),
+		forms: async () => [...forms],
 		limit: async (id) => limits.get(id),
 		saveLimit: async (id, w) => void limits.set(id, w),
 		dropLimit: async (id) => limits.delete(id),
@@ -44,12 +49,101 @@ export function fakeScheduler() {
 export function fakeNotices(enabled = true) {
 	const sent: { id: string; text: string; kind: string }[] = [];
 	const shown: { id: string; text: string }[] = [];
+	const images: { chatId: number; images: OutImage[] }[] = [];
+	const mcpQuestions: { id: string; name: McpName; threadId?: number }[] = [];
 	const notices: Notices = {
 		enabled,
 		show: async (id, _t, text) => (shown.push({ id, text }), false),
 		send: async (id, _t, text, kind) => void sent.push({ id, text, kind }),
+		images: async (target, list) => void images.push({ chatId: target.chatId, images: list }),
+		askMcp: async (id, target, name) => void mcpQuestions.push({ id, name, threadId: target.threadId }),
 	};
-	return { notices, sent, shown };
+	return { notices, sent, shown, mcpQuestions, images };
 }
 
 export const fakeProbe = (configured: boolean, state: { blocked: boolean; resetAt?: number } | undefined): LimitProbe => ({ configured, read: async () => state });
+
+// Клієнт OpenCode, що записує виклики; сесії, активні й подані події задаються в тесті.
+export function fakeOpencode(init: { active?: string[]; info?: Record<string, import("../src/domain/agent").SessionInfo>; assistant?: Record<string, { text: string; error?: string }>; events?: (import("../src/domain/agent").OpencodeEvent | undefined)[] } = {}) {
+	const calls = { replies: [] as { ocId: string; formId: string; answer: FormAnswers }[], cancels: [] as { ocId: string; formId: string; message?: string }[], interrupts: [] as string[], prompts: [] as { ocId: string; text: string }[] };
+	const client: OpencodeClient = {
+		prompt: async (ocId, text) => void calls.prompts.push({ ocId, text }),
+		replyForm: async (ocId, formId, answer) => void calls.replies.push({ ocId, formId, answer }),
+		cancelForm: async (ocId, formId, message) => void calls.cancels.push({ ocId, formId, message }),
+		session: async (ocId) => init.info?.[ocId] ?? {},
+		interrupt: async (ocId) => void calls.interrupts.push(ocId),
+		activeSessions: async () => init.active ?? [],
+		lastAssistant: async (ocId) => init.assistant?.[ocId] ?? { text: "" },
+		events: async (_signal, onEvent) => {
+			for (const e of init.events ?? []) await onEvent(e);
+		},
+	};
+	return { client, calls };
+}
+
+// Пост у чаті, що записує показані стани й іконки.
+export function fakePosts() {
+	const shown: { id: string; status: string; final: boolean; answers?: { labels: string[]; multiple?: boolean } }[] = [];
+	const marks: boolean[] = [];
+	const icons: string[] = [];
+	const renames: string[] = [];
+	let queue: Promise<unknown> = Promise.resolve();
+	const posts: PostBoard = {
+		show: async (id, _w, status, final = false, answers) => (shown.push({ id, status, final, answers }), true),
+		enqueue: (edit) => (queue = queue.catch(() => undefined).then(edit)),
+		settled: async () => void (await queue.catch(() => undefined)),
+		mark: async (_w, on) => void marks.push(on),
+		icon: async (_w, state) => void icons.push(state),
+		rename: async (_w, title) => (renames.push(title), true),
+	};
+	return { posts, shown, marks, icons, renames };
+}
+
+// Чат поста: записує правки, реакції й іконки. edits.at(-1) — останній показаний стан.
+export function fakePostChat(enabled = true) {
+	const edits: PostEdit[] = [];
+	const icons: string[] = [];
+	const reactions: boolean[] = [];
+	const chat: PostChat = {
+		enabled,
+		edit: async (p) => (edits.push(p), true),
+		react: async (_c, _p, on) => void reactions.push(on),
+		setIcon: async (_c, _t, state) => void icons.push(state),
+		rename: async () => true,
+	};
+	return { chat, edits, icons, reactions };
+}
+
+export function fakePostStore(): PostStore {
+	const deploys = new Map<number, DeployInfo>();
+	const lasts = new Map<number, LastShown>();
+	const refs = new Map<string, PostRef>();
+	return {
+		deploy: async (id) => deploys.get(id),
+		saveDeploy: async (id, d) => void deploys.set(id, d),
+		last: async (id) => lasts.get(id),
+		saveLast: async (id, l) => void lasts.set(id, l),
+		saveRef: async (k, r) => void refs.set(k, r),
+		takeRef: async (k) => { const r = refs.get(k); refs.delete(k); return r; },
+		forget: async (id) => void (deploys.delete(id), lasts.delete(id)),
+	};
+}
+
+// Доступ до MCP: що налаштовано й у що власник ввійшов; connect записує виклики.
+export function fakeMcpAccess(init: { unconfigured?: McpName[]; loggedOut?: McpName[] } = {}) {
+	const connected: { id: string; flags: string[] }[] = [];
+	const access: McpAccess = {
+		configured: (name) => !init.unconfigured?.includes(name),
+		loggedIn: async (name) => !init.loggedOut?.includes(name),
+		connect: async (id, tracked) => void connected.push({ id, flags: Object.keys(tracked).filter((k) => tracked[k as McpName] === true) }),
+		instructions: (name) => `інструкція ${name}`,
+	};
+	return { access, connected };
+}
+
+export const fakeContainer = (running = true): { running: boolean; readImage: () => Promise<undefined> } => ({ running, readImage: async () => undefined });
+
+export function fakeHandoffs() {
+	const spawned: { ocId: string; callId: string; handoff: Handoff }[] = [];
+	return { spawner: { spawn: async (ocId: string, callId: string, handoff: Handoff) => void spawned.push({ ocId, callId, handoff }) }, spawned };
+}
