@@ -62,7 +62,8 @@
     },
     {
       "files": [
-        "apps/agent/src/application/**"
+        "apps/agent/src/application/**",
+        "apps/notes/src/application/**"
       ],
       "rules": {
         "no-restricted-imports": [

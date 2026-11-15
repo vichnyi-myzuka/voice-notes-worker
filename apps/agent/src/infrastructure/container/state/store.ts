@@ -1,10 +1,11 @@
+import type { SessionStore as SessionStorePort } from "../../../domain/agent";
 import { LIMIT_PREFIX, SESSION_PREFIX, WATCH_PREFIX, jobKey, limitKey, sessionId, sessionKey, watchId, watchKey, type Job, type LimitWait, type Tracked, type Watch } from "./state";
 
 const JOB_PREFIX = jobKey("");
 
 // Записи сесій у сховищі Durable Object: сесії, спостереження, прийняті завдання й очікування лімітів. Модулі працюють з id сесії, а
 // ключі (`session:<id>`…, див. state.ts) знає лише цей клас. Сесій небагато (десятки), тож пошук перебирає їх.
-export class SessionStore {
+export class SessionStore implements SessionStorePort {
 	constructor(private readonly storage: DurableObjectStorage) {}
 
 	session(id: string): Promise<Tracked | undefined> {

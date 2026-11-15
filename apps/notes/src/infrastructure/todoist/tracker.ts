@@ -1,6 +1,6 @@
 import type { TaskTracker } from "../../domain/tracker";
 import { workersLlm, type Llm } from "@voice-notes/core";
-import type { Env } from "../env";
+import type { Env } from "../../application/env";
 import { fetchWorld, trySnapshot } from "./api";
 import { taskFieldsSchema, taskRulesBlock, taskValidator } from "./fields";
 import { EDIT_TASKS_HELP, triage } from "./triage";

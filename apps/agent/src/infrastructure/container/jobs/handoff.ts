@@ -1,8 +1,8 @@
-import type { StartInput, WatchTarget } from "../../domain/agent";
-import { folderFor } from "../../domain/agent";
-import type { ChatEnv } from "../../env";
-import { createTopic, sendChat } from "../chat";
-import type { SessionStore } from "./store";
+import type { StartInput, WatchTarget } from "../../../domain/agent";
+import { folderFor } from "../../../domain/agent";
+import type { ChatEnv } from "../../../env";
+import { createTopic, sendChat } from "../../chat";
+import type { SessionStore } from "../state";
 
 // Агент передає роботу в нову сесію командою `handoff [--repo …] [--name …] <<'EOF' … EOF` (payload/handoff.sh): воркер бачить
 // її у виклику bash у потоці подій OpenCode (як request-mcp і set-repo) і разом із командою отримує текст heredoc.

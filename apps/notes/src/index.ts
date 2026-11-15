@@ -1,5 +1,5 @@
 // Розгортається через GitHub Actions після мержу в main (див. README, «CI/CD»).
-import type { Env, Job } from "./infrastructure/env";
+import type { Env, Job } from "./application/env";
 import { telegramChannel, workersLlm } from "@voice-notes/core";
 import { githubIssues } from "./infrastructure/github";
 import { r2IssueLedger, r2Ledger, r2Notes, r2Recordings } from "./infrastructure/r2";
@@ -7,7 +7,7 @@ import { todoistTracker } from "./infrastructure/todoist";
 import { handleFetch } from "./interface/inbox";
 import { handleQueue } from "./interface/queue";
 
-export type { Env } from "./infrastructure/env";
+export type { Env } from "./application/env";
 
 // Складання: канал (зараз Telegram), трекер задач (Todoist), трекер issues (GitHub), сховище (R2) і моделі (OpenAI / Workers AI) передаються в інтерфейси.
 const ports = (env: Env) => {

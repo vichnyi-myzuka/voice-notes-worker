@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { settedRepo } from "../src/infrastructure/container/repo";
+import { settedRepo } from "../src/application/watch/repo";
 
 describe("settedRepo", () => {
 	it("бачить `set-repo owner/name` у команді bash (також у ланцюжку), а іншу команду чи кривий аргумент — ні", () => {

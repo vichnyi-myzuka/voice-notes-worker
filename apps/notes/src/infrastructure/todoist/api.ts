@@ -1,5 +1,5 @@
 import type { SetupWorld, TrackerSnapshot } from "../../domain/tracker";
-import type { Env } from "../env";
+import type { Env } from "../../application/env";
 import type { SyncResult, TodoistCommand } from "./types";
 
 export const SYNC_URL = "https://api.todoist.com/api/v1/sync";

@@ -1,7 +1,7 @@
+import { WORKING } from "../../../application/jobs";
 import type { Posts } from "./posts";
-import { WORKING } from "./config";
-import { formKey, watchKey, type PendingForm, type Watch } from "./state";
-import { cancelForm, replyForm, type Opencode } from "./opencode";
+import { formKey, watchKey, type PendingForm, type Watch } from "../state";
+import { cancelForm, replyForm, type Opencode } from "../opencode";
 
 // Питання агента з кнопками-відповідями: стан форми живе у сховищі, відповідь передається агентові й показується в пості.
 export class Forms {

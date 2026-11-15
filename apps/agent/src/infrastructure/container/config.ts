@@ -22,15 +22,6 @@ export const WATCH_MAX_MS = 2 * 60 * 60 * 1000;
 // Запобіжники за замовчуванням: вартість однієї сесії (USD) і токени (вхід + вихід + reasoning, без кешу).
 export const DEFAULT_MAX_COST_USD = 5;
 export const DEFAULT_MAX_TOKENS = 3_000_000;
-// Поки чекаємо скидання лімітів Claude, перевіряємо їх не частіше за цей інтервал (і не раніше відомого часу скидання).
-export const LIMIT_POLL_MS = 5 * 60 * 1000;
-export const WORKING = "⏳ Працює";
-// Прийняті завдання (begin/resume) виконує alarm: холодний старт і клон довші за життя запиту вебхука. Збій повторюється,
-// потім показується в пості.
-export const JOB_ATTEMPTS = 6;
-export const JOB_RETRY_MS = 15 * 1000;
-// Завдання, яке виконується довше (Durable Object могли вивантажити посеред роботи), alarm запускає знову: start і session-prep ідемпотентні.
-export const JOB_STALE_MS = 3 * 60 * 1000;
 export const PROGRESS_INTERVAL_MS = 4000; // не частіше: ліміти Telegram на редагування одного повідомлення
 export const HEADER_DEPLOYED_MAX = 150; // шапка згорнутого поста після успішного деплою
 export const HEADER_FINAL_MAX = 400; // шапка поста разом із підсумком (підсумок до SUMMARY_MAX) має вміститись у 4096

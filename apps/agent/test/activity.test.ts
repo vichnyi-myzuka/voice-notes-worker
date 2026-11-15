@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeActivity, describeForm, formChoices, formSteps } from "../src/infrastructure/container/activity";
+import { describeActivity, describeForm, formChoices, formSteps } from "../src/application/progress/activity";
 
 describe("formSteps", () => {
 	const opt = [{ label: "A", value: "a" }, { label: "B", value: "b" }];

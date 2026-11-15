@@ -8,7 +8,7 @@ import { buildCommands, RULES_PROJECT, todoistTracker } from "../src/infrastruct
 import { fetchSnapshot, findRulesProject } from "../src/infrastructure/todoist/api";
 import { taskRulesBlock, taskValidator } from "../src/infrastructure/todoist/fields";
 import type { Json } from "@voice-notes/core";
-import type { Env } from "../src/infrastructure/env";
+import type { Env } from "../src/application/env";
 import { fakeEnv } from "./fake-env";
 
 // Параметри запуску, які в тестах задаються до виклику applyPrepared (id запуску — з префіксом команд).

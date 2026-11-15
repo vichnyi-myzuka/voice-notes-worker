@@ -1,7 +1,7 @@
 import { withAppliedRecurrence } from "../tasks";
 import { buildCaption, taskLinks, type Meta } from "../../domain/note";
 import type { Note } from "../../domain/published";
-import type { Env } from "../../infrastructure/env";
+import type { Env } from "../env";
 import type { Ports } from "./types";
 import type { TriageItem } from "../../domain/tracker";
 
