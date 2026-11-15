@@ -1,7 +1,7 @@
 import { safeEqual, tg, type BotEnv } from "@voice-notes/core";
 import type { Deploys, Sessions } from "../../domain/agent";
 import type { ChatEnv, GithubEnv } from "../../env";
-import { commitPulls, deleteBranch } from "../../infrastructure/github";
+import { commitPulls, conflictedAgentPulls, deleteBranch } from "../../infrastructure/github";
 import { callback, removeMessage, removeOriginal } from "../../infrastructure/chat";
 import { reviewButtons } from "./review";
 
@@ -12,6 +12,7 @@ export type GithubDeps = { agent: Sessions & Deploys; defer: (work: Promise<unkn
 type Payload = {
 	action?: string;
 	repository?: { full_name: string; default_branch: string };
+	ref?: string;
 	workflow_job?: { run_id: number; head_sha?: string; name: string; workflow_name?: string; head_branch?: string; html_url: string };
 	workflow_run?: { id: number; name: string; head_branch: string; head_sha?: string; html_url: string; conclusion?: string | null; head_repository?: { full_name: string } };
 };
@@ -28,7 +29,8 @@ async function validSignature(body: string, header: string, secret: string): Pro
 
 // Вебхук GitHub (повз Access, як і Telegram: захищає підпис). Дві події:
 //  • workflow_job waiting (job чекає схвалення environment): надсилаємо в чат запит на схвалення деплою з кнопками (див. review.ts);
-//  • workflow_run completed (check на гілці agent/* впав): пост у чаті й завдання агенту сесії виправити CI (onCheckFailed);
+//  • workflow_run completed (workflow, крім деплою, на гілці agent/* впав): пост у чаті й завдання агенту сесії виправити CI (onCheckFailed);
+//  • push у головну гілку: відкриті PR бота, що тепер конфліктують із нею, дістають завдання змерджити main і розв'язати конфлікти (onBaseMoved);
 //  • workflow_run completed (deploy на головній гілці): результат деплою й PR; після успіху ще й прибирання сесії PR бота
 //    (сесія, worktree, локальна й віддалена гілка, пост у чаті).
 // GitHub отримує 200 одразу, робота йде у фоні.
@@ -51,7 +53,7 @@ export async function handleGithub(req: Request, env: ChatEnv & GithubEnv, deps:
 	else if (event === "workflow_run") {
 		deps.defer(onDeployFinished(bot, env, deps, repo, payload).catch((err) => console.error("github deploy result failed:", err)));
 		deps.defer(onCheckFailed(bot, env, deps, repo, payload).catch((err) => console.error("github check failed handler failed:", err)));
-	}
+	} else if (event === "push") deps.defer(onBaseMoved(bot, env, deps, repo, payload).catch((err) => console.error("github conflicts handler failed:", err)));
 	return new Response("ok");
 }
 
@@ -73,6 +75,7 @@ async function onDeployFinished(bot: BotEnv, env: ChatEnv & GithubEnv, { agent }
 		if (pr.repo !== repo || !pr.branch.startsWith("agent/")) continue;
 		const inPost = await agent.setDeploy(repo, pr.branch.slice("agent/".length), { text: `${title}\n${run.html_url}`, done: run.conclusion === "success", stage: run.conclusion === "success" ? "deployed" : "failed" }).catch((err) => (console.error("show deploy in post failed:", err), false));
 		shown ||= inPost;
+		await babysitReset(agent, repo, pr.branch);
 		if (run.conclusion === "success") cleaned += (await cleanup(bot, env, agent, repo, pr.branch, inPost).catch((err) => (console.error("cleanup failed:", err), false))) ? 1 : 0;
 	}
 	if (shown) return;
@@ -84,23 +87,66 @@ async function onDeployFinished(bot: BotEnv, env: ChatEnv & GithubEnv, { agent }
 	await tg(bot, "sendMessage", { chat_id: chat, text, reply_markup, link_preview_options: { is_disabled: true } });
 }
 
-// Перевірка PR (workflow `check`) на гілці бота впала: пишемо про це в чат і даємо сесії завдання розібратись і виправити.
-const CHECK_WORKFLOW = "check";
+// Перевірка PR (будь-який workflow, крім деплою) на гілці бота впала: пишемо про це в чат і даємо сесії завдання розібратись і виправити.
 const CHECK_FAILED = ["failure", "timed_out"];
 
+// «Бейбісітинг»: агент не зупиняється після пушу, а чекає на нові перевірки й веде PR до зеленого стану без конфліктів.
+// Але не безкінечно: BABYSIT_LIMIT спроб на гілку (збої CI і конфлікти разом), далі воркер сесію не будить, а агент сам зупиняється.
+export const BABYSIT_LIMIT = 3;
+const KEEP_GOING = `Do not stop after pushing: wait for the new CI run on the pull request (for example \`gh pr checks --watch\`), and if it fails again, repeat; keep going until every check is green and the branch has no conflicts with the default branch. Make at most ${BABYSIT_LIMIT} fix attempts in total for this pull request: if it is still not green after that (or you are truly stuck), stop and say what blocks you instead of trying again.`;
+
+const babysitKey = (repo: string, branch: string) => `babysit:${repo}:${branch}`;
+
+// Номер цієї спроби для гілки (лічильник лежить у сховищі агента, як посилання на пост). Понад ліміт сесію не будимо; про зупинку
+// пишемо в чат один раз, на першій зайвій спробі.
+async function babysitAttempt(bot: BotEnv, agent: Sessions & Deploys, repo: string, branch: string, session: { chatId?: number; threadId?: number }): Promise<boolean> {
+	const prev = await agent.takeRef(babysitKey(repo, branch)).catch(() => undefined);
+	const n = Number(prev?.text ?? 0) + 1;
+	await agent.saveRef(babysitKey(repo, branch), { chatId: 0, messageId: 0, text: String(n) }).catch((err) => console.error("save babysit counter failed:", err));
+	if (n <= BABYSIT_LIMIT) return true;
+	if (n === BABYSIT_LIMIT + 1 && session.chatId) {
+		const text = `🛑 ${branch}: ${BABYSIT_LIMIT} спроби виправити PR не допомогли, бейбісітинг зупинено. Напиши в сесію, що робити далі.`;
+		await tg(bot, "sendMessage", { chat_id: session.chatId, text, ...(session.threadId && { message_thread_id: session.threadId }), link_preview_options: { is_disabled: true } }).catch((err) => console.error("babysit stop notice failed:", err));
+	}
+	return false;
+}
+
+// Гілка знову зелена (чи змерджена): рахунок спроб починається спочатку.
+const babysitReset = (agent: Sessions & Deploys, repo: string, branch: string) => agent.takeRef(babysitKey(repo, branch)).then(() => undefined, () => undefined);
+
 export const ciFailedPrompt = (branch: string, url: string, conclusion: string) =>
-	`The CI check for your pull request (branch ${branch}) ${conclusion === "timed_out" ? "timed out" : "failed"}: ${url}\nFind out why (for example \`gh run view <run id> --log-failed\`, the run id is the last number in the URL), fix it, run \`npm run check\` locally, then commit and push to the same branch. If the failure is not caused by your changes (flaky test, infrastructure), say so instead of changing unrelated code. If the branch also has merge conflicts with the default branch, merge or rebase it and resolve them.`;
+	`The CI check for your pull request (branch ${branch}) ${conclusion === "timed_out" ? "timed out" : "failed"}: ${url}\nFind out why (for example \`gh run view <run id> --log-failed\`, the run id is the last number in the URL), fix it, run \`npm run check\` locally, then commit and push to the same branch. If the failure is not caused by your changes (flaky test, infrastructure), say so instead of changing unrelated code. If the branch also has merge conflicts with the default branch, merge or rebase it and resolve them. ${KEEP_GOING}`;
+
+export const conflictPrompt = (branch: string, base: string, number: number) =>
+	`Your pull request #${number} (branch ${branch}) now has merge conflicts with ${base}, because ${base} moved on. Run \`git fetch origin ${base}\`, merge origin/${base} into the branch (a merge commit, not a rebase or force-push), resolve the conflicts keeping both your changes and the new changes from ${base}, run \`npm run check\` locally, then commit and push to the same branch. ${KEEP_GOING}`;
 
 async function onCheckFailed(bot: BotEnv, env: ChatEnv & GithubEnv, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
 	const run = p.workflow_run;
-	if (p.action !== "completed" || !run || run.name !== CHECK_WORKFLOW || !CHECK_FAILED.includes(run.conclusion ?? "")) return;
+	if (p.action !== "completed" || !run || run.name === DEPLOY_WORKFLOW) return;
 	// Лише гілки бота з цього ж репозиторію (не форки)
 	if (!run.head_branch.startsWith("agent/") || (run.head_repository && run.head_repository.full_name !== repo)) return;
+	if (run.conclusion === "success") return void (await babysitReset(agent, repo, run.head_branch));
+	if (!CHECK_FAILED.includes(run.conclusion ?? "")) return;
 	const session = await agent.findByBranch(repo, run.head_branch.slice("agent/".length));
 	if (!session?.chatId) return; // сесія без поста в чаті (напр. з веб-інтерфейсу): нікому показувати
+	if (!(await babysitAttempt(bot, agent, repo, run.head_branch, session))) return;
 	const text = `❌ CI не пройшов у ${run.head_branch}${run.conclusion === "timed_out" ? " (час вийшов)" : ""}. Агент береться виправляти.\n${run.html_url}`;
 	await tg(bot, "sendMessage", { chat_id: session.chatId, text, ...(session.threadId && { message_thread_id: session.threadId }), link_preview_options: { is_disabled: true } }).catch((err) => console.error("ci failed notice failed:", err));
 	await agent.resume(session.id, ciFailedPrompt(run.head_branch, run.html_url, run.conclusion!), { chatId: session.chatId, url: agent.url(session.id), ...(session.threadId && { threadId: session.threadId }) });
+}
+
+// Пуш у головну гілку: PR бота, що тепер конфліктують із нею, дістають завдання розв'язати конфлікти (GitHub вебхука про конфлікти не шле).
+async function onBaseMoved(bot: BotEnv, env: ChatEnv & GithubEnv, { agent }: GithubDeps, repo: string, p: Payload): Promise<void> {
+	const base = p.repository?.default_branch;
+	if (!env.GITHUB_TOKEN || !base || p.ref !== `refs/heads/${base}`) return;
+	for (const pr of await conflictedAgentPulls(env.GITHUB_TOKEN, repo, base)) {
+		const session = await agent.findByBranch(repo, pr.branch.slice("agent/".length));
+		if (!session?.chatId) continue;
+		if (!(await babysitAttempt(bot, agent, repo, pr.branch, session))) continue;
+		const text = `⚠️ PR #${pr.number} (${pr.branch}) тепер має конфлікти з ${base}. Агент береться їх розв'язати.`;
+		await tg(bot, "sendMessage", { chat_id: session.chatId, text, ...(session.threadId && { message_thread_id: session.threadId }), link_preview_options: { is_disabled: true } }).catch((err) => console.error("conflict notice failed:", err));
+		await agent.resume(session.id, conflictPrompt(pr.branch, base, pr.number), { chatId: session.chatId, url: agent.url(session.id), ...(session.threadId && { threadId: session.threadId }) }).catch((err) => console.error("conflict resume failed:", err));
+	}
 }
 
 // Прибирає сесію гілки (як /delete) і віддалену гілку; пост у чаті видаляє, лише якщо він не показує результату (keepPost). true, якщо сесію знайдено.
