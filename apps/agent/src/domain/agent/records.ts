@@ -45,3 +45,10 @@ export type PostAnswers = { labels: string[]; multiple?: boolean };
 
 // Іконка теми за станом сесії.
 export type TopicState = "working" | "question" | "done" | "failed" | "approval" | "deploying" | "deployed" | "deployFailed";
+
+// Варіант відповіді на питання агента: підпис на кнопці й значення, яке піде агентові.
+export type Choice = { label: string; value: string | boolean | string[] };
+
+// Питання агента, на яке можна відповісти кнопкою: форма й варіанти (callback_data несе лише номер варіанта).
+// next — наступні кроки багатокрокової форми, answers — уже зібрані відповіді.
+export type PendingForm = { askedAt?: number; formId: string; ocId: string; key: string; choices: Choice[]; multiple?: boolean; selected: number[]; text: string; next?: { key: string; choices: Choice[]; multiple?: boolean; text: string }[]; answers?: FormAnswers };

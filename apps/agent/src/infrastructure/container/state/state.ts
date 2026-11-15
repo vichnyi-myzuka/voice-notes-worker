@@ -1,13 +1,11 @@
-export type { Job, LimitWait, Tracked, Watch } from "../../../domain/agent";
-import type { Choice } from "../../../application/progress";
+export type { Job, LimitWait, PendingForm, Tracked, Watch } from "../../../domain/agent";
 
 // Що Durable Object тримає у сховищі і за якими ключами. Усі ключі й форми записів — тут, щоб модулі не вгадували їх самі.
 
 export const jobKey = (id: string) => `job:${id}`;
 
-// Питання агента, на яке можна відповісти кнопкою: форма й варіанти (callback_data несе лише номер варіанта).
+// Питання агента (форма): тип запису — domain/agent/records.ts, ключ form:<id сесії>.
 export const FORM_PREFIX = "form:";
-export type PendingForm = { askedAt?: number; formId: string; ocId: string; key: string; choices: Choice[]; multiple?: boolean; selected: number[]; text: string; next?: { key: string; choices: Choice[]; multiple?: boolean; text: string }[]; answers?: Record<string, string | boolean | string[]> };
 export const formKey = (id: string) => `${FORM_PREFIX}${id}`;
 
 export const WATCH_PREFIX = "watch:";

@@ -1,3 +1,5 @@
+import type { Choice } from "../../domain/agent";
+
 // Підпис поточної дії агента для поста в чаті: з назви інструмента (session.tool.input.started) і аргументів (session.tool.called).
 // Команди bash не показуємо повністю (у них можуть бути токени): лише назву програми.
 
@@ -14,7 +16,7 @@ const FORM_MAX = 1200; // пост разом із шапкою має вміс�
 export type ActivityForm = { title?: string; fields?: { key?: string; type?: string; hidden?: boolean; title?: string; description?: string; maxItems?: number; options?: { value?: string; label?: string; description?: string }[] }[] };
 
 // Кнопки-відповіді: лише для питань з одним видимим полем (варіанти, так/ні або множинний вибір); складні форми відповідаються текстом.
-export type Choice = { label: string; value: string | boolean | string[] };
+export type { Choice };
 const MAX_CHOICES = 8;
 export type FormStep = { key: string; choices: Choice[]; multiple?: boolean; text: string };
 type FormField = NonNullable<ActivityForm["fields"]>[number];

@@ -1,4 +1,4 @@
-import type { FormAnswers, Job, LimitWait, OpencodeEvent, PostAnswers, PromptFile, SessionInfo, Tracked, TopicState, Watch } from "./records";
+import type { FormAnswers, PendingForm, Job, LimitWait, OpencodeEvent, PostAnswers, PromptFile, SessionInfo, Tracked, TopicState, Watch } from "./records";
 import type { WatchTarget } from "./types";
 
 // Порти, через які ядро агента (application) торкається зовнішнього світу. Реалізації — в infrastructure/container.
@@ -22,6 +22,10 @@ export interface SessionStore {
 	saveJob(job: Job): Promise<void>;
 	dropJob(id: string): Promise<unknown>;
 	jobs(): Promise<Job[]>;
+	form(id: string): Promise<PendingForm | undefined>;
+	saveForm(id: string, form: PendingForm): Promise<void>;
+	dropForm(id: string): Promise<unknown>;
+	forms(): Promise<[string, PendingForm][]>;
 	limit(id: string): Promise<LimitWait | undefined>;
 	saveLimit(id: string, wait: LimitWait): Promise<void>;
 	dropLimit(id: string): Promise<unknown>;

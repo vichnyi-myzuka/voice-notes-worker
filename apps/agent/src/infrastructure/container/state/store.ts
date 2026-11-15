@@ -1,5 +1,5 @@
 import type { SessionStore as SessionStorePort } from "../../../domain/agent";
-import { LIMIT_PREFIX, SESSION_PREFIX, WATCH_PREFIX, jobKey, limitKey, sessionId, sessionKey, watchId, watchKey, type Job, type LimitWait, type Tracked, type Watch } from "./state";
+import { FORM_PREFIX, LIMIT_PREFIX, SESSION_PREFIX, WATCH_PREFIX, formKey, jobKey, limitKey, sessionId, sessionKey, watchId, watchKey, type Job, type LimitWait, type PendingForm, type Tracked, type Watch } from "./state";
 
 const JOB_PREFIX = jobKey("");
 
@@ -72,6 +72,22 @@ export class SessionStore implements SessionStorePort {
 
 	async jobs(): Promise<Job[]> {
 		return [...(await this.storage.list<Job>({ prefix: JOB_PREFIX })).values()];
+	}
+
+	form(id: string): Promise<PendingForm | undefined> {
+		return this.storage.get<PendingForm>(formKey(id));
+	}
+
+	saveForm(id: string, form: PendingForm): Promise<void> {
+		return this.storage.put(formKey(id), form);
+	}
+
+	dropForm(id: string): Promise<unknown> {
+		return this.storage.delete(formKey(id));
+	}
+
+	async forms(): Promise<[string, PendingForm][]> {
+		return [...(await this.storage.list<PendingForm>({ prefix: FORM_PREFIX }))].map(([key, f]) => [key.slice(FORM_PREFIX.length), f]);
 	}
 
 	limit(id: string): Promise<LimitWait | undefined> {

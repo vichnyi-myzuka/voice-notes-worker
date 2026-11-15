@@ -7,7 +7,7 @@ import { openPullNumber } from "../../github";
 import { isLimitError } from "../../quota";
 import type { Computer } from "../computer";
 import { SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, maxCostUsd, maxTokens } from "../config";
-import type { Forms } from "../progress";
+import type { Forms } from "../../../application/progress";
 import { extractImages, type OutImage } from "../../../application/progress";
 import { sendImages } from "../progress";
 import type { Limits } from "../../../application/jobs";

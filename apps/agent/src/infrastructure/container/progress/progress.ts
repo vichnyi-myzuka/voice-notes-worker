@@ -5,7 +5,7 @@ import type { Answers } from "../../chat";
 import { describeActivity, describeForm, formChoices, formSteps } from "../../../application/progress";
 import { WORKING } from "../../../application/jobs";
 import { progressMs } from "../config";
-import type { Forms } from "./forms";
+import type { Forms } from "../../../application/progress";
 import { describeCall, narrate, remember } from "../../../application/progress";
 import type { OpencodeForm } from "../opencode";
 import type { Posts } from "./posts";

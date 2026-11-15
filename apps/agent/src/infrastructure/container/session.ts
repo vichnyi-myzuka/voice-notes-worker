@@ -7,17 +7,17 @@ import { CLEANUP } from "./computer";
 import { Computer } from "./computer";
 import { Workspace } from "./computer";
 import { WATCH_INTERVAL_MS, publishEnv } from "./config";
-import { Forms } from "./progress";
+import { Forms } from "../../application/progress";
 import { loadImages } from "./progress";
 import { Jobs, Limits, JOB_RETRY_MS } from "../../application/jobs";
 import { Handoffs } from "./jobs";
 import { chatNotices, claudeLimits, durableScheduler } from "./adapters";
 import { Mcp } from "./mcp";
-import { createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
+import { opencodeClient, createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
 import { Posts } from "./progress";
 import { Progress } from "./progress";
 import { WebProxy } from "./computer";
-import { FORM_PREFIX, type PendingForm, type Tracked } from "./state";
+import type { Tracked } from "./state";
 import { SessionStore } from "./state";
 import { Watcher } from "./jobs";
 
@@ -52,7 +52,7 @@ export class AgentSession extends DurableObject<Env> {
 		const scheduler = durableScheduler(ctx, this.computer);
 		const notices = chatNotices(env, this.posts);
 		this.limits = new Limits(claudeLimits(env), this.store, notices, scheduler);
-		this.forms = new Forms(ctx.storage, this.posts, () => this.computer.opencode());
+		this.forms = new Forms(this.store, this.posts, opencodeClient(() => this.computer.opencode()));
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, this.workspace, (id, tracked, text) => this.tell(id, tracked, text));
 		this.progress = new Progress(env, this.store, this.posts, this.forms);
@@ -91,8 +91,8 @@ export class AgentSession extends DurableObject<Env> {
 			return void (await this.computer.alarmNoLater(Date.now() + WATCH_INTERVAL_MS));
 		}
 		// Агент чекає відповіді на питання: питання живе в пам'яті OpenCode, тож контейнер тримаємо довше (FORM_HOLD_MS).
-		const forms = await this.ctx.storage.list<PendingForm>({ prefix: FORM_PREFIX });
-		await this.computer.settle(Math.max(0, ...[...forms.values()].map((f) => f.askedAt ?? 0)));
+		const forms = await this.store.forms();
+		await this.computer.settle(Math.max(0, ...forms.map(([, f]) => f.askedAt ?? 0)));
 	}
 
 	// Деплой PR сесії у пості (див. Posts).
