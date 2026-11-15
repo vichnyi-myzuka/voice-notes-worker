@@ -49,10 +49,11 @@ function fakeContainer() {
 		monitor: () => new Promise<void>(() => {}),
 		setInactivityTimeout: async () => {},
 		// exec не успадковує env контейнера; session-prep друкує шлях теки сесії.
-		async exec(cmd: string[], options?: { env?: Record<string, string> }) {
+		async exec(cmd: string[], options?: { env?: Record<string, string>; stdin?: ReadableStream }) {
 			if (cmd[0] === "node") {
-				// розкладання payload/: окремо від решти, щоб не заважати перевіркам session-prep
-				opencode.syncs.push(JSON.parse(options!.env!.PAYLOAD) as { path: string; mode: string; content: string }[]);
+				// розкладання payload/: окремо від решти, щоб не заважати перевіркам session-prep; JSON іде через stdin, не через env
+				expect(options?.env?.PAYLOAD).toBeUndefined();
+				opencode.syncs.push(JSON.parse(await new Response(options!.stdin).text()) as { path: string; mode: string; content: string }[]);
 				return { output: async () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }) };
 			}
 			opencode.execs.push({ cmd, env: options?.env });

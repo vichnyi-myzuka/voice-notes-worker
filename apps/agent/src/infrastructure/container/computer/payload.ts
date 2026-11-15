@@ -73,8 +73,9 @@ export const PAYLOAD_HASH = (() => {
 	return (h >>> 0).toString(16);
 })();
 
-// Скрипт для `node -e` у контейнері: пише файли з PAYLOAD (JSON у змінній середовища) і ставить права. Node є в образі.
-export const WRITER = `const fs=require("fs"),path=require("path");for(const f of JSON.parse(process.env.PAYLOAD)){fs.mkdirSync(path.dirname(f.path),{recursive:true});fs.writeFileSync(f.path,f.content);fs.chmodSync(f.path,parseInt(f.mode,8))}`;
+// Скрипт для `node -e` у контейнері: читає JSON з payload зі stdin (змінна середовища чи аргумент впираються в ліміт Linux 128 KiB,
+// а payload значно більший) і пише файли та ставить права. Node є в образі.
+export const WRITER = `const fs=require("fs"),path=require("path");for(const f of JSON.parse(fs.readFileSync(0,"utf8"))){fs.mkdirSync(path.dirname(f.path),{recursive:true});fs.writeFileSync(f.path,f.content);fs.chmodSync(f.path,parseInt(f.mode,8))}`;
 
 // MCP-сервери, які сесії підключає власник (див. prepare у computer.ts), за реєстром MCP_SERVICES: sure — токен у секретах воркера
 // (true), решта — короткі access-токени (їх видає OAuthLogin.accessToken); без токена сервер не підключається.

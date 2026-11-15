@@ -110,7 +110,8 @@ export class Computer {
 	// бути зроблений до останнього деплою) і для працюючого контейнера, якщо вміст змінився. Образ при цьому не чіпається.
 	private async syncPayload(force: boolean): Promise<void> {
 		if (!force && (await this.ctx.storage.get<string>(computerKey.payloadHash)) === PAYLOAD_HASH) return;
-		const proc = await this.ctx.container!.exec(["node", "-e", WRITER], { cwd: "/", env: { HOME: "/root", PAYLOAD: JSON.stringify(PAYLOAD) } });
+		const stdin = new Blob([JSON.stringify(PAYLOAD)]).stream(); // не через env: ліміт 128 KiB на змінну (E2BIG)
+		const proc = await this.ctx.container!.exec(["node", "-e", WRITER], { cwd: "/", env: { HOME: "/root" }, stdin });
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`payload sync failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
 		await this.ctx.storage.put(computerKey.payloadHash, PAYLOAD_HASH);
