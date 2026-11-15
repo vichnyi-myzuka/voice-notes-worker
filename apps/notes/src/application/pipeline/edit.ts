@@ -1,4 +1,4 @@
-import type { Env } from "../../infrastructure/env";
+import type { Env } from "../env";
 import type { Note } from "../../domain/published";
 import { formatRecordedAt, stateKey } from "../../domain/recording";
 import { runSetup } from "../setup";

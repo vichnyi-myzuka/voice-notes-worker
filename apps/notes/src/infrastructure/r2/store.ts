@@ -1,7 +1,7 @@
 import type { Note, NoteRepository } from "../../domain/published";
 import type { IssueLedger, TrackedIssues } from "../../domain/issues";
 import type { TaskLedger, TrackedTasks } from "../../domain/tracker";
-import type { Env } from "../env";
+import type { Env } from "../../application/env";
 
 const noteKey = (id: string) => `notes/${id}.json`;
 const byMessageKey = (messageId: number | string) => `notes/msg-${messageId}`;

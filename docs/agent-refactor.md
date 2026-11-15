@@ -29,11 +29,11 @@
 - [x] `Env` розділено на групи (`AccessEnv`, `ContainerEnv`, `ChatEnv`, `GithubEnv`, `PublishEnv`, `McpEnv` у `env.ts`); модулі просять лише свою групу.
 - [x] `chat`: id сесії в кнопках передається явно (`SessionLink { id, url }`), а не добувається з URL.
 - [x] `application/task` для агента: вибір репозиторію, моделі й MCP (`planTask`, префікси, роутер) винесено з `interface/telegram/handle.ts`; interface лишає лише Telegram.
-- [x] Правила лінтера на напрямок шарів (`.oxlintrc.json`): `domain` не імпортує інші шари; `application` агента не імпортує `infrastructure` і `interface`; `interface` не імпортує `infrastructure/container` (до Durable Object лише через порт `Agent`). Спільні адаптери `infrastructure/chat`, `github`, `quota` дозволені (ADR 0004). `application` застосунку нотаток правило поки не охоплює: його типи `Env`/`Job` лежать в `infrastructure/env`.
+- [x] Правила лінтера на напрямок шарів (`.oxlintrc.json`): `domain` не імпортує інші шари; `application` агента не імпортує `infrastructure` і `interface`; `interface` не імпортує `infrastructure/container` (до Durable Object лише через порт `Agent`). Спільні адаптери `infrastructure/chat`, `github`, `quota` дозволені (ADR 0004). Для `apps/notes` правило додано на етапі 3.
 - [x] Шаблон report-site — тека `payload/report-site/` з `.tpl`-файлами замість heredoc у `new-report-site.sh`; список файлів — `infrastructure/container/report-site.ts` (тест звіряє його з диском).
 
 ## Етап 3 (окремим PR, після етапу 2)
 
-- [ ] `apps/notes`: типи `Env` і `Job` винести з `infrastructure/env` у `domain`/`application`, щоб `application` не імпортував `infrastructure`.
-- [ ] Поширити правило лінтера на напрямок шарів (`.oxlintrc.json`) на `apps/notes/src/application/**` (`application` не імпортує `infrastructure` і `interface`), перевірити навмисним порушенням.
-- [ ] Оновити `docs/agent-refactor.md` (цей файл) і сайт архітектури (`apps/docs/web/src/diagrams.tsx` або `content.ts`), якщо зміниться структура модулів.
+- [x] `apps/notes`: типи `Env` і `Job` винесено з `infrastructure/env` в `application/env`, щоб `application` не імпортував `infrastructure`.
+- [x] Поширити правило лінтера на напрямок шарів (`.oxlintrc.json`) на `apps/notes/src/application/**` (`application` не імпортує `infrastructure` і `interface`), перевірити навмисним порушенням.
+- [x] Оновити `docs/agent-refactor.md` (цей файл) і сайт архітектури (`apps/docs/web/src/diagrams.tsx` або `content.ts`), якщо зміниться структура модулів.

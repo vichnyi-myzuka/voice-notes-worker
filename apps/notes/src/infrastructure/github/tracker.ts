@@ -1,5 +1,5 @@
 import type { IssueRepo, IssueTracker } from "../../domain/issues";
-import type { Env } from "../env";
+import type { Env } from "../../application/env";
 
 const API = "https://api.github.com";
 

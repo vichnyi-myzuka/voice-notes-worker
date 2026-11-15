@@ -57,7 +57,7 @@ export function NotesLayers() {
       <Box x={280} y={20} w={400} h={80} title="interface" lines={["inbox: вебхук і завантаження", "queue: споживачі й DLQ"]} color={0} />
       <Box x={280} y={140} w={400} h={80} title="application" lines={["intake, pipeline, understand", "tasks, issues, setup"]} color={0} />
       <Box x={280} y={250} w={400} h={80} title="domain" lines={["note, published, recording, tracker", "порти: TaskTracker, NoteRepository…"]} color={0} />
-      <Box x={720} y={140} w={220} h={80} title="infrastructure" lines={["r2, todoist, env", "адаптери портів"]} color={1} />
+      <Box x={720} y={140} w={220} h={80} title="infrastructure" lines={["r2, todoist", "адаптери портів"]} color={1} />
       <Arrow points={[[480, 100], [480, 140]]} />
       <Arrow points={[[480, 220], [480, 250]]} />
       <Arrow points={[[280, 180], [240, 180]]} />

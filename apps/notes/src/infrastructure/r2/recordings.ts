@@ -1,5 +1,5 @@
 import { captionKey, stateKey, type RecordingStore } from "../../domain/recording";
-import type { Env } from "../env";
+import type { Env } from "../../application/env";
 
 // Адаптер RecordingStore: записи, підписи до фото й стан обробки в R2 (записи живуть 7 днів за lifecycle бакета).
 export function r2Recordings(env: Env): RecordingStore {

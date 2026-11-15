@@ -1,5 +1,5 @@
 import type { Incoming } from "@voice-notes/core";
-import type { Env } from "../../infrastructure/env";
+import type { Env } from "../env";
 import type { Ports } from "../pipeline";
 import { enqueueNote } from "./enqueue";
 
