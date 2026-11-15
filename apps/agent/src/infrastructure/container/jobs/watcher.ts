@@ -11,6 +11,7 @@ import type { Forms } from "../progress";
 import { extractImages, type OutImage } from "../../../application/progress";
 import { sendImages } from "../progress";
 import type { Limits } from "../../../application/jobs";
+import { handedOff, type Handoffs } from "./handoff";
 import { requestedMcp, type Mcp } from "../mcp";
 import { activeSessions, getSession, interrupt, lastAssistant, readEvents, totalTokens, type Opencode, type OpencodeEvent } from "../opencode";
 import { DEPLOY_ICON, type Posts } from "../progress";
@@ -35,6 +36,7 @@ export class Watcher {
 		private readonly limits: Limits,
 		private readonly progress: Progress,
 		private readonly mcp: Mcp,
+		private readonly handoffs: Handoffs,
 	) {}
 
 	// Один оберт опитування: зупиняє сесії, що перевищили ліміти, і повідомляє в чат про завершені. Повертає true, поки є що
@@ -212,6 +214,8 @@ export class Watcher {
 			if (wanted) await this.mcp.request(ocId, wanted).catch((err) => console.error("mcp request failed:", err));
 			const repo = (tool === "bash" || tool === "shell") ? settedRepo(event.data.input) : undefined;
 			if (repo) await this.adoptRepo(ocId, repo).catch((err) => console.error("set-repo failed:", err));
+			const handoff = (tool === "bash" || tool === "shell") ? handedOff(event.data.input) : undefined;
+			if (handoff) await this.handoffs.spawn(ocId, event.data.id, handoff).catch((err) => console.error("handoff failed:", err));
 			return this.progress.show(ocId, tool, event.data.input);
 		}
 		const kind = event.type.startsWith("session.execution.") ? event.type.slice("session.execution.".length) : "";

@@ -10,6 +10,7 @@ import { WATCH_INTERVAL_MS, publishEnv } from "./config";
 import { Forms } from "./progress";
 import { loadImages } from "./progress";
 import { Jobs, Limits, JOB_RETRY_MS } from "../../application/jobs";
+import { Handoffs } from "./jobs";
 import { chatNotices, claudeLimits, durableScheduler } from "./adapters";
 import { Mcp } from "./mcp";
 import { createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
@@ -40,6 +41,7 @@ export class AgentSession extends DurableObject<Env> {
 	private readonly jobs: Jobs;
 	private readonly progress: Progress;
 	private readonly watcher: Watcher;
+	private readonly handoffs: Handoffs;
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
 		this.computer = new Computer(ctx, env);
@@ -54,7 +56,8 @@ export class AgentSession extends DurableObject<Env> {
 		this.proxy = new WebProxy(ctx, env, this.computer);
 		this.mcp = new Mcp(ctx.storage, env, this.store, this.computer, this.workspace, (id, tracked, text) => this.tell(id, tracked, text));
 		this.progress = new Progress(env, this.store, this.posts, this.forms);
-		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp);
+		this.handoffs = new Handoffs(env, this.store, (id, input, target) => this.jobs.begin(id, input, target));
+		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp, this.handoffs);
 		this.jobs = new Jobs(scheduler, this.store, notices, {
 			running: () => this.computer.running,
 			start: (id, input) => this.start(id, input),

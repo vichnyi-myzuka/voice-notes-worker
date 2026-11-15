@@ -1,6 +1,7 @@
 import type { McpEnv } from "../../../env";
 import agents from "../../../../payload/AGENTS.md";
 import calendarAgent from "../../../../payload/calendar-agent.md";
+import handoff from "../../../../payload/handoff.sh";
 import prePush from "../../../../payload/pre-push.sh";
 import newReportSite from "../../../../payload/new-report-site.sh";
 import publish from "../../../../payload/publish.sh";
@@ -52,6 +53,8 @@ export const PAYLOAD: PayloadFile[] = [
 	{ path: "/usr/local/bin/request-mcp", mode: "755", content: requestMcp },
 	// Агент повідомляє репозиторій сесії, не визначений на старті (див. set-repo.sh і settedRepo у repo.ts)
 	{ path: "/usr/local/bin/set-repo", mode: "755", content: setRepo },
+	// Агент передає роботу в нову сесію (див. handoff.sh і handedOff у handoff.ts)
+	{ path: "/usr/local/bin/handoff", mode: "755", content: handoff },
 	// Скіл для сайтів-звітів: агент підхоплює його сам за description. OpenCode читає ~/.config/opencode/skills, claude — ~/.claude/skills.
 	{ path: "/root/.config/opencode/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
 	{ path: "/root/.claude/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
