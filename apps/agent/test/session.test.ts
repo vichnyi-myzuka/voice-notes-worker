@@ -340,7 +340,7 @@ describe("AgentSession", () => {
 			await session.start(ID, { prompt: "Задача" });
 			expect(opencode.syncs).toHaveLength(1);
 			const byPath = Object.fromEntries(opencode.syncs[0].map((f) => [f.path, f]));
-			expect(Object.keys(byPath).filter((path) => !path.startsWith("/usr/local/share/report-site/") && !path.includes("/skills/") || path.includes("/skills/report-site/")).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/bin/set-repo", "/usr/local/lib/git-hooks/pre-push"]);
+			expect(Object.keys(byPath).filter((path) => !path.startsWith("/usr/local/share/report-site/") && !path.includes("/skills/") || path.includes("/skills/report-site/")).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/handoff", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/bin/set-repo", "/usr/local/lib/git-hooks/pre-push"]);
 			expect(byPath["/usr/local/bin/publish"].mode).toBe("755");
 			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("Publishing small static sites");
 			expect(byPath["/root/.claude/CLAUDE.md"].content).toBe(byPath["/root/.config/opencode/AGENTS.md"].content);
@@ -1275,6 +1275,30 @@ describe("AgentSession", () => {
 						tool(t.opencode, "r2", "bash", { command: "set-repo acme/other" });
 						await flush();
 						expect(await t.session.pullTarget(SID)).toMatchObject({ repo: "acme/app" });
+					});
+				});
+
+				describe("передача роботи в нову сесію (handoff)", () => {
+					const SID = "tg-1-1";
+					const POST_TG = { ...POST, url: "https://agent.example/s/tg-1-1", threadId: 9 };
+					const command = "handoff --name fix-login <<'EOF'\nЗроби логін\nEOF";
+
+					it("команда handoff з heredoc створює нову сесію: пост у чаті, завдання в черзі; повтор тієї самої події нічого не дублює", async () => {
+						const t = setup({ BOT_TOKEN: "bot" });
+						await t.session.start(SID, { prompt: "Задача", repo: "acme/app" });
+						await t.session.watch(SID, POST_TG);
+						tool(t.opencode, "c1", "bash", { command });
+						await flush();
+						const post = sent.find((c) => String(c.text ?? "").includes("Зроби логін"));
+						expect(post).toBeDefined();
+						expect(post!.text).toContain("📦 acme/app");
+						expect(post!.text).toContain("↪️ Передано з іншої сесії");
+						const job = [...t.store.entries()].find(([k]) => k.startsWith("job:tg-1-1-h"));
+						expect(job).toBeDefined();
+						expect(job![1]).toMatchObject({ input: { repo: "acme/app", name: "fix-login" } });
+						tool(t.opencode, "c1", "bash", { command });
+						await flush();
+						expect([...t.store.keys()].filter((k) => k.startsWith("job:tg-1-1-h"))).toHaveLength(1);
 					});
 				});
 

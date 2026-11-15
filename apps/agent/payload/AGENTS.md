@@ -64,6 +64,18 @@ If an MCP server named `silpo` is connected (its tools start with `silpo_`), it 
 
 The owner's MCP services are `sure` (personal finance), `silpo` (Silpo purchases), `calendar` (Google Calendar) and `cloudflare` (Cloudflare account, read-only). Only the ones the task needed at the start are connected. If, while working, you find that the task needs the owner's own data from a service whose tools you do not have, do not guess and do not give up: run `request-mcp <name>` (for example `request-mcp cloudflare`) and then end the turn at once with one short sentence that you wait for the connection. The owner gets buttons in the chat; you will receive a new message saying whether it was connected or declined. Ask only when the data is really needed, once per service.
 
+## Handing work off to another session
+
+If, while working, you notice a separate piece of work that the owner wants done but that does not belong in this session (or the owner says to do it in another session), hand it off instead of doing it here. Run `handoff` with the full task text on stdin as a quoted heredoc, always exactly in this form:
+
+```
+handoff [--repo <owner/name|none>] [--name <kebab-case>] <<'EOF'
+Full task text. The new session has NO access to this conversation, so include all context it needs: goal, relevant files and branches, decisions already made, what is out of scope.
+EOF
+```
+
+`--repo` defaults to this session's repository (`none` means no repository); `--name` is a short latin kebab-case name for the new session's folder and branch. Do not pipe the text (`echo … | handoff`) and do not put anything else in the same command: the worker reads the task from the heredoc in the command text. The worker creates a new session with its own post (and topic) in the chat; you do not get its result. After handing off, do not do that work yourself: say in one sentence that you handed it off and carry on with your own task.
+
 ## Chat commands
 
 The owner controls sessions from the Telegram chat with commands that the worker handles before they reach you, so you never see them. Know what they do to your work:
