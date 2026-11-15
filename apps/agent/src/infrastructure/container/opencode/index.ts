@@ -115,8 +115,7 @@ export async function getSession(oc: Opencode, sessionId: string): Promise<Sessi
 	return data<SessionInfo>(await oc.fetch(`/api/session/${sessionId}`));
 }
 
-// Токени без кешу: за ними видно, скільки сесія реально «прочитала й написала».
-export const totalTokens = (s: SessionInfo): number => (s.tokens?.input ?? 0) + (s.tokens?.output ?? 0) + (s.tokens?.reasoning ?? 0);
+export { totalTokens } from "../../../domain/agent";
 
 // Ідентифікатори сесій, що виконуються зараз.
 export async function activeSessions(oc: Opencode): Promise<string[]> {

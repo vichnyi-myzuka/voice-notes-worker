@@ -6,21 +6,21 @@ import { removeTopic } from "../chat";
 import { CLEANUP } from "./computer";
 import { Computer } from "./computer";
 import { Workspace } from "./computer";
-import { WATCH_INTERVAL_MS, progressMs, publishEnv } from "./config";
+import { SUMMARY_MAX, WATCH_INTERVAL_MS, WATCH_MAX_MS, maxCostUsd, maxTokens, progressMs, publishEnv } from "./config";
 import { workersLlm } from "@voice-notes/core";
 import { Mcp } from "../../application/mcp";
 import { Forms, Posts, Progress } from "../../application/progress";
 import { loadImages } from "./progress";
 import { Jobs, Limits, JOB_RETRY_MS } from "../../application/jobs";
 import { Handoffs } from "./jobs";
-import { chatNotices, claudeLimits, durableScheduler } from "./adapters";
+import { Watcher } from "../../application/watch";
+import { chatNotices, claudeLimits, containerOf, durableScheduler, githubPulls } from "./adapters";
 import { McpServers } from "./mcp";
 import { opencodeClient, createSession, deleteSession, getSession, hasModel, interrupt, totalTokens, isBusy, prompt, sessionExists, switchModel, type Opencode } from "./opencode";
 import { telegramPosts } from "./progress";
 import { WebProxy } from "./computer";
 import type { Tracked } from "./state";
 import { PostRecords, SessionStore } from "./state";
-import { Watcher } from "./jobs";
 
 // Спільний комп'ютер агента: один Durable Object (ім'я `main`) володіє єдиним контейнером з OpenCode, а сесії агентів
 // (кожна в своїй теці, для репозиторію в окремому git worktree) живуть усередині нього. Клас називається AgentSession
@@ -49,9 +49,10 @@ export class AgentSession extends DurableObject<Env> {
 		this.computer = new Computer(ctx, env);
 		this.workspace = new Workspace(ctx, env);
 		this.store = new SessionStore(ctx.storage);
-		this.posts = new Posts(telegramPosts(env), new PostRecords(ctx.storage), this.store);
+		const records = new PostRecords(ctx.storage);
+		this.posts = new Posts(telegramPosts(env), records, this.store);
 		const scheduler = durableScheduler(ctx, this.computer);
-		const notices = chatNotices(env, this.posts);
+		const notices = chatNotices(env, this.posts, (path) => this.computer.readImage(path));
 		this.limits = new Limits(claudeLimits(env), this.store, notices, scheduler);
 		this.forms = new Forms(this.store, this.posts, opencodeClient(() => this.computer.opencode()));
 		this.proxy = new WebProxy(ctx, env, this.computer);
@@ -59,7 +60,22 @@ export class AgentSession extends DurableObject<Env> {
 		this.mcp = new Mcp(this.store, this.servers, notices, (id, tracked, text) => this.tell(id, tracked, text));
 		this.progress = new Progress({ enabled: !!env.BOT_TOKEN, llm: workersLlm(env), progressMs: progressMs(env) }, this.store, this.posts, this.forms);
 		this.handoffs = new Handoffs(env, this.store, (id, input, target) => this.jobs.begin(id, input, target));
-		this.watcher = new Watcher(ctx.storage, env, this.store, this.computer, this.posts, this.forms, this.limits, this.progress, this.mcp, this.handoffs);
+		this.watcher = new Watcher({
+			config: { intervalMs: WATCH_INTERVAL_MS, maxMs: WATCH_MAX_MS, summaryMax: SUMMARY_MAX, maxCostUsd: maxCostUsd(env), maxTokens: maxTokens(env) },
+			store: this.store,
+			records,
+			opencode: opencodeClient(() => this.computer.opencode()),
+			container: containerOf(this.computer),
+			scheduler,
+			notices,
+			posts: this.posts,
+			pulls: githubPulls(env),
+			handoffs: this.handoffs,
+			forms: this.forms,
+			limits: this.limits,
+			progress: this.progress,
+			mcp: this.mcp,
+		});
 		this.jobs = new Jobs(scheduler, this.store, notices, {
 			running: () => this.computer.running,
 			start: (id, input) => this.start(id, input),

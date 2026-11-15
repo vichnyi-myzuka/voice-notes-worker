@@ -66,3 +66,12 @@ export type LastShown = { status: string; final: boolean; mergeable: boolean };
 export type PostEdit = { chatId: number; postId: number; text: string; session?: { id: string; url: string }; buttons: PostButtons; answers?: PostAnswers; review?: PostReview };
 
 export type { DeployInfo, PostRef };
+
+// Зображення з підсумку агента для відправки в чат: джерело (шлях у контейнері чи https-адреса) і підпис.
+export type OutImage = { source: string; caption: string };
+
+// Передача роботи в нову сесію (команда handoff): текст задачі; repo: undefined — як у поточної сесії, null — без репозиторію.
+export type Handoff = { task: string; repo?: string | null; name?: string };
+
+// Токени без кешу: за ними видно, скільки сесія реально «прочитала й написала».
+export const totalTokens = (s: SessionInfo): number => (s.tokens?.input ?? 0) + (s.tokens?.output ?? 0) + (s.tokens?.reasoning ?? 0);

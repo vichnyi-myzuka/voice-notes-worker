@@ -1,4 +1,4 @@
-import type { McpAccess, McpName, DeployInfo, FormAnswers, LastShown, PostRef, Job, LimitProbe, LimitWait, Notices, OpencodeClient, PendingForm, PostBoard, PostChat, PostEdit, PostStore, Scheduler, SessionStore, Tracked, Watch } from "../src/domain/agent";
+import type { Handoff, OutImage, McpAccess, McpName, DeployInfo, FormAnswers, LastShown, PostRef, Job, LimitProbe, LimitWait, Notices, OpencodeClient, PendingForm, PostBoard, PostChat, PostEdit, PostStore, Scheduler, SessionStore, Tracked, Watch } from "../src/domain/agent";
 
 // Фейки портів ядра агента: усе в пам'яті, без Durable Object, чату й мережі.
 export function fakeStore(): SessionStore {
@@ -49,14 +49,16 @@ export function fakeScheduler() {
 export function fakeNotices(enabled = true) {
 	const sent: { id: string; text: string; kind: string }[] = [];
 	const shown: { id: string; text: string }[] = [];
+	const images: { chatId: number; images: OutImage[] }[] = [];
 	const mcpQuestions: { id: string; name: McpName; threadId?: number }[] = [];
 	const notices: Notices = {
 		enabled,
 		show: async (id, _t, text) => (shown.push({ id, text }), false),
 		send: async (id, _t, text, kind) => void sent.push({ id, text, kind }),
+		images: async (target, list) => void images.push({ chatId: target.chatId, images: list }),
 		askMcp: async (id, target, name) => void mcpQuestions.push({ id, name, threadId: target.threadId }),
 	};
-	return { notices, sent, shown, mcpQuestions };
+	return { notices, sent, shown, mcpQuestions, images };
 }
 
 export const fakeProbe = (configured: boolean, state: { blocked: boolean; resetAt?: number } | undefined): LimitProbe => ({ configured, read: async () => state });
@@ -137,4 +139,11 @@ export function fakeMcpAccess(init: { unconfigured?: McpName[]; loggedOut?: McpN
 		instructions: (name) => `інструкція ${name}`,
 	};
 	return { access, connected };
+}
+
+export const fakeContainer = (running = true): { running: boolean; readImage: () => Promise<undefined> } => ({ running, readImage: async () => undefined });
+
+export function fakeHandoffs() {
+	const spawned: { ocId: string; callId: string; handoff: Handoff }[] = [];
+	return { spawner: { spawn: async (ocId: string, callId: string, handoff: Handoff) => void spawned.push({ ocId, callId, handoff }) }, spawned };
 }

@@ -1,4 +1,4 @@
-import type { FormAnswers, LastShown, PostEdit, PendingForm, Job, LimitWait, OpencodeEvent, PostAnswers, PromptFile, SessionInfo, Tracked, TopicState, Watch } from "./records";
+import type { FormAnswers, Handoff, OutImage, LastShown, PostEdit, PendingForm, Job, LimitWait, OpencodeEvent, PostAnswers, PromptFile, SessionInfo, Tracked, TopicState, Watch } from "./records";
 import type { McpName } from "./mcp";
 import type { DeployInfo, PostRef, WatchTarget } from "./types";
 
@@ -46,7 +46,9 @@ export interface Notices {
 	// Показує стан у пості сесії (оновлює його на місці); false, якщо поста немає.
 	show(id: string, target: WatchTarget, text: string, final?: boolean): Promise<boolean>;
 	// Окреме повідомлення в тему сесії; кнопка kind: «retry» (повторити) чи «done».
-	send(id: string, target: { chatId: number; url: string; threadId?: number }, text: string, kind: "retry" | "done"): Promise<void>;
+	send(id: string, target: { chatId: number; url: string; threadId?: number }, text: string, kind: "retry" | "done" | "mergeable"): Promise<void>;
+	// Зображення з підсумку: фото в тему сесії (недоступний файл пропускається).
+	images(target: { chatId: number; threadId?: number }, images: OutImage[]): Promise<void>;
 	// Питання власникові «підключити MCP до сесії?» з кнопками в темі сесії.
 	askMcp(id: string, target: { chatId: number; threadId?: number }, name: McpName, text: string): Promise<void>;
 }
@@ -110,4 +112,21 @@ export interface McpAccess {
 	// Підключає сервіси сесії (прапорці в tracked): запускає контейнер, пише конфіг у теку й вносить сервери в живий OpenCode.
 	connect(id: string, tracked: Tracked): Promise<void>;
 	instructions(name: McpName): string; // інструкція агентові щодо сервісу
+}
+
+// Контейнер, у якому працюють сесії: чи запущений і файли зображень для підсумку.
+export interface Container {
+	readonly running: boolean;
+	readImage(path: string): Promise<Uint8Array | undefined>; // лише png/jpg/gif/webp з /workspace чи /tmp у межах ліміту; інше — undefined
+}
+
+// Pull request-и репозиторіїв (GitHub): чи є в гілки сесії відкритий PR (тоді під підсумком з'являється «Змерджити»).
+export interface PullRequests {
+	readonly configured: boolean; // чи є токен доступу
+	openNumber(repo: string, branch: string): Promise<number | undefined>; // кидає помилку при збої
+}
+
+// Нова сесія з виклику handoff (команда агента): тема й пост у чаті поруч із батьківською, далі звичайний старт.
+export interface HandoffSpawner {
+	spawn(ocId: string, callId: string, handoff: Handoff): Promise<void>;
 }
