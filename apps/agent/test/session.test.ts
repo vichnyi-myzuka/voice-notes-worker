@@ -1293,6 +1293,7 @@ describe("AgentSession", () => {
 						expect(post).toBeDefined();
 						expect(post!.text).toContain("📦 acme/app");
 						expect(post!.text).toContain("↪️ Передано з іншої сесії");
+						expect(String(post!.text)).toMatch(/<blockquote expandable>[\s\S]*Зроби логін[\s\S]*<\/blockquote>/);
 						const job = [...t.store.entries()].find(([k]) => k.startsWith("job:tg-1-1-h"));
 						expect(job).toBeDefined();
 						expect(job![1]).toMatchObject({ input: { repo: "acme/app", name: "fix-login" } });
