@@ -35,7 +35,9 @@ export class Workspace {
 		if (!files) return;
 		// Файл репозиторію (під git) не чіпаємо; свій, з попереднього запуску, перезаписуємо: у ньому міг застаріти токен Сільпо.
 		const script = `git -C "${dir}" ls-files --error-unmatch .opencode/opencode.json >/dev/null 2>&1 && exit 0; node -e '${WRITER}' && { x=$(git -C "${dir}" rev-parse --git-path info/exclude 2>/dev/null) && echo '/.opencode/' >> "$(cd "${dir}" && realpath "$x")"; true; }`;
-		const proc = await this.ctx.container!.exec(["sh", "-c", script], { cwd: "/", env: { HOME: "/root", PAYLOAD: JSON.stringify(files) } });
+		// JSON іде через stdin (так читає WRITER), а не через env: ліміт 128 KiB на змінну.
+		const stdin = new Blob([JSON.stringify(files)]).stream();
+		const proc = await this.ctx.container!.exec(["sh", "-c", script], { cwd: "/", env: { HOME: "/root" }, stdin });
 		const out = await proc.output();
 		if (out.exitCode !== 0) throw new Error(`mcp setup failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
 	}
