@@ -7,6 +7,7 @@ import newReportSite from "../../../../payload/new-report-site.sh";
 import publish from "../../../../payload/publish.sh";
 import requestMcp from "../../../../payload/request-mcp.sh";
 import setRepo from "../../../../payload/set-repo.sh";
+import reportBugSkill from "../../../../payload/report-bug-skill.md";
 import reportSiteSkill from "../../../../payload/report-site-skill.md";
 import sessionPrep from "../../../../payload/session-prep.sh";
 import silpoAgent from "../../../../payload/silpo-agent.md";
@@ -58,6 +59,9 @@ export const PAYLOAD: PayloadFile[] = [
 	// Скіл для сайтів-звітів: агент підхоплює його сам за description. OpenCode читає ~/.config/opencode/skills, claude — ~/.claude/skills.
 	{ path: "/root/.config/opencode/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
 	{ path: "/root/.claude/skills/report-site/SKILL.md", mode: "644", content: reportSiteSkill },
+	// Скіл репорту бага бота: issue + handoff виправлення в нову сесію (лише за проханням власника)
+	{ path: "/root/.config/opencode/skills/report-bug/SKILL.md", mode: "644", content: reportBugSkill },
+	{ path: "/root/.claude/skills/report-bug/SKILL.md", mode: "644", content: reportBugSkill },
 	{ path: "/usr/local/bin/session-prep", mode: "755", content: sessionPrep },
 	// Запобіжник: пуш у main/master відхиляється (core.hooksPath задано в образі)
 	{ path: "/usr/local/lib/git-hooks/pre-push", mode: "755", content: prePush },
