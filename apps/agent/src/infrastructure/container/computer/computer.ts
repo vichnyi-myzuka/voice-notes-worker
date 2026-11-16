@@ -5,7 +5,7 @@ import { parseConnections } from "../../../application/computer";
 import { FORM_HOLD_MS, READY_ATTEMPTS, SNAPSHOT_CHECK_MS, containerEnv, idleStopMs, inactivityMs, snapshotIntervalMs } from "../config";
 import { IMAGE_MAX_BYTES } from "../../../application/progress";
 import { OPENCODE_PORT, basicAuth, connectClaudeAgent, hasModel, isAnyBusy, isReady, type ModelRef, type Opencode } from "../opencode";
-import { PAYLOAD, PAYLOAD_HASH, WRITER } from "./payload";
+import { PAYLOAD, PAYLOAD_HASH, WRITER, payloadBatches } from "./payload";
 import { computerKey, type SavedSnapshot } from "../state";
 
 // Спільний комп'ютер агента: єдиний контейнер з OpenCode. Тут його життєвий цикл (старт зі знімка чи образу, очікування
@@ -110,10 +110,11 @@ export class Computer {
 	// бути зроблений до останнього деплою) і для працюючого контейнера, якщо вміст змінився. Образ при цьому не чіпається.
 	private async syncPayload(force: boolean): Promise<void> {
 		if (!force && (await this.ctx.storage.get<string>(computerKey.payloadHash)) === PAYLOAD_HASH) return;
-		const stdin = new Blob([JSON.stringify(PAYLOAD)]).stream(); // не через env: ліміт 128 KiB на змінну (E2BIG)
-		const proc = await this.ctx.container!.exec(["node", "-e", WRITER], { cwd: "/", env: { HOME: "/root" }, stdin });
-		const out = await proc.output();
-		if (out.exitCode !== 0) throw new Error(`payload sync failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
+		for (const batch of payloadBatches(PAYLOAD)) {
+			const proc = await this.ctx.container!.exec(["node", "-e", WRITER], { cwd: "/", env: { HOME: "/root", PAYLOAD: batch } });
+			const out = await proc.output();
+			if (out.exitCode !== 0) throw new Error(`payload sync failed (${out.exitCode}): ${new TextDecoder().decode(out.stderr).trim()}`);
+		}
 		await this.ctx.storage.put(computerKey.payloadHash, PAYLOAD_HASH);
 	}
 

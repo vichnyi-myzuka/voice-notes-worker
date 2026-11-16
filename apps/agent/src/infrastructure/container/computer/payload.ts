@@ -70,9 +70,28 @@ export const PAYLOAD_HASH = (() => {
 	return (h >>> 0).toString(16);
 })();
 
-// Скрипт для `node -e` у контейнері: читає JSON з payload зі stdin (змінна середовища чи аргумент впираються в ліміт Linux 128 KiB,
-// а payload значно більший) і пише файли та ставить права. Node є в образі.
-export const WRITER = `const fs=require("fs"),path=require("path");for(const f of JSON.parse(fs.readFileSync(0,"utf8"))){fs.mkdirSync(path.dirname(f.path),{recursive:true});fs.writeFileSync(f.path,f.content);fs.chmodSync(f.path,parseInt(f.mode,8))}`;
+// Скрипт для `node -e` у контейнері: пише файли з PAYLOAD (JSON у змінній середовища) і ставить права. Node є в образі.
+// Linux не дозволяє змінній середовища бути більшою за 128 KiB (E2BIG), тому великий набір файлів іде кількома викликами (payloadBatches).
+export const WRITER = `const fs=require("fs"),path=require("path");for(const f of JSON.parse(process.env.PAYLOAD)){fs.mkdirSync(path.dirname(f.path),{recursive:true});fs.writeFileSync(f.path,f.content);fs.chmodSync(f.path,parseInt(f.mode,8))}`;
+
+// Ділить файли на пачки, кожна з яких у JSON займає не більше limit байтів (UTF-8, бо українські літери по 2 байти).
+export function payloadBatches(files: PayloadFile[], limit = 64 * 1024): string[] {
+	const batches: string[] = [];
+	let batch: PayloadFile[] = [];
+	let size = 2;
+	for (const file of files) {
+		const bytes = new TextEncoder().encode(JSON.stringify(file)).length + 1;
+		if (batch.length && size + bytes > limit) {
+			batches.push(JSON.stringify(batch));
+			batch = [];
+			size = 2;
+		}
+		batch.push(file);
+		size += bytes;
+	}
+	if (batch.length) batches.push(JSON.stringify(batch));
+	return batches;
+}
 
 // MCP-сервери, які сесії підключає власник (див. prepare у computer.ts), за реєстром MCP_SERVICES: sure — токен у секретах воркера
 // (true), решта — короткі access-токени (їх видає OAuthLogin.accessToken); без токена сервер не підключається.

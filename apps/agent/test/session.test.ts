@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PAYLOAD, payloadBatches } from "../src/infrastructure/container/computer/payload";
 import { resetTopicIcons } from "../src/infrastructure/chat/messages";
 
 // У Node немає модуля cloudflare:workers: підставляємо мінімальний DurableObject.
@@ -49,11 +50,11 @@ function fakeContainer() {
 		monitor: () => new Promise<void>(() => {}),
 		setInactivityTimeout: async () => {},
 		// exec не успадковує env контейнера; session-prep друкує шлях теки сесії.
-		async exec(cmd: string[], options?: { env?: Record<string, string>; stdin?: ReadableStream }) {
+		async exec(cmd: string[], options?: { env?: Record<string, string> }) {
 			if (cmd[0] === "node") {
-				// розкладання payload/: окремо від решти, щоб не заважати перевіркам session-prep; JSON іде через stdin, не через env
-				expect(options?.env?.PAYLOAD).toBeUndefined();
-				opencode.syncs.push(JSON.parse(await new Response(options!.stdin).text()) as { path: string; mode: string; content: string }[]);
+				// розкладання payload/: окремо від решти, щоб не заважати перевіркам session-prep; кожна пачка JSON менша за ліміт змінної (128 KiB)
+				expect(options!.env!.PAYLOAD.length).toBeLessThan(128 * 1024);
+				opencode.syncs.push(JSON.parse(options!.env!.PAYLOAD) as { path: string; mode: string; content: string }[]);
 				return { output: async () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }) };
 			}
 			opencode.execs.push({ cmd, env: options?.env });
@@ -178,6 +179,8 @@ const ID = "session-0001";
 const CHAT_ID = "tg-5-1"; // id сесії, створеної з чату
 
 beforeEach(() => vi.stubGlobal("scheduler", { wait: async () => {} }));
+
+const BATCHES = payloadBatches(PAYLOAD).length;
 
 describe("AgentSession", () => {
 	it("start: піднімає контейнер, створює сесію OpenCode й ставить задачу", async () => {
@@ -339,8 +342,9 @@ describe("AgentSession", () => {
 		it("при старті контейнера: інструкції (обидва шляхи), publish, session-prep і git-хук з правами", async () => {
 			const { session, opencode } = setup();
 			await session.start(ID, { prompt: "Задача" });
-			expect(opencode.syncs).toHaveLength(1);
-			const byPath = Object.fromEntries(opencode.syncs[0].map((f) => [f.path, f]));
+			expect(opencode.syncs).toHaveLength(BATCHES);
+			expect(BATCHES).toBeGreaterThan(1); // увесь JSON не вміщується в одну змінну середовища
+			const byPath = Object.fromEntries(opencode.syncs.flat().map((f) => [f.path, f]));
 			expect(Object.keys(byPath).filter((path) => !path.startsWith("/usr/local/share/report-site/") && !path.includes("/skills/") || path.includes("/skills/report-site/")).sort()).toEqual(["/root/.claude/CLAUDE.md", "/root/.claude/skills/report-site/SKILL.md", "/root/.config/opencode/AGENTS.md", "/root/.config/opencode/opencode.json", "/root/.config/opencode/skills/report-site/SKILL.md", "/usr/local/bin/handoff", "/usr/local/bin/new-report-site", "/usr/local/bin/publish", "/usr/local/bin/request-mcp", "/usr/local/bin/session-prep", "/usr/local/bin/set-repo", "/usr/local/lib/git-hooks/pre-push"]);
 			expect(byPath["/usr/local/bin/publish"].mode).toBe("755");
 			expect(byPath["/root/.config/opencode/AGENTS.md"].content).toContain("Publishing small static sites");
@@ -356,7 +360,7 @@ describe("AgentSession", () => {
 		it("глобальний конфіг OpenCode: контекст 272k для моделей Claude Agent і автостиснення", async () => {
 			const { session, opencode } = setup();
 			await session.start(ID, { prompt: "Задача" });
-			const file = opencode.syncs[0].find((f) => f.path === "/root/.config/opencode/opencode.json")!;
+			const file = opencode.syncs.flat().find((f) => f.path === "/root/.config/opencode/opencode.json")!;
 			const config = JSON.parse(file.content);
 			expect(config.compaction.auto).toBe(true);
 			for (const id of ["opus", "sonnet", "haiku", "fable"]) expect(config.providers["claude-agent"].models[id].limit.context).toBe(272000);
@@ -366,10 +370,10 @@ describe("AgentSession", () => {
 			const { session, opencode, store } = setup();
 			await session.start(ID, { prompt: "Задача" });
 			await session.followUp(ID, "Ще");
-			expect(opencode.syncs).toHaveLength(1);
+			expect(opencode.syncs).toHaveLength(BATCHES);
 			store.set("payloadHash", "old"); // як після деплою зі зміненим AGENTS.md
 			await session.followUp(ID, "І ще");
-			expect(opencode.syncs).toHaveLength(2);
+			expect(opencode.syncs).toHaveLength(2 * BATCHES);
 		});
 
 		it("після сну (знімок міг бути до деплою) файли розкладаються знову", async () => {
@@ -377,7 +381,7 @@ describe("AgentSession", () => {
 			await session.start(ID, { prompt: "Задача" });
 			container.sleep();
 			await session.followUp(ID, "Продовжуй");
-			expect(opencode.syncs).toHaveLength(2);
+			expect(opencode.syncs).toHaveLength(2 * BATCHES);
 		});
 	});
 
