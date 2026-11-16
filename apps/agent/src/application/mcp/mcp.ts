@@ -59,8 +59,10 @@ export class Mcp {
 			return "login";
 		}
 		const connected: Tracked = { ...tracked, [name]: true };
+		console.log(`mcp ${name}: connecting to session ${id}`);
 		await this.access.connect(id, connected);
 		await this.store.saveSession(id, connected);
+		console.log(`mcp ${name}: connected, telling the agent`);
 		await this.tell(id, tracked, `The owner connected the ${name} MCP: its tools (names start with \`${name}_\`) are available from this step on. Continue the task. Instructions for this service:\n\n${this.access.instructions(name)}`);
 		return "connected";
 	}

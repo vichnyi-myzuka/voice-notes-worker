@@ -435,6 +435,24 @@ describe("вебхук Telegram", () => {
 				expect(t.mcpAnswers).toHaveLength(3);
 			});
 
+			it("підключення зависло: власник за 10 с бачить «Не вдалося підключити», а не тишу, збій потрапляє в лог", async () => {
+				const t = setup();
+				await t.send(msg({ text: "Поправ README" }));
+				t.agent.answerMcp = () => new Promise(() => {});
+				const error = vi.spyOn(console, "error").mockImplementation(() => {});
+				vi.useFakeTimers();
+				try {
+					const pressed = t.press(`mcpl:${SID}:cloudflare:y`);
+					await vi.advanceTimersByTimeAsync(10_000);
+					await pressed;
+				} finally {
+					vi.useRealTimers();
+				}
+				expect(t.answers().at(-1)).toBe("Не вдалося підключити.");
+				expect(error).toHaveBeenCalledWith(expect.stringContaining("mcp answer failed (cloudflare, allow)"), expect.objectContaining({ message: expect.stringContaining("timeout") }));
+				error.mockRestore();
+			});
+
 			it("невідома сесія й невідомий сервіс", async () => {
 				const t = setup();
 				await t.press(`mcpl:tg-1-1:cloudflare:y`);
