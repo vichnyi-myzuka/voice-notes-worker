@@ -17,7 +17,7 @@ const { AgentSession } = await import("../src/infrastructure/container/session")
 
 // «Контейнер» з OpenCode, що відповідає на ті самі запити, що й справжній.
 function fakeContainer() {
-	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string> }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execStderr: "", execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], mcpPuts: [] as { path: string; query: string; body: unknown }[], connected: false, modelChecks: 0, modelsAfter: 0 };
+	const opencode = { sessions: new Set<string>(), prompts: [] as { id: string; text: string }[], busy: new Set<string>(), aborted: [] as string[], deleted: [] as string[], seq: 0, requests: [] as string[], auths: new Set<string>(), directories: [] as string[], events: [] as ReadableStreamDefaultController<Uint8Array>[], emit(event: unknown) { for (const c of opencode.events) c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`)); }, execs: [] as { cmd: string[]; env?: Record<string, string>; stdin?: string }[], syncs: [] as { path: string; mode: string; content: string }[][], execFails: false, execStderr: "", execGate: undefined as Promise<void> | undefined, info: {} as Record<string, Record<string, unknown>>, lastText: "", lastError: "", procNet: "", origins: [] as string[], tickets: [] as string[], execActive: 0, execMax: 0, models: [] as unknown[], switches: [] as { id: string; model: unknown }[], formReplies: [] as { path: string; body: unknown }[], formCancels: [] as string[], mcpPuts: [] as { path: string; query: string; body: unknown }[], connected: false, modelChecks: 0, modelsAfter: 0 };
 	const container = {
 		running: false,
 		images: { base: "image" },
@@ -56,7 +56,7 @@ function fakeContainer() {
 				opencode.syncs.push(JSON.parse(await new Response(options!.stdin).text()) as { path: string; mode: string; content: string }[]);
 				return { output: async () => ({ exitCode: 0, stdout: new Uint8Array(), stderr: new Uint8Array() }) };
 			}
-			opencode.execs.push({ cmd, env: options?.env });
+			opencode.execs.push({ cmd, env: options?.env, ...(options?.stdin && { stdin: await new Response(options.stdin).text() }) });
 			opencode.execMax = Math.max(opencode.execMax, ++opencode.execActive);
 			await (opencode.execGate ?? Promise.resolve());
 			opencode.execActive--;
@@ -581,7 +581,7 @@ describe("AgentSession", () => {
 		const { session, container, opencode } = setup(sureEnv);
 		await session.start(ID, { prompt: "Задача", sure: true });
 		const [exec] = shellWrites(opencode);
-		const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; content: string }[];
+		const [file] = JSON.parse(exec.stdin!) as { path: string; content: string }[];
 		expect(file.path).toBe(`/workspace/sessions/${ID}/.opencode/opencode.json`);
 		const server = JSON.parse(file.content).mcp.servers.sure;
 		expect(server).toMatchObject({ type: "remote", url: "https://sure.example/mcp", oauth: false });
@@ -602,7 +602,7 @@ describe("AgentSession", () => {
 		const login = { client: { id: "cid", redirect: "r" }, tokens: { access: "silpo-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };
 		const written = (o: ReturnType<typeof setup>["opencode"]) => {
 			const [exec] = o.execs.filter((e) => e.cmd[0] === "sh");
-			const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
+			const [file] = JSON.parse(exec.stdin!) as { path: string; mode: string; content: string }[];
 			return { file, config: JSON.parse(file.content) };
 		};
 
@@ -634,7 +634,7 @@ describe("AgentSession", () => {
 		const login = { client: { id: "cid", redirect: "r" }, tokens: { access: "cf-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };
 		const written = (o: ReturnType<typeof setup>["opencode"]) => {
 			const [exec] = o.execs.filter((e) => e.cmd[0] === "sh");
-			const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
+			const [file] = JSON.parse(exec.stdin!) as { path: string; mode: string; content: string }[];
 			return { file, config: JSON.parse(file.content) };
 		};
 
@@ -695,7 +695,7 @@ describe("AgentSession", () => {
 		const login = { tokens: { access: "cal-acc", refresh: "ref", expiresAt: Date.now() + 3_600_000 } };
 		const written = (o: ReturnType<typeof setup>["opencode"]) => {
 			const [exec] = o.execs.filter((e) => e.cmd[0] === "sh");
-			const files = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
+			const files = JSON.parse(exec.stdin!) as { path: string; mode: string; content: string }[];
 			return { files, config: JSON.parse(files[0].content) };
 		};
 
@@ -1363,7 +1363,7 @@ describe("AgentSession", () => {
 						t.opencode.execs.length = 0;
 						expect(await t.session.answerMcp(SID, "cloudflare", true)).toBe("connected");
 						const [exec] = t.opencode.execs.filter((e) => e.cmd[0] === "sh");
-						const [file] = JSON.parse(exec.env!.PAYLOAD) as { path: string; mode: string; content: string }[];
+						const [file] = JSON.parse(exec.stdin!) as { path: string; mode: string; content: string }[];
 						expect(file.mode).toBe("600");
 						expect(Object.keys(JSON.parse(file.content).mcp.servers)).toEqual(["cloudflare"]);
 						expect(t.store.get(`session:${SID}`)).toMatchObject({ cloudflare: true });
