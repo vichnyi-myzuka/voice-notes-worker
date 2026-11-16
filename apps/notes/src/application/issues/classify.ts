@@ -6,7 +6,9 @@ export const CLASSIFY_SYSTEM = `You decide which tasks from the author's voice n
 Such tasks are tracked as GitHub issues, in addition to the author's personal to-do list.
 For each task in <tasks> return its key and "repo": the full name of the repository from <repos> the task belongs to, or "" if it is not work on one of these projects.
 Work on a project means development of the project itself: features, bugs, refactoring, tests, documentation, infrastructure and deployment of that project.
-Personal, household and generic tasks, errands, calls, purchases and reminders are NOT project work: return "". When unsure, return "".`;
+The task must clearly be about changing THAT repository (judge by its description in <repos>), not merely sharing a technology or domain with it.
+NOT project work, return "": personal, household and generic tasks, errands, calls, purchases and reminders; ideas, research, reading, learning or "think about" tasks; saving or filing an idea into a to-do project or list; tasks about other, new or separate projects (for example a new side-project idea), even if they mention notes, voice, Telegram, shortcuts, bots or AI.
+When unsure, return "".`;
 
 // Які з нових задач — робота над проєктом (і в який репозиторій). Невдача — null, відповідь іншого репозиторію ігноруємо.
 export async function classifyIssues(llm: Llm, items: TriageItem[], repos: IssueRepo[]): Promise<Record<string, string> | null> {
