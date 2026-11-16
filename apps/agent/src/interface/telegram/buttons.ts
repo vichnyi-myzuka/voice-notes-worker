@@ -14,6 +14,14 @@ type Handler = (ctx: { bot: BotEnv; query: Query; env: ChatEnv & ContainerEnv & 
 // Що кажемо агентові, коли власник натиснув «Повторити» після лімітів.
 export const RETRY_TEXT = "Ліміти скинулись. Продовж виконувати попереднє завдання з того місця, де зупинився.";
 
+const MCP_ANSWER_MS = 10_000;
+
+function withTimeout<T>(job: Promise<T>, ms: number): Promise<T> {
+	let timer: ReturnType<typeof setTimeout>;
+	const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(`timeout after ${ms} ms`)), ms)));
+	return Promise.race([job, timeout]).finally(() => clearTimeout(timer));
+}
+
 const MCP_ANSWERS: Record<McpAnswer, string> = { connected: "Підключено, агент продовжує.", declined: "Відхилено.", login: "Потрібен вхід у сервіс.", unavailable: "Сервіс не налаштований." };
 
 // Дії над сесією: кожна отримує вже перевірені чат, повідомлення й id сесії та сама відповідає спливаючою підказкою.
@@ -57,7 +65,8 @@ export async function handleButton(bot: BotEnv, query: Query, env: ChatEnv & Con
 	if (action.kind === "mcp-start") return void (await answer((await resolveMcp(bot, agent, action.id, action.allow, messageId)) ? (action.allow ? "Підключаю й запускаю." : "Запускаю без них.") : "Вибір уже неактуальний."));
 	if (!(await agent.link(action.id))) return void (await answer("Сесію не знайдено."));
 	if (action.kind === "mcp-live") {
-		const result = await agent.answerMcp(action.id, action.name, action.allow).catch((err) => (console.error("mcp answer failed:", err), null));
+		// Telegram чекає відповіді на кнопку лічені секунди: зависла гілка підключення має дати видиму відповідь і запис у логах, а не тишу.
+		const result = await withTimeout(agent.answerMcp(action.id, action.name, action.allow), MCP_ANSWER_MS).catch((err) => (console.error(`mcp answer failed (${action.name}, ${action.allow ? "allow" : "deny"}):`, err), null));
 		if (result === null) return void (await answer("Не вдалося підключити."));
 		await removeMessage(bot, chatId, messageId);
 		// Без входу в сервіс агент отримав примітку, а власнику одразу даємо посилання на вхід (у тій самій темі).
