@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openSteps, type Llm } from "@voice-notes/core";
 import { closeIssues, syncIssues, type IssueState } from "../src/application/issues";
+import { classifyIssues } from "../src/application/issues/classify";
 import { planIssueOps } from "../src/application/issues/plan";
 import type { TrackedIssues } from "../src/domain/issues";
 import type { TriageItem } from "../src/domain/tracker";
@@ -37,6 +38,20 @@ describe("planIssueOps", () => {
 			{ kind: "update", key: "t1", title: "Нова назва", details: "" },
 			{ kind: "close", key: "t3" },
 		]);
+	});
+});
+
+describe("classifyIssues", () => {
+	it("передає суворі правила в промпт і ігнорує репозиторії поза списком", async () => {
+		const askJson = vi.fn(async (_req: { system: string; reasoning?: string }, parse: (t: string) => unknown) =>
+			parse(JSON.stringify({ items: [{ key: "t1", repo: "me/bot" }, { key: "t2", repo: "x/y" }] })),
+		);
+		const llm = { askJson } as unknown as Llm;
+		const found = await classifyIssues(llm, [item("Додати ідею шортката", "t1"), item("Інше", "t2")], [{ repo: "me/bot", description: "bot" }]);
+		expect(found).toEqual({ t1: "me/bot" });
+		const req = askJson.mock.calls[0]![0];
+		expect(req.system).toContain("other, new or separate projects");
+		expect(req.system).toContain("When unsure");
 	});
 });
 
